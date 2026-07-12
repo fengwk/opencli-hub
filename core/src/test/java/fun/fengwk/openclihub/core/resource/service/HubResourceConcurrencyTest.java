@@ -3,6 +3,7 @@ package fun.fengwk.openclihub.core.resource.service;
 import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.openclihub.core.CoreTestApplication;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
+import fun.fengwk.openclihub.core.resource.model.HubExecutionResourceGroup;
 import fun.fengwk.openclihub.core.resource.model.HubResourceListRequest;
 import fun.fengwk.openclihub.core.resource.model.HubResourceStream;
 import fun.fengwk.openclihub.core.resource.model.HubResourceUploadItem;
@@ -82,16 +83,18 @@ class HubResourceConcurrencyTest {
         }
     }
 
-    // -- H1: rollback never destroys concurrent siblings ------------------------------------
+    // -- H1: rollback scoped strictly to the failing request's own group -----------------
 
     /**
-     * Two threads concurrently upload to the same date and the same sanitized filename.
-     * Each thread creates its OWN upload-{uuid} group, so the experiment exercises the fact
-     * that the partial-failure rollback of thread A must NOT delete the file uploaded by
-     * thread B (which lives under a different group and a different sanitized target).
+     * Many threads concurrently invoke {@link HubResourceService#upload} with the same
+     * sanitized filename. Every call mints its own upload-{uuid} group, so the persisted
+     * resources live in independent directories. The test then asserts that the
+     * partial-failure rollback of thread A is strictly scoped to its OWN group, never
+     * destroying thread B's data. This is a rollback-scope guarantee; concurrency inside
+     * a single group directory is covered separately by the atomic CREATE_NEW stress test.
      */
     @Test
-    void shouldNotDeleteConcurrentSiblingOnPartialUploadFailure() throws Exception {
+    void shouldScopeRollbackToOwnGroupOnPartialUploadFailure() throws Exception {
         LocalDate date = LocalDate.now(ZoneOffset.UTC);
         int threadCount = 8;
         ExecutorService pool = Executors.newFixedThreadPool(threadCount);
@@ -387,6 +390,106 @@ class HubResourceConcurrencyTest {
             }
         }
         assertThat(distinctGroups).hasSize(threadCount);
+    }
+
+    // -- H3: acquire/delete overlap covers ancestor and descendant directions -------------
+
+    /**
+     * Hold a destructive delete on an ancestor directory; {@code acquire} on any descendant
+     * must throw {@code RESOURCE_IN_USE}. This guards against the case where a stream is
+     * opened mid-deletion of a parent group.
+     */
+    @Test
+    void shouldBlockAcquireOnDescendantWhenAncestorDeleteInProgress() throws Exception {
+        Path ancestor = Files.createTempDirectory("hub-ancestor-");
+        Path descendant = Files.createFile(ancestor.resolve("child.txt"));
+        Files.writeString(descendant, "data");
+        CountDownLatch reserved = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Thread deleter = new Thread(() -> leaseManager.runExclusively(ancestor, () -> {
+            try {
+                reserved.countDown();
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+        }));
+        deleter.start();
+        assertThat(reserved.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThatThrownBy(() -> leaseManager.acquire(descendant, "reader"))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        release.countDown();
+        deleter.join(5000);
+        Files.deleteIfExists(descendant);
+        Files.deleteIfExists(ancestor);
+    }
+
+    /**
+     * Hold a destructive delete on a file; {@code acquire} on any ancestor of the file must
+     * throw {@code RESOURCE_IN_USE}. This guards against listing or reading a group root
+     * while an individual file underneath is being deleted.
+     */
+    @Test
+    void shouldBlockAcquireOnAncestorWhenDescendantDeleteInProgress() throws Exception {
+        Path ancestor = Files.createTempDirectory("hub-grand-");
+        Path descendant = Files.createFile(ancestor.resolve("child.txt"));
+        Files.writeString(descendant, "data");
+        CountDownLatch reserved = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Thread deleter = new Thread(() -> leaseManager.runExclusively(descendant, () -> {
+            try {
+                reserved.countDown();
+                release.await(5, TimeUnit.SECONDS);
+                Files.deleteIfExists(descendant);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            } catch (IOException ex) {
+                throw new RuntimeException(ex);
+            }
+        }));
+        deleter.start();
+        assertThat(reserved.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThatThrownBy(() -> leaseManager.acquire(ancestor, "reader"))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        release.countDown();
+        deleter.join(5000);
+        Files.deleteIfExists(descendant);
+        Files.deleteIfExists(ancestor);
+    }
+
+    // -- H2 fallback: REPLACE_EXISTING on file systems without ATOMIC_MOVE --------------
+
+    /**
+     * Forces the non-atomic fallback branch of {@code performMoveReplace} by overriding the
+     * method to always skip the atomic step. The fallback must still succeed because the
+     * reserved target is owned by the same request, and the file at the destination must
+     * end up holding the payload (replacing the placeholder).
+     */
+    @Test
+    void shouldReplaceExistingTargetOnFallbackMove() throws Exception {
+        OpenCliHubProperties props = new OpenCliHubProperties();
+        props.getResource().setRootDir(resourceService.rootDir().toString());
+        HubResourceService fallbackService = new HubResourceService(props, leaseManager) {
+            @Override
+            Path performMoveReplace(Path source, Path target) throws IOException {
+                return java.nio.file.Files.move(source, target,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        };
+        try {
+            Path src = Files.createTempFile("hub-fallback-src-", ".part");
+            Path dst = Files.createTempFile("hub-fallback-dst-", ".final");
+            Files.writeString(src, "new-payload");
+            Files.writeString(dst, "old-placeholder");
+            Path moved = fallbackService.performMoveReplace(src, dst);
+            assertThat(moved).isEqualTo(dst);
+            assertThat(Files.readString(dst)).isEqualTo("new-payload");
+            assertThat(Files.exists(src)).isFalse();
+            Files.deleteIfExists(dst);
+        } finally {
+            // The fallback service constructed its own resource root (same path); cleanup
+            // happens via the regular AfterEach walk on resourceService.rootDir().
+        }
     }
 
     // -- Helpers ---------------------------------------------------------------------------

@@ -624,17 +624,7 @@ public class HubResourceService {
             out.flush();
         }
         try {
-            // ATOMIC_MOVE guarantees that the rename either succeeds fully or leaves the
-            // placeholder untouched; REPLACE_EXISTING is explicitly NOT set so a TOCTOU
-            // collision would surface as AtomicMoveNotSupportedException / FileAlreadyExists
-            // instead of silently overwriting a concurrent writer's data.
-            try {
-                Files.move(tmp, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            } catch (java.nio.file.AtomicMoveNotSupportedException ex) {
-                // Fallback for file systems without atomic rename; still refuses to overwrite
-                // because REPLACE_EXISTING is absent.
-                Files.move(tmp, target);
-            }
+            performMoveReplace(tmp, target);
         } catch (IOException ex) {
             try {
                 Files.deleteIfExists(tmp);
@@ -644,6 +634,32 @@ public class HubResourceService {
             throw ex;
         }
         return fileBytes;
+    }
+
+    /**
+     * Atomically (when supported) move {@code source} onto {@code target}, replacing any
+     * placeholder the current request reserved via
+     * {@link HubResourcePaths#reserveFileName}. {@code target} is owned exclusively by this
+     * request because the reservation path was created through atomic {@code CREATE_NEW};
+     * no other request can place a file at the same location, so
+     * {@link java.nio.file.StandardCopyOption#REPLACE_EXISTING REPLACE_EXISTING} is safe
+     * to use. The fallback branch exists for file systems that do not support
+     * {@link java.nio.file.StandardCopyOption#ATOMIC_MOVE ATOMIC_MOVE}; it also uses
+     * {@code REPLACE_EXISTING}, which is acceptable because of the placeholder ownership
+     * guarantee above.
+     * <p>
+     * Package-private so a test can subclass the service to force the fallback branch even
+     * on file systems that natively support atomic rename.
+     */
+    Path performMoveReplace(Path source, Path target) throws IOException {
+        try {
+            return Files.move(source, target,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (java.nio.file.AtomicMoveNotSupportedException ex) {
+            return Files.move(source, target,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     private static void unlinkIfExists(Path target) {

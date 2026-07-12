@@ -5,8 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,15 +12,22 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Concurrency-safe registry tracking active leases per real path. The manager refuses a
- * destructive delete whenever a shared lease exists on the target or any descendant; it also
- * refuses a shared lease whenever a destructive delete is in progress on the target or any
- * of its ancestors. {@link #runExclusively(Path, Runnable)} performs the check + flag set
- * under a single per-path lock so the gap between "check" and "delete" can no longer be
- * exploited by a concurrent acquirer.
+ * Concurrency-safe registry tracking active leases per real path. The manager uses a single
+ * metadata lock to serialize changes to the {@code shared} and {@code deleting} maps, both
+ * of which clean up after themselves so the manager's memory footprint remains bounded by
+ * the live concurrency. Per-path locks are intentionally NOT used: this avoids the unbounded
+ * growth of an entry-per-Path map and keeps the critical section trivially short.
  * <p>
- * Leases are intentionally in-memory only; restarting the Hub simply abandons them. The
- * underlying files remain safe to delete on the next request.
+ * Rule matrix (all paths normalized; {@code A~B} means {@code A.startsWith(B) || B.startsWith(A)}):
+ * <ul>
+ *   <li>{@link #acquire(Path, String)} refuses any shared lease while a destructive delete
+ *       reservation overlaps the target (ancestor, descendant, or same path).</li>
+ *   <li>{@link #runExclusively(Path, Runnable)} refuses any destructive delete while a shared
+ *       lease overlaps the target.</li>
+ *   <li>Both rules are evaluated under the metadata lock so a concurrent acquirer cannot slip
+ *       between the assert and the actual delete.</li>
+ * </ul>
+ * Leases are intentionally in-memory only; restarting the Hub simply abandons them.
  *
  * @author fengwk
  */
@@ -30,32 +35,26 @@ import java.util.concurrent.locks.ReentrantLock;
 @Component
 public class HubResourceLeaseManager {
 
+    /** Serializes any state mutation on {@link #shared} or {@link #deleting}. */
+    private final ReentrantLock metaLock = new ReentrantLock();
+
+    /** Number of in-progress shared leases per real path. */
     private final Map<Path, AtomicInteger> shared = new ConcurrentHashMap<>();
+
+    /** Counter driven to 1 by an active {@link #runExclusively} reservation. */
     private final Map<Path, AtomicInteger> deleting = new ConcurrentHashMap<>();
-    private final Map<Path, ReentrantLock> pathLocks = new ConcurrentHashMap<>();
 
     /**
-     * Acquire a shared lease on {@code realPath}. The caller is responsible for invoking
-     * {@link HubResourceLease#close()} (typically via try-with-resources). Acquiring on a
-     * path or any ancestor that currently has a destructive delete in progress throws
-     * {@code RESOURCE_IN_USE}.
+     * Acquire a shared lease on {@code realPath}. Throws {@code RESOURCE_IN_USE} when a
+     * destructive delete reservation overlaps the target or any ancestor/descendant of it.
      */
     public HubResourceLease acquire(Path realPath, String reason) {
         Objects.requireNonNull(realPath, "realPath");
         Path abs = realPath.toAbsolutePath().normalize();
-        List<ReentrantLock> held = new ArrayList<>();
+        metaLock.lock();
         try {
-            // Walk from the target up to the file-system root. Each ancestor lock is held
-            // only for the duration of the delete-flag check, so the critical section is
-            // strictly bounded.
-            for (Path p = abs; p != null; p = p.getParent()) {
-                ReentrantLock lock = lockFor(p);
-                lock.lock();
-                held.add(lock);
-                AtomicInteger inProgress = deleting.get(p);
-                if (inProgress != null && inProgress.get() > 0) {
-                    throw HubErrorCodes.RESOURCE_IN_USE.asThrowable();
-                }
+            if (overlapsAnyReservation(abs)) {
+                throw HubErrorCodes.RESOURCE_IN_USE.asThrowable();
             }
             AtomicInteger counter = shared.computeIfAbsent(abs, k -> new AtomicInteger());
             counter.incrementAndGet();
@@ -64,44 +63,32 @@ public class HubResourceLeaseManager {
             }
             return new HubResourceLease(this, realPath, reason, counter);
         } finally {
-            for (int i = held.size() - 1; i >= 0; i--) {
-                held.get(i).unlock();
-            }
+            metaLock.unlock();
         }
     }
 
     /**
-     * Run {@code action} while holding a destructive delete reservation on
-     * {@code realPath}. The check + flag set happens under a single per-path lock so that
-     * {@link #acquire(Path, String)} arriving on the same path or any descendant cannot
-     * sneak between the assert and the actual delete. Returns normally if the action
+     * Run {@code action} while holding a destructive delete reservation on {@code realPath}.
+     * The check + flag set happen under {@link #metaLock} so a concurrent acquirer cannot
+     * squeeze between the assert and the actual delete. Returns normally if the action
      * completes; rethrows whatever the action throws (with the reservation cleared first).
      */
     public void runExclusively(Path realPath, Runnable action) {
         Objects.requireNonNull(realPath, "realPath");
         Path abs = realPath.toAbsolutePath().normalize();
-        ReentrantLock lock = lockFor(abs);
-        lock.lock();
+        metaLock.lock();
         boolean reserved = false;
         try {
-            // Reject when any active lease is on the target, a descendant, or an ancestor.
-            for (Map.Entry<Path, AtomicInteger> entry : shared.entrySet()) {
-                if (entry.getValue().get() <= 0) {
-                    continue;
-                }
-                Path key = entry.getKey();
-                if (key.equals(abs) || key.startsWith(abs) || abs.startsWith(key)) {
-                    throw HubErrorCodes.RESOURCE_IN_USE.asThrowable();
-                }
+            if (overlapsAnySharedLease(abs)) {
+                throw HubErrorCodes.RESOURCE_IN_USE.asThrowable();
             }
-            // Only one destructive delete at a time on the same target.
             AtomicInteger flag = deleting.computeIfAbsent(abs, k -> new AtomicInteger());
             if (!flag.compareAndSet(0, 1)) {
                 throw HubErrorCodes.RESOURCE_IN_USE.asThrowable();
             }
             reserved = true;
         } finally {
-            lock.unlock();
+            metaLock.unlock();
         }
         Throwable actionFailure = null;
         try {
@@ -109,7 +96,7 @@ public class HubResourceLeaseManager {
         } catch (Throwable t) {
             actionFailure = t;
         } finally {
-            lock.lock();
+            metaLock.lock();
             try {
                 AtomicInteger flag = deleting.get(abs);
                 if (flag != null) {
@@ -119,11 +106,11 @@ public class HubResourceLeaseManager {
                     }
                 }
             } finally {
-                lock.unlock();
+                metaLock.unlock();
             }
         }
-        if (actionFailure instanceof RuntimeException) {
-            throw (RuntimeException) actionFailure;
+        if (actionFailure instanceof RuntimeException re) {
+            throw re;
         }
         if (actionFailure != null) {
             throw new RuntimeException("Destructive action failed", actionFailure);
@@ -163,14 +150,19 @@ public class HubResourceLeaseManager {
      * drops to zero the entry is removed so the map cannot grow unbounded.
      */
     void release(HubResourceLease lease, AtomicInteger counter) {
-        int remaining = counter.decrementAndGet();
-        if (remaining < 0) {
-            counter.set(0);
-            remaining = 0;
-        }
-        if (remaining == 0) {
-            shared.compute(lease.realPath().toAbsolutePath().normalize(),
-                (k, v) -> v == null || v.get() <= 0 ? null : v);
+        Path abs = lease.realPath().toAbsolutePath().normalize();
+        metaLock.lock();
+        try {
+            int remaining = counter.decrementAndGet();
+            if (remaining < 0) {
+                counter.set(0);
+                remaining = 0;
+            }
+            if (remaining == 0) {
+                shared.remove(abs, counter);
+            }
+        } finally {
+            metaLock.unlock();
         }
     }
 
@@ -187,8 +179,35 @@ public class HubResourceLeaseManager {
         return count;
     }
 
-    private ReentrantLock lockFor(Path path) {
-        return pathLocks.computeIfAbsent(path, k -> new ReentrantLock());
+    // -----------------------------------------------------------------------------------------
+    // Bidirectional overlap checks. Both directions (ancestor and descendant) are evaluated
+    // so that acquire and runExclusively share the same semantics for path overlap.
+    // -----------------------------------------------------------------------------------------
+
+    private boolean overlapsAnyReservation(Path abs) {
+        for (Map.Entry<Path, AtomicInteger> entry : deleting.entrySet()) {
+            if (entry.getValue().get() <= 0) {
+                continue;
+            }
+            Path key = entry.getKey();
+            if (key.equals(abs) || key.startsWith(abs) || abs.startsWith(key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean overlapsAnySharedLease(Path abs) {
+        for (Map.Entry<Path, AtomicInteger> entry : shared.entrySet()) {
+            if (entry.getValue().get() <= 0) {
+                continue;
+            }
+            Path key = entry.getKey();
+            if (key.equals(abs) || key.startsWith(abs) || abs.startsWith(key)) {
+                return true;
+            }
+        }
+        return false;
     }
 
 }
