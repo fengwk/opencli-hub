@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.util.Objects;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Locale;
@@ -44,13 +45,18 @@ public final class HubResourcePaths {
 
     /**
      * Build the real root directory for the resource center from {@link OpenCliHubProperties}.
+     * Blank or null {@code rootDir} fails fast so deployment misconfiguration cannot silently
+     * fall back to a default that may escape the data volume.
      */
     public static Path resourceRoot(OpenCliHubProperties properties) {
         if (properties == null || properties.getResource() == null) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
         String root = properties.getResource().getRootDir();
-        return requireAbsolute(Path.of(root == null || root.isBlank() ? "/" : root).normalize());
+        if (root == null || root.trim().isEmpty()) {
+            throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
+        }
+        return requireAbsolute(Path.of(root).normalize());
     }
 
     /**
@@ -213,10 +219,72 @@ public final class HubResourcePaths {
     }
 
     /**
-     * Best-effort unique file name inside a target directory. Designed to be deterministic:
-     * {@code name.txt -> name.txt}, {@code name (2).txt} for collisions.
+     * Best-effort unique file name inside a target directory using atomic {@code CREATE_NEW}
+     * to claim a slot, falling back to {@code name (2)}, {@code name (3)}, ... when the
+     * candidate already exists. The placeholder created by {@code CREATE_NEW} is left on
+     * disk; callers are expected to either replace it via {@link Files#move} (atomic
+     * preferred) or to remove it on failure.
+     * <p>
+     * The implementation is safe to invoke from concurrent threads because it relies on
+     * {@link java.nio.file.StandardOpenOption#CREATE_NEW} for the existence check rather
+     * than a {@code Files.exists(...)} read followed by a separate create.
      */
-    public static String resolveFileNameConflict(Path groupDir, String desired) {
+    public static String reserveFileName(Path groupDir, String desired) throws IOException {
+        Objects.requireNonNull(groupDir, "groupDir");
+        String name = sanitizeUploadFileName(desired);
+        String direct = tryReserve(groupDir, name);
+        if (direct != null) {
+            return direct;
+        }
+        int dot = name.lastIndexOf('.');
+        String base;
+        String ext;
+        if (dot > 0 && dot < name.length() - 1) {
+            base = name.substring(0, dot);
+            ext = name.substring(dot);
+        } else {
+            base = name;
+            ext = "";
+        }
+        for (int i = 2; i < 10_000; i++) {
+            String candidateName = base + " (" + i + ")" + ext;
+            String reserved = tryReserve(groupDir, candidateName);
+            if (reserved != null) {
+                return reserved;
+            }
+        }
+        // Extremely unlikely (slot exhaustion) — fall back to a UUID-suffixed placeholder.
+        String fallback = name + "-" + UUID.randomUUID();
+        String reserved = tryReserve(groupDir, fallback);
+        if (reserved != null) {
+            return reserved;
+        }
+        throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
+    }
+
+    private static String tryReserve(Path groupDir, String candidate) {
+        Path target = groupDir.resolve(candidate);
+        try {
+            // CREATE_NEW is atomic on POSIX: the channel creation either succeeds (and the
+            // file now exists) or throws FileAlreadyExistsException. This is the canonical
+            // primitive for "create exactly once if absent".
+            try (java.nio.channels.SeekableByteChannel ch = Files.newByteChannel(target,
+                java.nio.file.StandardOpenOption.CREATE_NEW,
+                java.nio.file.StandardOpenOption.WRITE)) {
+                return candidate;
+            }
+        } catch (java.nio.file.FileAlreadyExistsException ex) {
+            return null;
+        } catch (IOException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * Legacy non-atomic conflict resolver kept for unit tests that exercise the
+     * sanitize-only path. New code paths must use {@link #reserveFileName(Path, String)}.
+     */
+    static String resolveFileNameConflict(Path groupDir, String desired) {
         Path candidate = groupDir.resolve(desired);
         if (!Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
             return desired;

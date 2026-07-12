@@ -243,10 +243,10 @@ class HubResourceServiceTest {
 
     /**
      * Uploads into a deterministic conflict must produce stable, predictable suffixes rather
-     * than overwriting existing files.
+     * than overwriting existing files. The reservation is now atomic via CREATE_NEW.
      */
     @Test
-    void shouldHandleDuplicateNameDeterministically() {
+    void shouldHandleDuplicateNameDeterministically() throws IOException {
         LocalDate date = LocalDate.now(ZoneOffset.UTC);
         HubResourceService.UploadResult r1 = resourceService.upload(HubResourceUploadRequest.builder()
             .date(date.toString())
@@ -255,7 +255,7 @@ class HubResourceServiceTest {
         Path groupDir = resourceService.rootDir()
             .resolve(date.toString())
             .resolve(r1.getGroup());
-        assertThat(HubResourcePaths.resolveFileNameConflict(groupDir, "invoice.pdf"))
+        assertThat(HubResourcePaths.reserveFileName(groupDir, "invoice.pdf"))
             .isEqualTo("invoice (2).pdf");
     }
 

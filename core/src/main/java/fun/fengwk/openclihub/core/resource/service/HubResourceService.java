@@ -110,28 +110,47 @@ public class HubResourceService {
             throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
         }
 
+        // Each upload records exactly the files it wrote so a partial failure can roll back
+        // ONLY its own bookkeeping without ever recursively deleting the freshly created
+        // group directory (which must remain a stable mount point shared by future uploads).
         List<HubResourceItemDTO> uploaded = new ArrayList<>(items.size());
+        List<Path> myReservedTargets = new ArrayList<>();
+        List<Path> myTempFiles = new ArrayList<>();
         AtomicLong requestBytes = new AtomicLong(0L);
-        for (HubResourceUploadItem item : items) {
-            String sanitized = HubResourcePaths.sanitizeUploadFileName(item.getOriginalFileName());
-            String unique = HubResourcePaths.resolveFileNameConflict(groupDir, sanitized);
-            Path target = groupDir.resolve(unique);
-            long fileBytes;
-            try {
-                fileBytes = writeBounded(item.getInputStream(), target, maxFile, maxRequest, requestBytes);
-            } catch (BoundedWriteException ex) {
-                deleteQuietly(target);
-                deleteQuietly(groupDir);
-                throw HubErrorCodes.RESOURCE_UPLOAD_TOO_LARGE.asThrowable(ex);
-            } catch (IOException ex) {
-                deleteQuietly(target);
-                deleteQuietly(groupDir);
-                throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
+        try {
+            for (HubResourceUploadItem item : items) {
+                String reserved = HubResourcePaths.reserveFileName(groupDir, item.getOriginalFileName());
+                Path target = groupDir.resolve(reserved);
+                myReservedTargets.add(target);
+                long fileBytes;
+                try {
+                    fileBytes = writeBounded(item.getInputStream(), target,
+                        maxFile, maxRequest, requestBytes, myTempFiles);
+                } catch (BoundedWriteException ex) {
+                    throw HubErrorCodes.RESOURCE_UPLOAD_TOO_LARGE.asThrowable(ex);
+                } catch (IOException ex) {
+                    throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
+                }
+                String virtualPath = HubResourcePaths.VIRTUAL_PREFIX
+                    + date.format(HubResourcePaths.DATE_FORMAT) + "/" + group + "/" + reserved;
+                uploaded.add(toItemDTO(date, group, reserved, virtualPath, HubResourceSource.UPLOAD,
+                    reserved, fileBytes, target));
             }
-            String virtualPath = HubResourcePaths.VIRTUAL_PREFIX
-                + date.format(HubResourcePaths.DATE_FORMAT) + "/" + group + "/" + unique;
-            uploaded.add(toItemDTO(date, group, unique, virtualPath, HubResourceSource.UPLOAD,
-                unique, fileBytes, target));
+        } catch (Throwable t) {
+            // Roll back ONLY this upload's claimed slots: any target it reserved but did not
+            // finish writing, plus the temporary .part siblings. Never recurse on the group.
+            for (Path target : myReservedTargets) {
+                unlinkIfExists(target);
+            }
+            for (Path tmp : myTempFiles) {
+                unlinkIfExists(tmp);
+            }
+            // Best-effort group cleanup: remove the directory only when empty.
+            deleteEmptyGroupIfPossible(groupDir);
+            if (t instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new RuntimeException("Upload failed", t);
         }
         log.info("Uploaded {} files into group {} ({} bytes total)",
             uploaded.size(), group, requestBytes.get());
@@ -203,22 +222,25 @@ public class HubResourceService {
         if (Files.isDirectory(real, LinkOption.NOFOLLOW_LINKS)) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
-        leaseManager.assertDeletable(real);
-        try {
-            Files.delete(real);
-        } catch (IOException ex) {
-            throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
-        }
-        try {
-            HubResourcePaths.pruneEmptyAncestors(root, real.getParent());
-        } catch (IOException ex) {
-            // Best-effort cleanup; do not fail the delete if prune fails.
-        }
+        // Run inside the lease-manager critical section so a concurrent acquirer cannot
+        // slip between the assert and the actual delete.
+        leaseManager.runExclusively(real, () -> {
+            try {
+                Files.delete(real);
+            } catch (IOException ex) {
+                throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
+            }
+            try {
+                HubResourcePaths.pruneEmptyAncestors(root, real.getParent());
+            } catch (IOException ex) {
+                // Best-effort cleanup; do not fail the delete if prune fails.
+            }
+        });
     }
 
     /**
      * Recursively delete a group directory. Throws {@code RESOURCE_IN_USE} when any resource
-     * within the group is currently leased.
+     * within the group is currently leased or another destructive delete is in progress.
      */
     public void deleteGroup(String date, String group) {
         LocalDate parsedDate = HubResourcePaths.parseDate(date);
@@ -229,34 +251,18 @@ public class HubResourceService {
         if (!Files.isDirectory(groupReal, LinkOption.NOFOLLOW_LINKS)) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
-        // Assert every existing descendant before the first delete so failure semantics are predictable.
-        try {
-            Files.walkFileTree(groupReal, new SimpleFileVisitor<Path>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    leaseManager.assertDeletable(file);
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                    leaseManager.assertDeletable(dir);
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (IOException ex) {
-            throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
-        }
-        try {
-            HubResourcePaths.deleteRecursivelyNoFollow(groupReal);
-        } catch (IOException ex) {
-            throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
-        }
-        try {
-            HubResourcePaths.pruneEmptyAncestors(root, groupReal.getParent());
-        } catch (IOException ex) {
-            // ignored; non-essential cleanup
-        }
+        leaseManager.runExclusively(groupReal, () -> {
+            try {
+                HubResourcePaths.deleteRecursivelyNoFollow(groupReal);
+            } catch (IOException ex) {
+                throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
+            }
+            try {
+                HubResourcePaths.pruneEmptyAncestors(root, groupReal.getParent());
+            } catch (IOException ex) {
+                // ignored; non-essential cleanup
+            }
+        });
     }
 
     /**
@@ -272,28 +278,13 @@ public class HubResourceService {
         if (!Files.isDirectory(dateReal, LinkOption.NOFOLLOW_LINKS)) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
-        try {
-            Files.walkFileTree(dateReal, new SimpleFileVisitor<Path>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    leaseManager.assertDeletable(file);
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                    leaseManager.assertDeletable(dir);
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (IOException ex) {
-            throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
-        }
-        try {
-            HubResourcePaths.deleteRecursivelyNoFollow(dateReal);
-        } catch (IOException ex) {
-            throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
-        }
+        leaseManager.runExclusively(dateReal, () -> {
+            try {
+                HubResourcePaths.deleteRecursivelyNoFollow(dateReal);
+            } catch (IOException ex) {
+                throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
+            }
+        });
     }
 
     /**
@@ -412,8 +403,8 @@ public class HubResourceService {
                 String.CASE_INSENSITIVE_ORDER.reversed());
         };
         items.sort(cmp);
-        int from = Math.min(page * pageSize, items.size());
-        int to = Math.min(from + pageSize, items.size());
+        int from = (int) Math.min((long) page * pageSize, items.size());
+        int to = (int) Math.min((long) from + pageSize, items.size());
         return new ArrayList<>(items.subList(from, to));
     }
 
@@ -503,26 +494,30 @@ public class HubResourceService {
         if (Files.isSymbolicLink(real)) {
             return false;
         }
-        try (var stream = Files.list(real)) {
-            for (Path child : (Iterable<Path>) stream::iterator) {
-                if (Files.exists(child, LinkOption.NOFOLLOW_LINKS)) {
-                    return false;
+        boolean[] removed = new boolean[] { false };
+        leaseManager.runExclusively(real, () -> {
+            try (var stream = Files.list(real)) {
+                for (Path child : (Iterable<Path>) stream::iterator) {
+                    if (Files.exists(child, LinkOption.NOFOLLOW_LINKS)) {
+                        return;
+                    }
                 }
+            } catch (IOException ex) {
+                throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
             }
-        } catch (IOException ex) {
-            throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
-        }
-        try {
-            Files.delete(real);
-        } catch (IOException ex) {
-            throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
-        }
-        try {
-            HubResourcePaths.pruneEmptyAncestors(root, real.getParent());
-        } catch (IOException ex) {
-            // best-effort
-        }
-        return true;
+            try {
+                Files.delete(real);
+            } catch (IOException ex) {
+                throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
+            }
+            removed[0] = true;
+            try {
+                HubResourcePaths.pruneEmptyAncestors(root, real.getParent());
+            } catch (IOException ex) {
+                // best-effort
+            }
+        });
+        return removed[0];
     }
 
     // -----------------------------------------------------------------------------------------
@@ -597,11 +592,19 @@ public class HubResourceService {
     }
 
     private long writeBounded(InputStream in, Path target, long maxFile, long maxRequest,
-                                AtomicLong requestBytes) throws IOException {
+                                AtomicLong requestBytes, List<Path> tempFiles) throws IOException {
         long fileBytes = 0L;
         int bufSize = 64 * 1024;
         byte[] buffer = new byte[bufSize];
-        Path tmp = target.resolveSibling("." + UUID.randomUUID() + ".part");
+        // Use a sibling-suffixed temp file so an atomic rename can replace the reservation
+        // placeholder (created by HubResourcePaths.reserveFileName) without traversing
+        // directories.
+        Path tmp = target.resolveSibling("." + target.getFileName() + "." + UUID.randomUUID() + ".part");
+        // Register the temp file with the caller so a partial failure can scrub our own
+        // scratch files without ever recursing into the group directory.
+        if (tempFiles != null) {
+            tempFiles.add(tmp);
+        }
         try (OutputStream out = Files.newOutputStream(tmp,
             StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
             int read;
@@ -621,7 +624,17 @@ public class HubResourceService {
             out.flush();
         }
         try {
-            Files.move(tmp, target);
+            // ATOMIC_MOVE guarantees that the rename either succeeds fully or leaves the
+            // placeholder untouched; REPLACE_EXISTING is explicitly NOT set so a TOCTOU
+            // collision would surface as AtomicMoveNotSupportedException / FileAlreadyExists
+            // instead of silently overwriting a concurrent writer's data.
+            try {
+                Files.move(tmp, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException ex) {
+                // Fallback for file systems without atomic rename; still refuses to overwrite
+                // because REPLACE_EXISTING is absent.
+                Files.move(tmp, target);
+            }
         } catch (IOException ex) {
             try {
                 Files.deleteIfExists(tmp);
@@ -633,18 +646,37 @@ public class HubResourceService {
         return fileBytes;
     }
 
-    private void deleteQuietly(Path target) {
+    private static void unlinkIfExists(Path target) {
         if (target == null) {
             return;
         }
         try {
-            if (Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
-                HubResourcePaths.deleteRecursivelyNoFollow(target);
-            } else if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-                Files.delete(target);
+            Files.deleteIfExists(target);
+        } catch (IOException ignored) {
+            // best-effort cleanup; reservation may already be gone
+        }
+    }
+
+    private void deleteEmptyGroupIfPossible(Path groupDir) {
+        if (groupDir == null || !Files.exists(groupDir, LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        if (Files.isSymbolicLink(groupDir)) {
+            return;
+        }
+        try (var stream = Files.list(groupDir)) {
+            boolean empty = !stream.iterator().hasNext();
+            if (!empty) {
+                return;
             }
-        } catch (IOException ex) {
-            // best-effort
+        } catch (IOException ignored) {
+            return;
+        }
+        try {
+            Files.delete(groupDir);
+            HubResourcePaths.pruneEmptyAncestors(root, groupDir.getParent());
+        } catch (IOException ignored) {
+            // best-effort; another upload may have refilled the group concurrently
         }
     }
 

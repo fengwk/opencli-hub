@@ -41,21 +41,37 @@ public final class HubResourceStream implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
-        IOException primary = null;
+        IOException inputFailure = null;
+        Throwable leaseFailure = null;
         try {
             inputStream.close();
         } catch (IOException ex) {
-            primary = ex;
+            inputFailure = ex;
         }
         try {
             lease.close();
-        } catch (Exception ex) {
-            if (primary == null && !(ex instanceof IOException)) {
-                throw new IOException("Failed to release resource lease", ex);
-            }
+        } catch (Throwable t) {
+            leaseFailure = t;
         }
-        if (primary != null) {
-            throw primary;
+        if (inputFailure != null) {
+            // Input stream failure is always the primary; the lease-release problem (if any)
+            // is reported as suppressed so the caller can inspect both at once.
+            if (leaseFailure != null) {
+                inputFailure.addSuppressed(leaseFailure);
+            }
+            throw inputFailure;
+        }
+        if (leaseFailure != null) {
+            if (leaseFailure instanceof IOException io) {
+                throw io;
+            }
+            if (leaseFailure instanceof RuntimeException re) {
+                throw re;
+            }
+            if (leaseFailure instanceof Error err) {
+                throw err;
+            }
+            throw new IOException("Failed to release resource lease", leaseFailure);
         }
     }
 
