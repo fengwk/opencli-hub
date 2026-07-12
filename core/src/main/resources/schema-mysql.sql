@@ -25,6 +25,7 @@ create table if not exists hub_execution (
     site varchar(80) not null,
     site_session varchar(16) not null,
     argv_json text not null,
+    reuse_instance tinyint(1) not null default 0,
     status varchar(32) not null,
     exit_code int null,
     stdout_content mediumtext null,

@@ -2,6 +2,7 @@ package fun.fengwk.openclihub.core.execution.executor;
 
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
+import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,12 +15,17 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * Local process implementation. The caller must pass catalog-validated normalized arguments.
+ * Local process implementation. The caller must pass catalog-validated normalized
+ * arguments plus any Hub-owned segments ({@code --profile}, managed output argument and
+ * {@code --format json}). This class only prepends the configured binary, sets the working
+ * directory, runs {@code ProcessBuilder}, reads stdout/stderr concurrently, and enforces
+ * the timeout via a destroy-then-grace-then-descendant-kill chain.
  *
  * @author fengwk
  */
@@ -39,41 +45,63 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
     }
 
     @Override
-    public OpenCliExecutionResult execute(HubInstance instance, List<String> normalizedArgv, long timeoutMillis) {
-        List<String> command = buildCommand(instance, normalizedArgv);
+    public OpenCliExecutionResult execute(HubInstance instance, List<String> hubManagedArgv, long timeoutMillis) {
+        List<String> command = buildCommand(hubManagedArgv);
         ProcessBuilder processBuilder = new ProcessBuilder(command);
         processBuilder.directory(Path.of(properties.getOpencli().getWorkdir()).toFile());
         processBuilder.redirectErrorStream(false);
-        try {
-            Process process = processBuilder.start();
-            CompletableFuture<CapturedText> stdoutFuture = capture(process.getInputStream());
-            CompletableFuture<CapturedText> stderrFuture = capture(process.getErrorStream());
-            boolean finished = process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS);
-            if (!finished) {
-                terminate(process);
-            }
-            CapturedText stdout = join(stdoutFuture);
-            CapturedText stderr = join(stderrFuture);
-            OpenCliExecutionResult result = new OpenCliExecutionResult();
-            result.setExitCode(finished ? process.exitValue() : 124);
-            result.setStdout(stdout.content());
-            result.setStdoutTruncated(stdout.truncated());
-            result.setStderr(stderr.content());
-            result.setStderrTruncated(stderr.truncated());
-            result.setTimedOut(!finished);
-            if (!finished) {
-                result.setErrorMessage("OpenCLI process exceeded deadline of " + timeoutMillis + " ms");
-            } else if (result.getExitCode() != 0) {
-                result.setErrorMessage("OpenCLI exited with code " + result.getExitCode());
-            }
-            return result;
-        } catch (IOException ex) {
-            log.error("Failed to start OpenCLI for instance {}", instance.getId(), ex);
-            throw new IllegalStateException("Failed to start OpenCLI process", ex);
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while waiting for OpenCLI process", ex);
+        if (instance != null) {
+            processBuilder.environment().put("OPENCLI_HUB_INSTANCE_ID",
+                Long.toString(instance.getId()));
+            processBuilder.environment().put("OPENCLI_HUB_INSTANCE_CODE",
+                instance.getCode() == null ? "" : instance.getCode());
         }
+        Process process = null;
+        Future<CapturedText> stdoutFuture = null;
+        Future<CapturedText> stderrFuture = null;
+        try {
+            process = processBuilder.start();
+        } catch (IOException ex) {
+            log.error("Failed to start OpenCLI for instance {}", instance == null ? null : instance.getId(), ex);
+            throw HubErrorCodes.OPENCLI_EXECUTION_FAILED.asThrowable(
+                ex, "Failed to start OpenCLI process");
+        }
+        stdoutFuture = capture(process.getInputStream());
+        stderrFuture = capture(process.getErrorStream());
+        boolean finished;
+        try {
+            finished = process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException ex) {
+            // Caller-side interrupt. Kill the process we just spawned before propagating
+            // the interrupt status so we never leak an orphan OpenCLI/Chrome.
+            terminateProcess(process);
+            try {
+                stdoutFuture.get();
+                stderrFuture.get();
+            } catch (Exception ignored) {
+                // best-effort drain; the result is undefined when the caller is gone
+            }
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while running OpenCLI", ex);
+        }
+        if (!finished) {
+            terminateProcess(process);
+        }
+        CapturedText stdout = join(stdoutFuture);
+        CapturedText stderr = join(stderrFuture);
+        OpenCliExecutionResult result = new OpenCliExecutionResult();
+        result.setExitCode(finished ? process.exitValue() : 124);
+        result.setStdout(stdout.content());
+        result.setStdoutTruncated(stdout.truncated());
+        result.setStderr(stderr.content());
+        result.setStderrTruncated(stderr.truncated());
+        result.setTimedOut(!finished);
+        if (!finished) {
+            result.setErrorMessage("OpenCLI process exceeded deadline of " + timeoutMillis + " ms");
+        } else if (result.getExitCode() != 0) {
+            result.setErrorMessage("OpenCLI exited with code " + result.getExitCode());
+        }
+        return result;
     }
 
     @PreDestroy
@@ -81,20 +109,13 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
         ioExecutor.shutdownNow();
     }
 
-    private List<String> buildCommand(HubInstance instance, List<String> normalizedArgv) {
-        if (instance == null || instance.getContextId() == null || instance.getContextId().isBlank()) {
-            throw new IllegalArgumentException("Instance contextId is required");
+    private List<String> buildCommand(List<String> hubManagedArgv) {
+        if (hubManagedArgv == null || hubManagedArgv.isEmpty()) {
+            throw new IllegalArgumentException("hubManagedArgv is required");
         }
-        if (normalizedArgv == null || normalizedArgv.isEmpty()) {
-            throw new IllegalArgumentException("Normalized argv is required");
-        }
-        List<String> command = new ArrayList<>();
+        List<String> command = new ArrayList<>(hubManagedArgv.size() + 1);
         command.add(properties.getOpencli().getBinary());
-        command.add("--profile");
-        command.add(instance.getContextId());
-        command.addAll(normalizedArgv);
-        command.add("--format");
-        command.add("json");
+        command.addAll(hubManagedArgv);
         return command;
     }
 
@@ -122,17 +143,50 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
         }
     }
 
-    private void terminate(Process process) throws InterruptedException {
+    /**
+     * Destroys the OpenCLI process tree. Descendants are snapshotted immediately before
+     * terminating the parent because a short-lived shell can disappear first and make
+     * {@link ProcessHandle#descendants()} empty while its children still hold the pipes.
+     */
+    private void terminateProcess(Process process) {
+        List<ProcessHandle> descendants = process.descendants().toList();
+        boolean interrupted = false;
         process.destroy();
-        long graceMillis = properties.getExecution().getProcessStopGraceMillis();
-        if (!process.waitFor(graceMillis, TimeUnit.MILLISECONDS)) {
-            process.descendants().forEach(ProcessHandle::destroyForcibly);
+        try {
+            process.waitFor(properties.getExecution().getProcessStopGraceMillis(),
+                TimeUnit.MILLISECONDS);
+        } catch (InterruptedException ex) {
+            interrupted = true;
+        }
+
+        for (ProcessHandle handle : descendants) {
+            if (handle.isAlive()) {
+                handle.destroyForcibly();
+            }
+        }
+        process.descendants().forEach(handle -> {
+            if (handle.isAlive()) {
+                handle.destroyForcibly();
+            }
+        });
+        if (process.isAlive()) {
             process.destroyForcibly();
+        }
+        try {
             process.waitFor();
+        } catch (InterruptedException ex) {
+            interrupted = true;
+            if (process.isAlive()) {
+                process.destroyForcibly();
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
-    private CapturedText join(CompletableFuture<CapturedText> future) {
+    private CapturedText join(Future<CapturedText> future) {
         try {
             return future.get();
         } catch (InterruptedException ex) {

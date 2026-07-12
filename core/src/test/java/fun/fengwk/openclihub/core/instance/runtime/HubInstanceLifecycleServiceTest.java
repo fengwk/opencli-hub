@@ -410,7 +410,7 @@ class HubInstanceLifecycleServiceTest {
                 } catch (InterruptedException ignored) {
                 }
                 return null;
-            }));
+            }, Long.MAX_VALUE));
             // Wait for the dispatched task to actually be running.
             assertThat(taskStarted.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             sleepQuietly(50);
@@ -425,7 +425,7 @@ class HubInstanceLifecycleServiceTest {
             blocker.countDown();
             submitter.shutdown();
             submitter.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS);
-            dispatcher.remove(id);
+            dispatcher.unregister(id);
         }
     }
 

@@ -78,6 +78,7 @@ public class MysqlHubExecutionRepository implements HubExecutionRepository {
         target.setSite(execution.getSite());
         target.setSiteSession(execution.getSiteSession() == null ? null : execution.getSiteSession().name());
         target.setArgvJson(writeJson(execution.getArgv()));
+        target.setReuseInstance(execution.isReuseInstance());
         target.setStatus(execution.getStatus() == null ? null : execution.getStatus().name());
         target.setExitCode(execution.getExitCode());
         target.setStdoutContent(execution.getStdout());
@@ -107,6 +108,7 @@ public class MysqlHubExecutionRepository implements HubExecutionRepository {
         target.setSite(source.getSite());
         target.setSiteSession(source.getSiteSession() == null ? null : SiteSessionMode.valueOf(source.getSiteSession()));
         target.setArgv(readStringList(source.getArgvJson()));
+        target.setReuseInstance(source.isReuseInstance());
         target.setStatus(source.getStatus() == null ? null : HubExecutionStatus.valueOf(source.getStatus()));
         target.setExitCode(source.getExitCode());
         target.setStdout(source.getStdoutContent());
