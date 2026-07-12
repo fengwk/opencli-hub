@@ -53,18 +53,15 @@ public class HubInstanceServiceImpl implements HubInstanceService {
         if (instance == null) {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("instance payload is required");
         }
-        // Defensive normalization: this also runs the website catalog validation when M1
-        // has wired the catalog bean.
+        // Same normalization contract as update() so create and update share one set of rules:
+        // trimmed code / displayName / contextId, validated maxPending range, normalized websites.
+        instance.setCode(validator.validateCode(instance.getCode()));
+        instance.setDisplayName(validator.validateDisplayName(instance.getDisplayName()));
+        instance.setMaxPending(validator.validateMaxPending(instance.getMaxPending()));
         instance.setWebsites(validator.validateWebsites(instance.getWebsites()));
-        validator.validateCode(instance.getCode());
-        if (instance.getDisplayName() != null) {
-            instance.setDisplayName(validator.validateDisplayName(instance.getDisplayName()));
-        }
+        instance.setContextId(validator.validateContextId(instance.getContextId()));
         if (instance.getState() == null) {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("state is required");
-        }
-        if (instance.getMaxPending() <= 0) {
-            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("maxPending must be positive");
         }
         if (instance.getId() <= 0) {
             instance.setId(repository.generateId());
@@ -145,10 +142,10 @@ public class HubInstanceServiceImpl implements HubInstanceService {
         existing.setState(newState);
         existing.setStateChangedAt(now);
         if (newState == HubInstanceState.ERROR) {
+            // Trim to avoid storing accidental padding; design does not impose a length cap.
+            String trimmed = errorMessage == null ? null : errorMessage.trim();
             existing.setLastErrorMessage(
-                errorMessage == null || errorMessage.isBlank()
-                    ? "unspecified error"
-                    : errorMessage);
+                trimmed == null || trimmed.isEmpty() ? "unspecified error" : trimmed);
         } else {
             existing.setLastErrorMessage(null);
         }
@@ -168,16 +165,18 @@ public class HubInstanceServiceImpl implements HubInstanceService {
 
     @Override
     public void bindContextId(long id, String contextId) {
-        if (contextId == null || contextId.isBlank()) {
+        if (contextId == null) {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("contextId is required");
         }
+        // validateContextId rejects blank input and returns the trimmed canonical value.
+        String normalized = validator.validateContextId(contextId);
         HubInstance existing = get(id);
-        HubInstance byCtx = repository.findByContextId(contextId);
+        HubInstance byCtx = repository.findByContextId(normalized);
         if (byCtx != null && byCtx.getId() != existing.getId()) {
             throw HubErrorCodes.CONTEXT_ID_CONFLICT.asThrowable(
-                "contextId already bound: " + contextId);
+                "contextId already bound: " + normalized);
         }
-        existing.setContextId(contextId);
+        existing.setContextId(normalized);
         try {
             boolean updated = repository.update(existing);
             if (!updated) {
@@ -186,7 +185,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
             }
         } catch (DuplicateKeyException ex) {
             throw HubErrorCodes.CONTEXT_ID_CONFLICT.asThrowable(ex,
-                "contextId already bound: " + contextId);
+                "contextId already bound: " + normalized);
         }
     }
 

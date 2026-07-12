@@ -34,14 +34,17 @@ public class HubInstanceValidator {
 
     /**
      * Stable code format: lowercase letters, digits and single hyphens. Must start and end with
-     * an alphanumeric character. Reserved for instance codes used as URL / filename segments.
+     * an alphanumeric character. Length 1..64 inclusive. The optional middle group accepts up to
+     * 62 lowercase letters / digits / hyphens, which permits 1- and 2-character codes as well
+     * as longer ones.
      */
-    public static final Pattern CODE_PATTERN = Pattern.compile("^[a-z0-9](?:[a-z0-9-]{1,62}[a-z0-9])?$");
+    public static final Pattern CODE_PATTERN = Pattern.compile("^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$");
 
     public static final int CODE_MAX_LENGTH = 64;
     public static final int DISPLAY_NAME_MAX_LENGTH = 128;
     public static final int MAX_PENDING_MIN = 1;
     public static final int MAX_PENDING_MAX = 50;
+    public static final int CONTEXT_ID_MAX_LENGTH = 128;
 
     private final CatalogWebsiteLookup websiteSource;
 
@@ -51,7 +54,8 @@ public class HubInstanceValidator {
 
     /**
      * Validates the editable properties and returns the normalized website list (trimmed,
-     * deduplicated, order-preserving).
+     * deduplicated, order-preserving). Side effect: writes the normalized code, displayName
+     * and maxPending back to {@code dto} so the caller persists the canonical form.
      *
      * @param dto input properties, may be {@code null}
      * @return normalized websites
@@ -61,7 +65,7 @@ public class HubInstanceValidator {
         if (dto == null) {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("instance editable payload is required");
         }
-        validateCode(dto.getCode());
+        dto.setCode(validateCode(dto.getCode()));
         dto.setDisplayName(validateDisplayName(dto.getDisplayName()));
         dto.setMaxPending(validateMaxPending(dto.getMaxPending()));
         List<String> websites = validateWebsites(dto.getWebsites());
@@ -69,9 +73,10 @@ public class HubInstanceValidator {
     }
 
     /**
-     * Validates {@code code} format. The same rules apply to create and update paths.
+     * Validates {@code code} format and returns the trimmed, canonical value.
+     * The same rules apply to create and update paths.
      */
-    public void validateCode(String code) {
+    public String validateCode(String code) {
         if (code == null) {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("code is required");
         }
@@ -87,6 +92,7 @@ public class HubInstanceValidator {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable(
                 "code must match " + CODE_PATTERN.pattern());
         }
+        return trimmed;
     }
 
     /**
@@ -163,6 +169,27 @@ public class HubInstanceValidator {
             normalized.add(trimmed);
         }
         return List.copyOf(normalized);
+    }
+
+    /**
+     * Validates and normalizes a context id. The trimmed value is returned so the caller
+     * persists the canonical form. Allowed when {@code contextId} is {@code null} (an
+     * instance may not yet have a connected extension profile); otherwise must be
+     * non-blank and within {@link #CONTEXT_ID_MAX_LENGTH} characters.
+     */
+    public String validateContextId(String contextId) {
+        if (contextId == null) {
+            return null;
+        }
+        String trimmed = contextId.trim();
+        if (trimmed.isEmpty()) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("contextId must not be blank");
+        }
+        if (trimmed.length() > CONTEXT_ID_MAX_LENGTH) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable(
+                "contextId length must be <= " + CONTEXT_ID_MAX_LENGTH);
+        }
+        return trimmed;
     }
 
 }

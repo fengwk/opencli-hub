@@ -35,6 +35,50 @@ class HubInstanceValidatorTest {
     }
 
     @Test
+    void shouldTrimAndReturnNormalizedCode() {
+        // Code with leading/trailing whitespace must be persisted without padding.
+        String normalized = validator.validateCode("  instance-01  ");
+        assertThat(normalized).isEqualTo("instance-01");
+    }
+
+    @Test
+    void shouldWriteBackNormalizedCodeFromValidateEditableProperties() {
+        HubInstanceEditablePropertiesDTO dto = baseDto();
+        dto.setCode("  instance-01  ");
+        validator.validateEditableProperties(dto);
+        assertThat(dto.getCode()).isEqualTo("instance-01");
+    }
+
+    @Test
+    void shouldAcceptOneCharacterCode() {
+        // Length 1 was previously rejected by the old pattern; the new one must allow it.
+        assertThat(validator.validateCode("a")).isEqualTo("a");
+    }
+
+    @Test
+    void shouldAcceptTwoCharacterCode() {
+        // Length 2 was previously rejected; the new pattern must allow it.
+        assertThat(validator.validateCode("ab")).isEqualTo("ab");
+    }
+
+    @Test
+    void shouldAcceptSixtyFourCharacterCode() {
+        // 1 leading alphanumeric + 62 middle chars + 1 trailing alphanumeric = 64.
+        String code = "a" + "b".repeat(62) + "c";
+        assertThat(code).hasSize(64);
+        assertThat(validator.validateCode(code)).isEqualTo(code);
+    }
+
+    @Test
+    void shouldRejectSixtyFiveCharacterCode() {
+        // One over the max must fail.
+        String code = "a" + "b".repeat(63) + "c";
+        assertThat(code).hasSize(65);
+        assertThatThrownBy(() -> validator.validateCode(code))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+    }
+
+    @Test
     void shouldRejectBlankCode() {
         // Whitespace-only code must fail before length/pattern checks fire.
         HubInstanceEditablePropertiesDTO dto = baseDto();
@@ -42,6 +86,15 @@ class HubInstanceValidatorTest {
         assertThatThrownBy(() -> validator.validateEditableProperties(dto))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_ARGUMENT_INVALID));
+    }
+
+    @Test
+    void shouldRejectMissingDisplayName() {
+        // displayName is required for every editable payload; null is invalid.
+        HubInstanceEditablePropertiesDTO dto = baseDto();
+        dto.setDisplayName(null);
+        assertThatThrownBy(() -> validator.validateEditableProperties(dto))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
     }
 
     @Test
@@ -120,6 +173,34 @@ class HubInstanceValidatorTest {
 
         dto.setCode("bad-");
         assertThatThrownBy(() -> validator.validateEditableProperties(dto)).isInstanceOf(ThrowableConventionErrorCode.class);
+    }
+
+    @Test
+    void shouldPassThroughNullContextId() {
+        // A null contextId is allowed: the instance may not yet have a connected extension.
+        assertThat(validator.validateContextId(null)).isNull();
+    }
+
+    @Test
+    void shouldTrimContextId() {
+        // Stored contextId must match what was used for uniqueness checks.
+        assertThat(validator.validateContextId("  ctx-1  ")).isEqualTo("ctx-1");
+    }
+
+    @Test
+    void shouldRejectBlankContextId() {
+        // An explicitly blank contextId is invalid input (use null to mean "not yet bound").
+        assertThatThrownBy(() -> validator.validateContextId("   "))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_ARGUMENT_INVALID));
+    }
+
+    @Test
+    void shouldRejectTooLongContextId() {
+        // Column cap is 128 chars; one over must fail.
+        String tooLong = "c".repeat(129);
+        assertThatThrownBy(() -> validator.validateContextId(tooLong))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
     }
 
     private HubInstanceEditablePropertiesDTO baseDto() {

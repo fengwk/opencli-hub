@@ -269,6 +269,103 @@ class HubInstanceServiceImplTest {
         verify(repository, never()).deleteById(anyLong());
     }
 
+    @Test
+    void shouldTrimAndPersistCodeOnCreate() {
+        // Caller-supplied code with surrounding whitespace must be persisted in canonical form.
+        AtomicLong ids = new AtomicLong(1000L);
+        doAnswer(inv -> ids.incrementAndGet()).when(repository).generateId();
+        doReturn(null).when(repository).findByCode(any());
+        doReturn(true).when(repository).add(any());
+
+        HubInstance instance = new HubInstance();
+        instance.setCode("  bilibili-a  ");
+        instance.setDisplayName("Bilibili A");
+        instance.setState(HubInstanceState.RUNNING);
+        instance.setWebsites(List.of("bilibili"));
+        instance.setMaxPending(5);
+
+        service.create(instance);
+
+        ArgumentCaptor<HubInstance> captor = ArgumentCaptor.forClass(HubInstance.class);
+        verify(repository).add(captor.capture());
+        assertThat(captor.getValue().getCode()).isEqualTo("bilibili-a");
+    }
+
+    @Test
+    void shouldTrimAndPersistContextIdOnCreate() {
+        // contextId set on create must also be trimmed before uniqueness check and insert.
+        AtomicLong ids = new AtomicLong(1000L);
+        doAnswer(inv -> ids.incrementAndGet()).when(repository).generateId();
+        doReturn(null).when(repository).findByCode(any());
+        doReturn(null).when(repository).findByContextId(any());
+        doReturn(true).when(repository).add(any());
+
+        HubInstance instance = new HubInstance();
+        instance.setCode("bilibili-x");
+        instance.setDisplayName("X");
+        instance.setContextId("  ctx-x  ");
+        instance.setState(HubInstanceState.RUNNING);
+        instance.setWebsites(List.of("bilibili"));
+        instance.setMaxPending(5);
+
+        service.create(instance);
+
+        ArgumentCaptor<HubInstance> captor = ArgumentCaptor.forClass(HubInstance.class);
+        verify(repository).add(captor.capture());
+        assertThat(captor.getValue().getContextId()).isEqualTo("ctx-x");
+    }
+
+    @Test
+    void shouldRejectCreateWhenDisplayNameMissing() {
+        // create must enforce displayName == required, matching the update contract.
+        HubInstance instance = new HubInstance();
+        instance.setCode("bilibili-z");
+        instance.setDisplayName(null);
+        instance.setState(HubInstanceState.RUNNING);
+        instance.setWebsites(List.of("bilibili"));
+        instance.setMaxPending(5);
+
+        assertThatThrownBy(() -> service.create(instance))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_ARGUMENT_INVALID));
+
+        verify(repository, never()).add(any());
+    }
+
+    @Test
+    void shouldRejectCreateWhenMaxPendingAboveUpperBound() {
+        // create must enforce the full 1..50 range, not just >0.
+        HubInstance instance = new HubInstance();
+        instance.setCode("bilibili-m");
+        instance.setDisplayName("M");
+        instance.setState(HubInstanceState.RUNNING);
+        instance.setWebsites(List.of("bilibili"));
+        instance.setMaxPending(51);
+
+        assertThatThrownBy(() -> service.create(instance))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_ARGUMENT_INVALID));
+
+        verify(repository, never()).add(any());
+    }
+
+    @Test
+    void shouldTrimContextIdOnBind() {
+        // bindContextId must query and persist the trimmed canonical value.
+        HubInstance existing = newInstance(1L, "code");
+        doReturn(existing).when(repository).findById(1L);
+        doReturn(null).when(repository).findByContextId("ctx-y");
+        doReturn(true).when(repository).update(any());
+
+        service.bindContextId(1L, "  ctx-y  ");
+
+        ArgumentCaptor<HubInstance> captor = ArgumentCaptor.forClass(HubInstance.class);
+        verify(repository).update(captor.capture());
+        assertThat(captor.getValue().getContextId()).isEqualTo("ctx-y");
+        // The repository must be queried with the trimmed value so uniqueness checks are exact.
+        verify(repository).findByContextId("ctx-y");
+    }
+
     private HubInstance newInstance(long id, String code) {
         HubInstance inst = new HubInstance();
         inst.setId(id);
