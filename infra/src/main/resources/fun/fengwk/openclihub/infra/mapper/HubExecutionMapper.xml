@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="fun.fengwk.openclihub.infra.mapper.HubExecutionMapper">
+
+    <resultMap id="HubExecutionDOResultMap" type="fun.fengwk.openclihub.infra.model.HubExecutionDO">
+        <id property="id" column="id"/>
+        <result property="instanceId" column="instance_id"/>
+        <result property="instanceCode" column="instance_code"/>
+        <result property="commandKey" column="command_key"/>
+        <result property="argvJson" column="argv_json"/>
+        <result property="status" column="status"/>
+        <result property="exitCode" column="exit_code"/>
+        <result property="stdoutContent" column="stdout_content"/>
+        <result property="stderrContent" column="stderr_content"/>
+        <result property="errorMessage" column="error_message"/>
+        <result property="timeoutMillis" column="timeout_millis"/>
+        <result property="queuedAt" column="queued_at"/>
+        <result property="startedAt" column="started_at"/>
+        <result property="finishedAt" column="finished_at"/>
+        <result property="createTime" column="gmt_create"/>
+        <result property="modifiedTime" column="gmt_modified"/>
+        <result property="version" column="version"/>
+    </resultMap>
+
+    <sql id="allColumns">
+        id,
+        instance_id,
+        instance_code,
+        command_key,
+        argv_json,
+        status,
+        exit_code,
+        stdout_content,
+        stderr_content,
+        error_message,
+        timeout_millis,
+        queued_at,
+        started_at,
+        finished_at,
+        gmt_create,
+        gmt_modified,
+        version
+    </sql>
+
+    <update id="createTableIfNotExists">
+        create table if not exists hub_execution (
+            id             bigint unsigned not null comment '主键',
+            instance_id    bigint unsigned not null comment '实例ID',
+            instance_code  varchar(64) not null comment '实例编码',
+            command_key    varchar(128) not null comment '命令键',
+            argv_json      longtext not null comment '命令参数',
+            status         varchar(32) not null comment '执行状态',
+            exit_code      int null comment '退出码',
+            stdout_content longtext null comment '标准输出',
+            stderr_content longtext null comment '标准错误输出',
+            error_message  varchar(512) null comment '错误消息',
+            timeout_millis bigint not null comment '超时时间',
+            queued_at      datetime(3) not null comment '入队时间',
+            started_at     datetime(3) null comment '开始时间',
+            finished_at    datetime(3) null comment '结束时间',
+            gmt_create     datetime(3) not null default current_timestamp(3) comment '创建时间',
+            gmt_modified   datetime(3) not null default current_timestamp(3) on update current_timestamp(3) comment '更新时间',
+            version        bigint not null default '0' comment '数据版本号',
+            primary key (id),
+            key idx_hub_execution_instance_id (instance_id),
+            key idx_hub_execution_status (status)
+        ) engine=InnoDB default charset=utf8mb4 comment='OpenCLI执行记录表';
+    </update>
+
+    <insert id="insertSelective" parameterType="fun.fengwk.openclihub.infra.model.HubExecutionDO">
+        insert into hub_execution (
+            id,
+            instance_id,
+            instance_code,
+            command_key,
+            argv_json,
+            status,
+            exit_code,
+            stdout_content,
+            stderr_content,
+            error_message,
+            timeout_millis,
+            queued_at,
+            started_at,
+            finished_at,
+            gmt_create,
+            gmt_modified,
+            version
+        ) values (
+            #{id},
+            #{instanceId},
+            #{instanceCode},
+            #{commandKey},
+            #{argvJson},
+            #{status},
+            #{exitCode},
+            #{stdoutContent},
+            #{stderrContent},
+            #{errorMessage},
+            #{timeoutMillis},
+            #{queuedAt},
+            #{startedAt},
+            #{finishedAt},
+            #{createTime},
+            #{modifiedTime},
+            0
+        )
+    </insert>
+
+    <update id="updateSelectiveById" parameterType="fun.fengwk.openclihub.infra.model.HubExecutionDO">
+        update hub_execution
+        set instance_id = #{instanceId},
+            instance_code = #{instanceCode},
+            command_key = #{commandKey},
+            argv_json = #{argvJson},
+            status = #{status},
+            exit_code = #{exitCode},
+            stdout_content = #{stdoutContent},
+            stderr_content = #{stderrContent},
+            error_message = #{errorMessage},
+            timeout_millis = #{timeoutMillis},
+            queued_at = #{queuedAt},
+            started_at = #{startedAt},
+            finished_at = #{finishedAt},
+            gmt_modified = #{modifiedTime}
+        where id = #{id}
+    </update>
+
+    <select id="selectById" resultMap="HubExecutionDOResultMap">
+        select <include refid="allColumns"/>
+        from hub_execution
+        where id = #{id}
+    </select>
+
+    <select id="countAll" resultType="long">
+        select count(*)
+        from hub_execution
+    </select>
+
+    <select id="pageAll" resultMap="HubExecutionDOResultMap">
+        select <include refid="allColumns"/>
+        from hub_execution
+        order by id desc
+        limit #{limit} offset #{offset}
+    </select>
+
+</mapper>

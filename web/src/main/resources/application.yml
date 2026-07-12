@@ -1,0 +1,51 @@
+spring:
+  application:
+    name: opencli-hub
+
+  mvc:
+    converters:
+      preferred-json-mapper: jackson
+
+  datasource:
+    driver-class-name: com.mysql.jdbc.Driver
+    url: jdbc:mysql://${OPENCLI_HUB_MYSQL_HOST:127.0.0.1}:${OPENCLI_HUB_MYSQL_PORT:3306}/${OPENCLI_HUB_MYSQL_DATABASE:opencli_hub}?useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&allowMultiQueries=true&connectTimeout=3000&socketTimeout=3000&useSSL=false
+    username: ${OPENCLI_HUB_MYSQL_USERNAME:root}
+    password: ${OPENCLI_HUB_MYSQL_PASSWORD:}
+
+server:
+  port: 8080
+  compression:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,prometheus,offline,online"
+
+logging:
+  level:
+    root: info
+
+convention:
+  snowflake-id:
+    initial-timestamp: 1702214261706
+    # 当前项目固定 worker id，不依赖 Redis 自动申请。
+    worker-id: 0
+
+  i18n:
+    base-name: string
+    locale: zh_CN
+
+  code:
+    i18n:
+      locale: ${convention.i18n.locale}
+
+opencli:
+  hub:
+    execution:
+      binary: ${OPENCLI_HUB_OPENCLI_BINARY:opencli}
+      workdir: ${OPENCLI_HUB_OPENCLI_WORKDIR:/home/fengwk/proj/OpenCLI}
+      default-timeout-millis: 120000
+      max-timeout-millis: 600000
+      max-capture-chars: 65535

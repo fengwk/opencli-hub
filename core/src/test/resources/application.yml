@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: opencli-hub
+
+  cloud:
+    nacos:
+      config:
+        enabled: false
+
+convention:
+  snowflake-id:
+    initial-timestamp: 1702214261706
+    worker-id: 0

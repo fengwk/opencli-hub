@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="fun.fengwk.openclihub.infra.mapper.HubInstanceMapper">
+
+    <resultMap id="HubInstanceDOResultMap" type="fun.fengwk.openclihub.infra.model.HubInstanceDO">
+        <id property="id" column="id"/>
+        <result property="code" column="code"/>
+        <result property="displayName" column="display_name"/>
+        <result property="opencliProfile" column="opencli_profile"/>
+        <result property="contextId" column="context_id"/>
+        <result property="vncEndpoint" column="vnc_endpoint"/>
+        <result property="state" column="state"/>
+        <result property="maxPending" column="max_pending"/>
+        <result property="supportedCommandsJson" column="supported_commands_json"/>
+        <result property="createTime" column="gmt_create"/>
+        <result property="modifiedTime" column="gmt_modified"/>
+        <result property="version" column="version"/>
+    </resultMap>
+
+    <sql id="allColumns">
+        id,
+        code,
+        display_name,
+        opencli_profile,
+        context_id,
+        vnc_endpoint,
+        state,
+        max_pending,
+        supported_commands_json,
+        gmt_create,
+        gmt_modified,
+        version
+    </sql>
+
+    <update id="createTableIfNotExists">
+        create table if not exists hub_instance (
+            id                      bigint unsigned not null comment '主键',
+            code                    varchar(64) not null comment '实例编码',
+            display_name            varchar(128) not null comment '实例名称',
+            opencli_profile         varchar(128) not null comment 'OpenCLI profile',
+            context_id              varchar(128) null comment 'Browser Bridge contextId',
+            vnc_endpoint            varchar(512) null comment 'VNC访问地址',
+            state                   varchar(32) not null comment '实例状态',
+            max_pending             int not null comment '最大排队数',
+            supported_commands_json longtext not null comment '支持的命令列表',
+            gmt_create              datetime(3) not null default current_timestamp(3) comment '创建时间',
+            gmt_modified            datetime(3) not null default current_timestamp(3) on update current_timestamp(3) comment '更新时间',
+            version                 bigint not null default '0' comment '数据版本号',
+            primary key (id),
+            unique key uk_hub_instance_code (code)
+        ) engine=InnoDB default charset=utf8mb4 comment='OpenCLI浏览器实例表';
+    </update>
+
+    <insert id="insertSelective" parameterType="fun.fengwk.openclihub.infra.model.HubInstanceDO">
+        insert into hub_instance (
+            id,
+            code,
+            display_name,
+            opencli_profile,
+            context_id,
+            vnc_endpoint,
+            state,
+            max_pending,
+            supported_commands_json,
+            gmt_create,
+            gmt_modified,
+            version
+        ) values (
+            #{id},
+            #{code},
+            #{displayName},
+            #{opencliProfile},
+            #{contextId},
+            #{vncEndpoint},
+            #{state},
+            #{maxPending},
+            #{supportedCommandsJson},
+            #{createTime},
+            #{modifiedTime},
+            0
+        )
+    </insert>
+
+    <update id="updateSelectiveById" parameterType="fun.fengwk.openclihub.infra.model.HubInstanceDO">
+        update hub_instance
+        set code = #{code},
+            display_name = #{displayName},
+            opencli_profile = #{opencliProfile},
+            context_id = #{contextId},
+            vnc_endpoint = #{vncEndpoint},
+            state = #{state},
+            max_pending = #{maxPending},
+            supported_commands_json = #{supportedCommandsJson},
+            gmt_modified = #{modifiedTime}
+        where id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        delete from hub_instance where id = #{id}
+    </delete>
+
+    <select id="selectById" resultMap="HubInstanceDOResultMap">
+        select <include refid="allColumns"/>
+        from hub_instance
+        where id = #{id}
+    </select>
+
+    <select id="selectByCode" resultMap="HubInstanceDOResultMap">
+        select <include refid="allColumns"/>
+        from hub_instance
+        where code = #{code}
+    </select>
+
+    <select id="listAll" resultMap="HubInstanceDOResultMap">
+        select <include refid="allColumns"/>
+        from hub_instance
+        order by id asc
+    </select>
+
+</mapper>

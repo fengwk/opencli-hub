@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: opencli-hub
+
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:opencli_hub_infra;DB_CLOSE_DELAY=-1;MODE=MySQL
+    username: SA
+
+  cloud:
+    nacos:
+      config:
+        enabled: false
+
+convention:
+  snowflake-id:
+    initial-timestamp: 1702214261706
+    worker-id: 0
+
+opencli:
+  hub:
+    execution:
+      workdir: /home/fengwk/proj/OpenCLI

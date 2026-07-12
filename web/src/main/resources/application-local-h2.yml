@@ -1,0 +1,11 @@
+spring:
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:opencli_hub;DB_CLOSE_DELAY=-1;MODE=MySQL
+    username: SA
+    password:
+
+convention:
+  snowflake-id:
+    initial-timestamp: 1702214261706
+    worker-id: 0
