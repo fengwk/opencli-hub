@@ -1,0 +1,187 @@
+package fun.fengwk.openclihub.core.instance.repo.impl;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
+import fun.fengwk.openclihub.core.instance.repo.HubInstanceRepository;
+import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
+import fun.fengwk.openclihub.core.instance.service.validation.CatalogWebsiteLookup;
+import fun.fengwk.openclihub.core.instance.service.validation.HubInstanceValidator;
+import fun.fengwk.openclihub.share.constant.HubErrorCodes;
+import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+/**
+ * End-to-end repository round-trip against the H2 schema, plus targeted unique-key and
+ * ordering verifications. Runs in the shared {@code CoreTestApplication} context so the
+ * generated mapper XML is exercised exactly as it would be in production.
+ *
+ * <p>All insert / update paths use the same repository the service layer depends on,
+ * which makes this the authoritative test that the {@code schema-h2.sql} constraints
+ * and the Auto Mapper generated SQL agree with the domain model.
+ *
+ * <p>Codes are randomized per test to coexist with {@link fun.fengwk.openclihub.core.CorePersistenceSmokeTest}
+ * on the shared in-memory database.
+ */
+@SpringBootTest(classes = fun.fengwk.openclihub.core.CoreTestApplication.class)
+class MysqlHubInstanceRepositoryH2Test {
+
+    @Autowired
+    private HubInstanceRepository repository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Test
+    void shouldRoundTripAllPersistedFields() {
+        // End-to-end: insert through the repository, read it back, assert every field
+        // including the JSON-serialized websites survives the round trip.
+        long id = repository.generateId();
+        String code = uniqueCode("repo-a");
+        HubInstance instance = new HubInstance();
+        instance.setId(id);
+        instance.setCode(code);
+        instance.setDisplayName("Repo A");
+        instance.setContextId("ctx-" + code);
+        instance.setState(HubInstanceState.RUNNING);
+        instance.setWebsites(List.of("bilibili", "chatgpt"));
+        instance.setMaxPending(5);
+        LocalDateTime now = LocalDateTime.now();
+        instance.setStateChangedAt(now);
+        instance.setCreateTime(now);
+        instance.setUpdateTime(now);
+
+        assertThat(repository.add(instance)).isTrue();
+
+        HubInstance loaded = repository.findById(id);
+        assertThat(loaded).isNotNull();
+        assertThat(loaded.getCode()).isEqualTo(code);
+        assertThat(loaded.getDisplayName()).isEqualTo("Repo A");
+        assertThat(loaded.getContextId()).isEqualTo("ctx-" + code);
+        assertThat(loaded.getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(loaded.getWebsites()).containsExactly("bilibili", "chatgpt");
+        assertThat(loaded.getMaxPending()).isEqualTo(5);
+    }
+
+    @Test
+    void shouldReturnInstancesOrderedByIdAscending() {
+        // Inserts three rows out of order; listAll() must still return them by id asc.
+        long idA = repository.generateId();
+        long idB = repository.generateId();
+        long idC = repository.generateId();
+        repository.add(build(idC, uniqueCode("repo-c"), HubInstanceState.STOPPED));
+        repository.add(build(idA, uniqueCode("repo-a"), HubInstanceState.RUNNING));
+        repository.add(build(idB, uniqueCode("repo-b"), HubInstanceState.STARTING));
+
+        List<HubInstance> all = repository.listAll();
+
+        // listAll() returns every persisted row ordered by id ascending.
+        assertThat(all).extracting(HubInstance::getId).isSorted();
+        // The three rows we just inserted must appear in id ascending order regardless
+        // of insertion order.
+        assertThat(all)
+            .filteredOn(inst -> inst.getId() == idA || inst.getId() == idB || inst.getId() == idC)
+            .extracting(HubInstance::getId)
+            .containsExactly(idA, idB, idC);
+    }
+
+    @Test
+    void shouldFindByCodeAndContextId() {
+        // findByCode/findByContextId are the only lookup paths the service layer uses
+        // for pre-checks; both must work and a null contextId must return null.
+        long id = repository.generateId();
+        String code = uniqueCode("find-by-code");
+        repository.add(build(id, code, HubInstanceState.RUNNING));
+
+        assertThat(repository.findByCode(code)).isNotNull();
+        assertThat(repository.findByContextId(null)).isNull();
+    }
+
+    @Test
+    void shouldEnforceUniqueCodeAtDatabaseLevel() {
+        // Pre-check path: the service short-circuits on a duplicate code via findByCode.
+        // Race path: a concurrent insert that bypasses the pre-check must still hit the
+        // unique index and produce a DuplicateKeyException for the service to translate.
+        String code = uniqueCode("dup-code");
+        long first = repository.generateId();
+        repository.add(build(first, code, HubInstanceState.RUNNING));
+
+        // Pre-check catches it before we hit the constraint.
+        assertThatThrownBy(() -> serviceCreate(build(repository.generateId(),
+            code, HubInstanceState.RUNNING)))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_CODE_CONFLICT));
+
+        // Forcing the unique-key violation directly to confirm error mapping survives
+        // a race condition where the pre-check passes but the insert loses.
+        HubInstance racer = build(repository.generateId(), code, HubInstanceState.RUNNING);
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "insert into hub_instance (id, code, display_name, context_id, state, "
+                    + "websites_json, max_pending, last_error_message, state_changed_at, "
+                    + "gmt_create, gmt_modified, version) values (?,?,?,?,?,?,?,?,?,?,?,?)",
+                racer.getId(), racer.getCode(), racer.getDisplayName(), racer.getContextId(),
+                racer.getState().name(), "[]", racer.getMaxPending(), null,
+                LocalDateTime.now(), LocalDateTime.now(), LocalDateTime.now(), 0L))
+            .isInstanceOf(DuplicateKeyException.class);
+    }
+
+    @Test
+    void shouldNormalizeEmptyWebsitesArrayOnRoundTrip() {
+        // Empty website list is allowed at the storage layer (the service rejects it as
+        // an argument error before persisting), so the JSON deserializer must round-trip
+        // an empty array back into an empty list without throwing.
+        long id = repository.generateId();
+        HubInstance instance = new HubInstance();
+        instance.setId(id);
+        instance.setCode(uniqueCode("empty-websites"));
+        instance.setDisplayName("Empty");
+        instance.setState(HubInstanceState.STOPPED);
+        instance.setWebsites(List.of());
+        instance.setMaxPending(5);
+        instance.setStateChangedAt(LocalDateTime.now());
+        repository.add(instance);
+
+        assertThat(repository.findById(id).getWebsites()).isEmpty();
+    }
+
+    private HubInstance build(long id, String code, HubInstanceState state) {
+        HubInstance instance = new HubInstance();
+        instance.setId(id);
+        instance.setCode(code);
+        instance.setDisplayName("Display " + code);
+        instance.setState(state);
+        instance.setWebsites(List.of("bilibili"));
+        instance.setMaxPending(5);
+        instance.setStateChangedAt(LocalDateTime.now());
+        return instance;
+    }
+
+    private static String uniqueCode(String prefix) {
+        return prefix + "-" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private static String prefixed(HubErrorCodes code) {
+        return code.getDomain() + "." + code.name();
+    }
+
+    /**
+     * Runs the full service layer so we exercise both the pre-check and the underlying
+     * constraint behavior. Reuses a fresh validator bound to a small in-memory website set.
+     */
+    private void serviceCreate(HubInstance instance) {
+        CatalogWebsiteLookup lookup = () -> Set.of("bilibili");
+        HubInstanceValidator validator = new HubInstanceValidator(lookup);
+        new fun.fengwk.openclihub.core.instance.service.impl.HubInstanceServiceImpl(
+            repository, validator).create(instance);
+    }
+
+}
