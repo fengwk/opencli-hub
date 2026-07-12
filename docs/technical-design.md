@@ -478,7 +478,7 @@ create table hub_instance (
     id bigint not null,
     code varchar(64) not null,
     display_name varchar(128) not null,
-    context_id varchar(128) not null,
+    context_id varchar(128) null,
     state varchar(32) not null,
     websites_json text not null,
     max_pending int not null,
@@ -523,7 +523,9 @@ create table hub_execution (
     status varchar(32) not null,
     exit_code int null,
     stdout_content mediumtext null,
+    stdout_truncated tinyint(1) not null default 0,
     stderr_content mediumtext null,
+    stderr_truncated tinyint(1) not null default 0,
     error_message text null,
     timeout_millis bigint not null,
     queued_at timestamp(3) not null,
@@ -636,7 +638,7 @@ public interface HubExecutionMapper extends BaseMapper {
 }
 ```
 
-黑名单和输出规则使用同样的命名方式。XML 只保留空 mapper 外壳；常规 CRUD 不手写 SQL。
+黑名单和输出规则使用同样的命名方式。常规 CRUD 不手写 SQL，也不在 `src/main/resources` 提交空 Mapper XML；当前 Auto Mapper 注解处理器在 Maven `compile` 阶段直接将完整 XML 生成到 `target/classes`。若源码资源中存在同路径空 XML，会因 `resources` 先于 `compile` 执行而遮蔽生成结果。
 
 ### 10.3 Repository 约束
 

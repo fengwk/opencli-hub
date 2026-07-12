@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -16,23 +18,9 @@
             <artifactId>opencli-hub-core</artifactId>
         </dependency>
         <dependency>
-            <groupId>fun.fengwk.opencli-hub</groupId>
-            <artifactId>opencli-hub-infra</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>fun.fengwk.gateway</groupId>
-            <artifactId>gateway-share</artifactId>
-        </dependency>
-        <dependency>
             <groupId>fun.fengwk.convention4j</groupId>
             <artifactId>convention4j-spring-boot-starter-web</artifactId>
         </dependency>
-        <!--
-        <dependency>
-            <groupId>org.springdoc</groupId>
-            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-        </dependency>
-        -->
         <dependency>
             <groupId>fun.fengwk.convention4j</groupId>
             <artifactId>convention4j-spring-boot-starter-test</artifactId>
@@ -45,6 +33,7 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
                 <executions>
                     <execution>
                         <goals>

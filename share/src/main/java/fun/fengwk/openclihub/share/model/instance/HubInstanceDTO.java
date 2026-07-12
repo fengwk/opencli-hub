@@ -1,0 +1,28 @@
+package fun.fengwk.openclihub.share.model.instance;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import lombok.Data;
+
+/**
+ * Browser instance details returned by the management API.
+ *
+ * @author fengwk
+ */
+@Data
+public class HubInstanceDTO {
+
+    private long id;
+    private String code;
+    private String displayName;
+    private String contextId;
+    private HubInstanceState state;
+    private List<String> websites;
+    private int maxPending;
+    private String lastErrorMessage;
+    private LocalDateTime stateChangedAt;
+    private HubInstanceRuntimeDTO runtime;
+    private LocalDateTime createTime;
+    private LocalDateTime updateTime;
+
+}
