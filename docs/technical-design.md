@@ -57,7 +57,7 @@
 | 数据库 | 生产 MySQL，本地 H2 MySQL compatibility mode |
 | SQL | MyBatis Auto Mapper 生成常规 SQL；H2 自动初始化；MySQL 手工执行 SQL |
 | 浏览器 | 正式 `google-chrome-stable`，非 Chromium/Chrome for Testing |
-| extension | Docker 构建阶段下载固定版本 release ZIP，运行时 `--load-extension` |
+| extension | 固定 1.0.22；构建期打包固定签名 CRX3，运行时通过 Linux managed policy + loopback update server 强制安装 |
 | OpenCLI | 原版 CLI，通过 `ProcessBuilder` 调用，不改 OpenCLI 源码 |
 | daemon | 单容器共享一个 OpenCLI daemon |
 | Instance 创建 | 同步创建，成功后才插入数据库；失败清理全部残留 |
@@ -329,6 +329,14 @@ opencli:
 
     vnc:
       startup-timeout-millis: 10000
+
+    runtime:
+      startup-recovery-enabled: true
+      display-base: 99
+      vnc-port-base: 5900
+      vnc-port-max: 5999
+      process-stop-grace-millis: 3000
+      readiness-poll-millis: 50
 
     execution:
       default-timeout-millis: 600000
@@ -861,19 +869,20 @@ opencli --profile <contextId> chatgpt image \
 
 ### 15.1 生命周期
 
-Hub 启动时确保 daemon 运行。容器内 Hub 独占该 daemon，可使用：
+每个 Instance 创建/启动前，Hub 先通过认证的 status 请求确认 daemon；不可用时执行：
 
 ```bash
 opencli daemon restart
 ```
 
-然后通过 daemon HTTP status 接口检查：
+然后轮询 daemon HTTP status 接口，直到返回有效 pid：
 
-```text
-http://127.0.0.1:19825/status
+```http
+GET http://127.0.0.1:19825/status
+X-OpenCLI: 1
 ```
 
-Hub 停止时不需要依赖每个 CLI 子进程关闭 daemon；容器停止会终止全部进程。
+只接受成功解析的 `/status`，不能把任意 loopback 端口的 4xx 响应视为 daemon 已就绪。Hub 停止时不需要依赖每个 CLI 子进程关闭 daemon；容器停止会终止全部进程。
 
 ### 15.2 OpenCliDaemonClient
 
@@ -884,7 +893,7 @@ Hub 停止时不需要依赖每个 CLI 子进程关闭 daemon；容器停止会�
 - `contextId`；
 - extension version；
 - pending；
-- lastSeenAt。
+- `lastSeenAt`（epoch millis）。
 
 不通过解析 `opencli daemon status` 的人类文本获取 profile。
 
@@ -912,6 +921,7 @@ sequenceDiagram
     Hub->>Hub: validate + acquire global creation lock
     Hub->>Hub: generate instanceId
     Hub->>Hub: create instance directory + .creating
+    Hub->>Daemon: ensure daemon + authenticated /status
     Hub->>Daemon: snapshot connected contextIds
     Hub->>Runtime: start Xvfb/openbox/x11vnc/Chrome
     Runtime->>Daemon: extension connects with generated contextId
@@ -921,23 +931,51 @@ sequenceDiagram
     Hub-->>UI: 201 Created
 ```
 
-### 16.3 Chrome 启动参数
+### 16.3 Chrome extension 安装与启动参数
+
+Chrome 150 stable 已实测忽略 `--load-extension` 等 unpacked extension 参数，因此生产方案固定为：
+
+```text
+OpenCLI Browser Bridge extension 1.0.22
+-> 构建期使用 google-chrome-stable --pack-extension 生成 CRX3
+-> 固定 PEM 签名身份
+-> 固定 extension ID: lieajjjjjggpnhebbjmmlfofjojallpe
+-> Linux managed policy 强制安装
+-> loopback update server: 127.0.0.1:18181
+```
+
+managed policy 同时配置 `ExtensionInstallForcelist`、`ExtensionSettings` 和 `override_update_url=true`。CRX、update manifest、policy 和 update server 均在镜像构建/启动层准备，Instance Runtime 只负责启动独立 Chrome Profile。
+
+Java Runtime 允许的 Chrome 参数：
 
 ```text
 --user-data-dir={instanceDir}/chrome
---disable-extensions-except=/opt/opencli/extension
---load-extension=/opt/opencli/extension
---disable-features=DisableLoadExtensionCommandLineSwitch
 --enable-unsafe-extension-debugging
 --no-first-run
 --no-default-browser-check
+--disable-sync
+--disable-popup-blocking
 --window-size=1600,900
 ```
 
+明确禁止重新加入：
+
+```text
+--load-extension
+--disable-extensions-except
+--disable-features=DisableLoadExtensionCommandLineSwitch
+--disable-background-networking
+--disable-component-update
+```
+
+前三项被正式 Chrome 150 拒绝或忽略；后两项会阻断 managed extension 首次安装/更新。
+
 - 由 `DISPLAY=:{displayNumber}` 选择 Xvfb；
-- 非 root 运行，不默认加 `--no-sandbox`；
-- 不添加 WebDriver 参数；
-- headed 模式运行。
+- 使用正式 `google-chrome-stable` headed 模式；
+- Chrome 由非 root 用户运行，不默认加 `--no-sandbox`；
+- 不添加 WebDriver、ChromeDriver、Selenium 或 Playwright 参数；
+- Docker 推荐 `--shm-size=2g`；当前宿主 sandbox 验证需要 `--security-opt seccomp=unconfined`；
+- 构建资产、固定哈希、policy 和实测步骤以 [Chrome Extension PoC](./poc-chrome-extension.md) 为准。
 
 ### 16.4 `contextId` 发现
 
@@ -993,13 +1031,13 @@ stop Chrome
 - `.creating` 且数据库无记录：删除孤儿目录；
 - `.creating` 且数据库有记录：删除 marker，保留 Profile；
 - 目录名是纯数字且数据库无对应 Instance：视为 Hub 删除失败留下的孤儿目录并清理；
-- 非数字目录不自动删除。
+- 非数字目录不自动删除，即使其中存在 `.creating` 也只告警并保留。
 
 ## 17. Instance 启动恢复
 
 ### 17.1 应用启动
 
-Web 服务可用后，后台单线程顺序启动所有数据库 Instance：
+应用启动后，后台单线程顺序启动所有数据库 Instance；`startup-recovery-enabled` 生产默认开启，仅允许测试或显式诊断关闭：
 
 ```text
 load all instances order by id
@@ -1081,7 +1119,7 @@ block new routing
 -> return 204
 ```
 
-Instance 根目录由 Hub 独占。若数据库删除成功但目录删除失败，接口返回 `INSTANCE_DELETE_FAILED`，后台立即重试目录清理；应用启动时还会扫描名称为纯数字、但数据库中不存在对应记录的孤儿 Instance 目录并删除。非数字目录不会自动删除。
+Instance 根目录由 Hub 独占。若数据库删除成功但目录删除失败，接口返回 `INSTANCE_DELETE_FAILED`；应用下次启动时扫描名称为纯数字、但数据库中不存在对应记录的孤儿 Instance 目录并删除。非数字目录不会自动删除。
 
 彻底删除：
 
@@ -1105,14 +1143,13 @@ UI 必须显示不可恢复的二次确认。
 ```java
 public class HubInstanceRuntime {
     private long instanceId;
+    private String instanceCode;
     private int displayNumber;
     private int vncPort;
-    private Process xvfbProcess;
-    private Process openboxProcess;
-    private Process vncProcess;
-    private Process chromeProcess;
-    private Instant startedAt;
+    private String instanceDir;
+    private Map<HubInstanceProcessKind, ProcessHandle> processes;
     private String contextId;
+    private long startedAtMillis;
 }
 ```
 
@@ -1147,15 +1184,17 @@ instances/{id}/logs/
 ### 19.4 端口和 DISPLAY
 
 - DISPLAY 从配置基准值开始扫描 `/tmp/.X{n}-lock` 和 `/tmp/.X11-unix/X{n}`；
-- VNC 使用本地可用 TCP 端口；
-- x11vnc 必须加 `-localhost -nopw -shared -forever`；
+- VNC 从有界配置区间扫描 `127.0.0.1` 可用 TCP 端口；
+- allocation 返回后立即在进程内预留 DISPLAY/VNC，直到 runtime 注销或启动回滚，关闭“已分配但尚未 bind”的并发窗口；
+- x11vnc 必须加 `-listen 127.0.0.1 -localhost -nopw -shared -forever -noxdamage`；
 - VNC port 只存 runtime，不持久化。
 
 ### 19.5 进程退出
 
-- 非预期退出时记录系统日志并将 Instance 标记 `ERROR`；
+- watcher 轮询 Xvfb、openbox、x11vnc 和 Chrome 的全部已跟踪 `ProcessHandle`；
+- 任一进程非预期退出时，先停止其余进程、注销 runtime/dispatcher，再将 Instance 标记 `ERROR`；
 - MVP 不自动重启单个进程；管理员可点重启；
-- 停止时先 `destroy()`，等待 grace，仍存活则销毁 descendants 并 `destroyForcibly()`。
+- 停止时先快照 descendants 并对父进程 `destroy()`；等待 grace 后，无论父进程是否已退出，都对仍存活的 descendants 和父进程执行 `destroyForcibly()`。
 
 ## 20. 路由和队列
 
