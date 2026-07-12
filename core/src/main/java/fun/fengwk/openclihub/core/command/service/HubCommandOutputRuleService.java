@@ -17,14 +17,20 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * In-memory cached output rule service.
  *
- * <p>The service reuses the same simple {@link ConcurrentHashMap}-based cache as the
- * blacklist service. It also acts as the validator for rule changes: when an admin saves
- * or replaces a rule, the service checks the catalog to confirm the command exists as a
+ * <p>The cache is a {@link ConcurrentHashMap} keyed by canonical command key. Loaded
+ * state is tracked explicitly via {@link #loaded} because a legitimately empty database
+ * result and a not-yet-loaded cache both produce an empty map; treating the map's
+ * emptiness as the "unloaded" signal would force a redundant {@code listAll()} on every
+ * call against an empty table.
+ *
+ * <p>The service also acts as the validator for rule changes: when an admin saves or
+ * replaces a rule, the service checks the catalog to confirm the command exists as a
  * public browser command and that the named argument accepts a value.
  *
  * @author fengwk
@@ -37,6 +43,7 @@ public class HubCommandOutputRuleService {
     private final HubCommandOutputRuleRepository repository;
     private final OpenCliCommandCatalog catalog;
     private final ConcurrentMap<String, HubCommandOutputRule> cache = new ConcurrentHashMap<>();
+    private final AtomicBoolean loaded = new AtomicBoolean(false);
 
     public HubCommandOutputRuleService(HubCommandOutputRuleRepository repository,
                                        OpenCliCommandCatalog catalog) {
@@ -54,8 +61,8 @@ public class HubCommandOutputRuleService {
         if (commandKey == null) {
             return Optional.empty();
         }
-        HubCommandOutputRule cached = cache.computeIfAbsent(commandKey, this::loadByCommandKey);
-        return Optional.ofNullable(cached);
+        ensureLoaded();
+        return Optional.ofNullable(cache.get(commandKey));
     }
 
     public List<HubCommandOutputRule> listAll() {
@@ -69,6 +76,7 @@ public class HubCommandOutputRuleService {
     public HubCommandOutputRule upsert(String commandKey, String argumentName,
                                        HubCommandOutputTargetType targetType, String fileName) {
         validateRule(commandKey, argumentName, targetType, fileName);
+        ensureLoaded();
         HubCommandOutputRule existing = cache.get(commandKey);
         HubCommandOutputRule rule = existing == null ? new HubCommandOutputRule() : existing;
         rule.setCommandKey(commandKey);
@@ -94,7 +102,11 @@ public class HubCommandOutputRuleService {
     }
 
     public boolean delete(String commandKey) {
-        if (commandKey == null || !cache.containsKey(commandKey)) {
+        if (commandKey == null) {
+            return false;
+        }
+        ensureLoaded();
+        if (!cache.containsKey(commandKey)) {
             return false;
         }
         if (!repository.deleteByCommandKey(commandKey)) {
@@ -110,20 +122,18 @@ public class HubCommandOutputRuleService {
         for (HubCommandOutputRule rule : repository.listAll()) {
             cache.put(rule.getCommandKey(), rule);
         }
+        loaded.set(true);
     }
 
     private void ensureLoaded() {
-        if (cache.isEmpty()) {
-            synchronized (this) {
-                if (cache.isEmpty()) {
-                    refresh();
-                }
+        if (loaded.get()) {
+            return;
+        }
+        synchronized (this) {
+            if (!loaded.get()) {
+                refresh();
             }
         }
-    }
-
-    private HubCommandOutputRule loadByCommandKey(String commandKey) {
-        return repository.findByCommandKey(commandKey).orElse(null);
     }
 
     private void validateRule(String commandKey, String argumentName,

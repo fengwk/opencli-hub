@@ -110,6 +110,56 @@ class HubCommandBlacklistServiceTest {
                 .isEqualTo(HubErrorCodes.EXECUTION_PERSIST_FAILED));
     }
 
+    @Test
+    void shouldLoadOnceAndDetectExistingEntryOnColdCache() {
+        // The repository already holds a row but the service cache is cold. A naive
+        // implementation that treats `cache.isEmpty()` as "not loaded" would miss this
+        // and try to insert a duplicate. The explicit loaded flag must trigger a
+        // single refresh() so blacklist() sees the existing entry.
+        repository.addDirectly(entry("bilibili/hot", "blocked"));
+        assertThat(repository.listAllCallCount).isZero();
+
+        service.blacklist("bilibili/hot", "another reason");
+
+        assertThat(repository.listAllCallCount).isEqualTo(1);
+        assertThat(repository.addCount).isZero();
+        assertThat(service.findByCommandKey("bilibili/hot").orElseThrow().getReason())
+            .isEqualTo("blocked");
+    }
+
+    @Test
+    void shouldLoadOnceAndUnblacklistExistingEntryOnColdCache() {
+        // Cold cache + populated repository: unblacklist() must observe the row and
+        // remove it. listAll() runs twice: once for the initial cache load, once for
+        // the post-mutation refresh(); both are correct.
+        repository.addDirectly(entry("chatgpt/image", "write gated"));
+        assertThat(repository.listAllCallCount).isZero();
+
+        assertThat(service.unblacklist("chatgpt/image")).isTrue();
+
+        assertThat(repository.listAllCallCount).isEqualTo(2);
+        assertThat(repository.findByCommandKey("chatgpt/image")).isEmpty();
+    }
+
+    @Test
+    void shouldLoadOnceWhenDatabaseIsLegitimatelyEmpty() {
+        // The "empty cache means not loaded" heuristic would re-hit listAll() on every
+        // call against an empty database. The explicit loaded flag must short-circuit
+        // after the first refresh.
+        int before = repository.listAllCallCount;
+
+        service.listAll();
+        int afterFirst = repository.listAllCallCount;
+
+        service.listAll();
+        service.findByCommandKey("anything");
+        service.snapshot();
+        int afterMore = repository.listAllCallCount;
+
+        assertThat(afterFirst - before).isEqualTo(1);
+        assertThat(afterMore).isEqualTo(afterFirst);
+    }
+
     private static HubCommandBlacklist entry(String commandKey, String reason) {
         HubCommandBlacklist b = new HubCommandBlacklist();
         b.setId(1001L);

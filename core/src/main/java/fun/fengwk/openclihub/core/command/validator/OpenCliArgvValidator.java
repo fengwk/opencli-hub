@@ -6,7 +6,6 @@ import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandCatalog;
 import fun.fengwk.openclihub.core.opencli.catalog.OpenCliReservedManagementCommands;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +18,13 @@ import java.util.Optional;
  * supplied argv against the resolved command's declared arguments, enforces Hub-exclusive
  * options, validates types/choices/required flags and rebuilds a canonical argv list that
  * downstream executors (M5) can forward to the OpenCLI process via {@code ProcessBuilder}.
+ *
+ * <p>Boolean flag arguments ({@code valueRequired=false, type=boolean}) are normalized as
+ * a single {@code --name} token: the validator rejects {@code --name=value} and
+ * {@code --name value} forms so Hub cannot accidentally turn a boolean flag into a
+ * value-bearing option. The normalized argv never carries {@code true}/{@code false} for
+ * these options; callers that need the boolean decision can read it from
+ * {@link NormalizedOpenCliArgv#getNamedValue(String)} which records {@code true}.
  *
  * <p>No shell concatenation is performed anywhere in this class.
  *
@@ -147,16 +153,30 @@ public class OpenCliArgvValidator {
                     "Unknown OpenCLI option: " + name, name);
             }
 
-            String value;
+            boolean isBooleanFlag = isBooleanFlag(declared);
             if (inlineValue != null) {
-                value = inlineValue;
-            } else if (declared.isValueRequired() || declared.isRequired()) {
+                if (isBooleanFlag) {
+                    // --name=value is not a valid boolean-flag invocation. Commander's
+                    // no-value boolean options only accept `--name`; refusing inline
+                    // values prevents callers from smuggling arbitrary strings in.
+                    throw new OpenCliArgvValidationException(HubErrorCodes.OPENCLI_ARGUMENT_INVALID,
+                        "Boolean flag --" + declared.getName()
+                            + " must not carry an inline value", declared.getName());
+                }
+                validateValue(declared, inlineValue);
+                namedValues.computeIfAbsent(declared.getName(), ignored -> new ArrayList<>()).add(inlineValue);
+                appendNamed(declared, inlineValue, normalizedArgv);
+                cursor += 1;
+                continue;
+            }
+
+            if (declared.isValueRequired() || declared.isRequired()) {
                 if (cursor + 1 >= argv.size()) {
                     throw new OpenCliArgvValidationException(HubErrorCodes.OPENCLI_ARGUMENT_INVALID,
                         "OpenCLI option requires a value: " + name);
                 }
                 cursor += 1;
-                value = argv.get(cursor);
+                String value = argv.get(cursor);
                 if (value == null) {
                     throw new OpenCliArgvValidationException(HubErrorCodes.OPENCLI_ARGUMENT_INVALID,
                         "OpenCLI option value must not be null: " + name);
@@ -165,26 +185,25 @@ public class OpenCliArgvValidator {
                     throw new OpenCliArgvValidationException(HubErrorCodes.OPENCLI_RESERVED_ARGUMENT,
                         "Hub-owned option value must not be supplied by the caller: " + value, value);
                 }
-            } else if (OpenCliArgumentType.BOOLEAN == OpenCliArgumentType.of(declared.getType())) {
-                // Boolean flag with no inline value: present means true.
-                value = "true";
-            } else {
-                value = null;
-            }
-
-            // Optional non-boolean with no value supplied: omit from normalized argv (default applies).
-            if (value == null) {
+                validateValue(declared, value);
+                namedValues.computeIfAbsent(declared.getName(), ignored -> new ArrayList<>()).add(value);
+                appendNamed(declared, value, normalizedArgv);
                 cursor += 1;
                 continue;
             }
-            validateValue(declared, value);
-            namedValues.computeIfAbsent(declared.getName(), ignored -> new ArrayList<>()).add(value);
-            if (declared.isPositional()) {
-                normalizedArgv.add("--" + declared.getName() + "=" + value);
-            } else {
+
+            if (isBooleanFlag) {
+                // Boolean flag with no value: present means true. Record the decision in
+                // namedValues so downstream code can branch on it, but emit only `--name`
+                // in normalized argv because the pinned OpenCLI commander treats the
+                // token presence as the signal.
+                namedValues.computeIfAbsent(declared.getName(), ignored -> new ArrayList<>()).add("true");
                 normalizedArgv.add("--" + declared.getName());
-                normalizedArgv.add(value);
+                cursor += 1;
+                continue;
             }
+
+            // Optional non-boolean with no value supplied: omit from normalized argv (default applies).
             cursor += 1;
         }
 
@@ -212,6 +231,20 @@ public class OpenCliArgvValidator {
             positionalValues,
             namedValues,
             normalizedArgv);
+    }
+
+    private static boolean isBooleanFlag(OpenCliCommandArg arg) {
+        return !arg.isValueRequired() && !arg.isRequired()
+            && OpenCliArgumentType.BOOLEAN == OpenCliArgumentType.of(arg.getType());
+    }
+
+    private static void appendNamed(OpenCliCommandArg declared, String value, List<String> normalizedArgv) {
+        if (declared.isPositional()) {
+            normalizedArgv.add("--" + declared.getName() + "=" + value);
+        } else {
+            normalizedArgv.add("--" + declared.getName());
+            normalizedArgv.add(value);
+        }
     }
 
     private static OpenCliCommandArg nextPositional(
@@ -256,12 +289,6 @@ public class OpenCliArgvValidator {
                     + " (allowed=" + arg.getChoices() + ")",
                 arg.getName());
         }
-    }
-
-    // Package-private helper used by tests and downstream callers that want to validate
-    // without rewriting (e.g. M5 will reuse this just to inspect decisions).
-    static List<String> emptyIfNull(List<String> argv) {
-        return argv == null ? Collections.emptyList() : argv;
     }
 
 }

@@ -122,10 +122,11 @@ class OpenCliArgvValidatorTest {
             List.of("band", "mentions", "--filter", "mentioned", "--limit", "5", "--unread"));
         assertThat(normalized.getNamedValue("filter")).isEqualTo("mentioned");
         assertThat(normalized.getNamedValue("limit")).isEqualTo("5");
-        // --unread is a boolean flag without an explicit value, validator must default to "true".
+        // --unread is a no-value boolean flag; the validator records the decision in
+        // namedValues but emits only the bare `--unread` token in normalized argv.
         assertThat(normalized.getNamedValue("unread")).isEqualTo("true");
         assertThat(normalized.getNormalizedArgv()).containsExactly(
-            "band", "mentions", "--filter", "mentioned", "--limit", "5", "--unread", "true");
+            "band", "mentions", "--filter", "mentioned", "--limit", "5", "--unread");
     }
 
     @Test
@@ -218,6 +219,38 @@ class OpenCliArgvValidatorTest {
             .isInstanceOf(OpenCliArgvValidationException.class)
             .satisfies(ex -> assertThat(((OpenCliArgvValidationException) ex).getErrorCode())
                 .isEqualTo(HubErrorCodes.OPENCLI_RESERVED_ARGUMENT));
+    }
+
+    @Test
+    void shouldNormalizeNoValueBooleanFlagAsBareToken() {
+        // band/mentions declares `--unread` as a no-value boolean flag. The normalized
+        // argv must contain only `--unread`; the boolean decision lives in namedValues
+        // for downstream routing but never pollutes the rebuilt argv.
+        NormalizedOpenCliArgv normalized = validator.validate(
+            List.of("band", "mentions", "--unread"));
+        assertThat(normalized.getNamedValue("unread")).isEqualTo("true");
+        assertThat(normalized.getNormalizedArgv()).containsExactly("band", "mentions", "--unread");
+    }
+
+    @Test
+    void shouldRejectInlineValueForNoValueBooleanFlag() {
+        // Commander's no-value boolean options only accept `--name`; an inline value
+        // would smuggle arbitrary strings past the validator.
+        assertThatThrownBy(() -> validator.validate(
+            List.of("band", "mentions", "--unread=true")))
+            .isInstanceOf(OpenCliArgvValidationException.class)
+            .satisfies(ex -> assertThat(((OpenCliArgvValidationException) ex).getErrorCode())
+                .isEqualTo(HubErrorCodes.OPENCLI_ARGUMENT_INVALID));
+    }
+
+    @Test
+    void shouldRejectSeparateFalseForNoValueBooleanFlag() {
+        // `--unread false` is ambiguous: Commander does not interpret `--unread` as a
+        // value-bearing option, so the trailing `false` would become the next option
+        // (or be rejected). The validator must reject the form explicitly.
+        assertThatThrownBy(() -> validator.validate(
+            List.of("band", "mentions", "--unread", "false")))
+            .isInstanceOf(OpenCliArgvValidationException.class);
     }
 
 }

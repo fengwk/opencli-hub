@@ -12,15 +12,20 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * In-memory cached blacklist service.
  *
- * <p>The cache is a simple {@link ConcurrentHashMap} keyed by canonical command key. It is
- * loaded lazily on first access and invalidated via {@link #refresh()} whenever a mutation
- * succeeds. The service is intentionally explicit: every mutator method calls
- * {@link #refresh()} itself so callers do not need to remember an invalidation protocol.
+ * <p>The cache is a {@link ConcurrentHashMap} keyed by canonical command key. Loaded
+ * state is tracked explicitly via {@link #loaded} because an empty database result and a
+ * not-yet-loaded cache both produce an empty map; treating the map's emptiness as the
+ * "unloaded" signal would force a redundant {@code listAll()} on every call against a
+ * legitimately empty table.
+ *
+ * <p>Every mutator method calls {@link #ensureLoaded()} before consulting the cache so
+ * duplicate-key inserts are blocked even on a cold cache.
  *
  * @author fengwk
  */
@@ -29,6 +34,7 @@ public class HubCommandBlacklistService {
 
     private final HubCommandBlacklistRepository repository;
     private final ConcurrentMap<String, HubCommandBlacklist> cache = new ConcurrentHashMap<>();
+    private final AtomicBoolean loaded = new AtomicBoolean(false);
 
     public HubCommandBlacklistService(HubCommandBlacklistRepository repository) {
         if (repository == null) {
@@ -45,8 +51,8 @@ public class HubCommandBlacklistService {
         if (commandKey == null) {
             return Optional.empty();
         }
-        HubCommandBlacklist cached = cache.computeIfAbsent(commandKey, this::loadByCommandKey);
-        return Optional.ofNullable(cached);
+        ensureLoaded();
+        return Optional.ofNullable(cache.get(commandKey));
     }
 
     public List<HubCommandBlacklist> listAll() {
@@ -60,8 +66,10 @@ public class HubCommandBlacklistService {
      */
     public HubCommandBlacklist blacklist(String commandKey, String reason) {
         validateCommandKey(commandKey);
-        if (cache.containsKey(commandKey)) {
-            return cache.get(commandKey);
+        ensureLoaded();
+        HubCommandBlacklist existing = cache.get(commandKey);
+        if (existing != null) {
+            return existing;
         }
         HubCommandBlacklist blacklist = new HubCommandBlacklist();
         blacklist.setId(repository.generateId());
@@ -105,20 +113,18 @@ public class HubCommandBlacklistService {
         for (HubCommandBlacklist entry : repository.listAll()) {
             cache.put(entry.getCommandKey(), entry);
         }
+        loaded.set(true);
     }
 
     private void ensureLoaded() {
-        if (cache.isEmpty()) {
-            synchronized (this) {
-                if (cache.isEmpty()) {
-                    refresh();
-                }
+        if (loaded.get()) {
+            return;
+        }
+        synchronized (this) {
+            if (!loaded.get()) {
+                refresh();
             }
         }
-    }
-
-    private HubCommandBlacklist loadByCommandKey(String commandKey) {
-        return repository.findByCommandKey(commandKey).orElse(null);
     }
 
     private static void validateCommandKey(String commandKey) {

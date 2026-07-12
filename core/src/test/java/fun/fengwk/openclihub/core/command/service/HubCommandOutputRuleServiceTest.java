@@ -162,6 +162,62 @@ class HubCommandOutputRuleServiceTest {
         assertThat(repository.findByCommandKey("chatgpt/image")).isEmpty();
     }
 
+    @Test
+    void shouldLoadOnceAndUpdateExistingRuleOnColdCache() {
+        // Cold cache + populated repository: upsert() must observe the existing row and
+        // update it instead of inserting a duplicate (which would violate the unique
+        // constraint on command_key). listAll() runs twice: once for the initial
+        // cache load, once for the post-mutation refresh().
+        HubCommandOutputRule existing = new HubCommandOutputRule();
+        existing.setId(2002L);
+        existing.setCommandKey("chatgpt/image");
+        existing.setArgumentName("op");
+        existing.setTargetType(HubCommandOutputTargetType.DIRECTORY);
+        repository.addDirectly(existing);
+        assertThat(repository.listAllCallCount).isZero();
+
+        HubCommandOutputRule updated = service.upsert("chatgpt/image", "op",
+            HubCommandOutputTargetType.FILE, "result.png");
+
+        assertThat(repository.listAllCallCount).isEqualTo(2);
+        assertThat(updated.getId()).isEqualTo(2002L);
+        assertThat(updated.getTargetType()).isEqualTo(HubCommandOutputTargetType.FILE);
+        assertThat(updated.getFileName()).isEqualTo("result.png");
+    }
+
+    @Test
+    void shouldLoadOnceAndDeleteExistingRuleOnColdCache() {
+        HubCommandOutputRule existing = new HubCommandOutputRule();
+        existing.setId(2002L);
+        existing.setCommandKey("chatgpt/image");
+        existing.setArgumentName("op");
+        existing.setTargetType(HubCommandOutputTargetType.DIRECTORY);
+        repository.addDirectly(existing);
+        assertThat(repository.listAllCallCount).isZero();
+
+        assertThat(service.delete("chatgpt/image")).isTrue();
+        assertThat(repository.listAllCallCount).isEqualTo(2);
+        assertThat(repository.findByCommandKey("chatgpt/image")).isEmpty();
+    }
+
+    @Test
+    void shouldLoadOnceWhenOutputRuleTableIsLegitimatelyEmpty() {
+        // The explicit loaded flag must short-circuit listAll() after the first
+        // refresh, even when the table is genuinely empty.
+        int before = repository.listAllCallCount;
+
+        service.listAll();
+        int afterFirst = repository.listAllCallCount;
+
+        service.listAll();
+        service.findByCommandKey("anything");
+        service.snapshot();
+        int afterMore = repository.listAllCallCount;
+
+        assertThat(afterFirst - before).isEqualTo(1);
+        assertThat(afterMore).isEqualTo(afterFirst);
+    }
+
     private static OpenCliCommand commandWithArgs(String site, String name, OpenCliCommandArg... args) {
         OpenCliCommand cmd = new OpenCliCommand();
         cmd.setSite(site);
@@ -191,6 +247,7 @@ class HubCommandOutputRuleServiceTest {
 
         final java.util.LinkedHashMap<String, HubCommandOutputRule> byKey = new java.util.LinkedHashMap<>();
         final AtomicLong idGen = new AtomicLong(2000L);
+        int listAllCallCount = 0;
 
         void addDirectly(HubCommandOutputRule rule) {
             byKey.put(rule.getCommandKey(), rule);
@@ -244,6 +301,7 @@ class HubCommandOutputRuleServiceTest {
 
         @Override
         public List<HubCommandOutputRule> listAll() {
+            listAllCallCount += 1;
             return new ArrayList<>(byKey.values());
         }
     }
