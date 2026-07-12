@@ -1,11 +1,23 @@
 spring:
   datasource:
     driver-class-name: org.h2.Driver
-    url: jdbc:h2:mem:opencli_hub;DB_CLOSE_DELAY=-1;MODE=MySQL
+    url: jdbc:h2:mem:opencli-hub-local;DB_CLOSE_DELAY=-1;MODE=MySQL;DATABASE_TO_LOWER=TRUE
     username: SA
     password:
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-h2.sql
+      data-locations: classpath:data-h2.sql
 
-convention:
-  snowflake-id:
-    initial-timestamp: 1702214261706
-    worker-id: 0
+logging:
+  file:
+    path: ${java.io.tmpdir}/opencli-hub-local/logs
+
+opencli:
+  hub:
+    data-dir: ${java.io.tmpdir}/opencli-hub-local
+    opencli:
+      workdir: ${java.io.tmpdir}
+    resource:
+      root-dir: ${java.io.tmpdir}/opencli-hub-local/resources

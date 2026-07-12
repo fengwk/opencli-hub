@@ -94,8 +94,8 @@ Agent E -> FE0 前端基座
 这些任务应避免交叉修改：
 
 - F1：`Dockerfile`、Docker scripts 和 PoC 文档；
-- M1：`core/command`、对应 share command DTO；
-- M2：`core/resource`、对应 share resource DTO；
+- M1：`core/command`，使用 F0 已冻结的 share command DTO；
+- M2：`core/resource`，使用 F0 已冻结的 share resource DTO；
 - M3：`core/instance` 的 model/repo/service，不实现进程 runtime；
 - FE0：`frontend` 基座，不实现具体 feature 页面。
 
@@ -183,7 +183,7 @@ env JAVA_HOME=$JAVA_HOME_17 mvn clean test
 - `web/pom.xml` 删除 infra 依赖；
 - infra 的 MyBatis、MySQL、H2、Auto Mapper 依赖移到 core；
 - infra Java 类移动到 core 对应业务域；
-- Mapper XML 移到 core resources；
+- 删除手写 Mapper XML，由 Auto Mapper 在编译期生成到 `target/classes`；
 - 删除 `InfraAutoConfiguration` 和 infra auto-configuration imports；
 - `CoreAutoConfiguration` 增加 `@BaseMapperScan`。
 

@@ -1,0 +1,2 @@
+-- F0 intentionally has no environment-independent command policy seed data.
+-- Apply verified output rules only for the OpenCLI version pinned by the Docker image.

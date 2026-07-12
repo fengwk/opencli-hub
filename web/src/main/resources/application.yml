@@ -1,19 +1,25 @@
 spring:
   application:
     name: opencli-hub
-
   mvc:
     converters:
       preferred-json-mapper: jackson
-
   datasource:
-    driver-class-name: com.mysql.jdbc.Driver
-    url: jdbc:mysql://${OPENCLI_HUB_MYSQL_HOST:127.0.0.1}:${OPENCLI_HUB_MYSQL_PORT:3306}/${OPENCLI_HUB_MYSQL_DATABASE:opencli_hub}?useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&allowMultiQueries=true&connectTimeout=3000&socketTimeout=3000&useSSL=false
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${OPENCLI_HUB_MYSQL_HOST:127.0.0.1}:${OPENCLI_HUB_MYSQL_PORT:3306}/${OPENCLI_HUB_MYSQL_DATABASE:opencli_hub}?useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&connectTimeout=3000&socketTimeout=3000&useSSL=false
     username: ${OPENCLI_HUB_MYSQL_USERNAME:root}
     password: ${OPENCLI_HUB_MYSQL_PASSWORD:}
+  sql:
+    init:
+      mode: never
+
+mybatis:
+  mapper-locations: classpath*:**/*Mapper.xml
+  configuration:
+    map-underscore-to-camel-case: true
 
 server:
-  port: 8080
+  port: ${OPENCLI_HUB_PORT:8080}
   compression:
     enabled: true
 
@@ -21,31 +27,50 @@ management:
   endpoints:
     web:
       exposure:
-        include: "health,prometheus,offline,online"
+        include: "health,prometheus"
 
 logging:
+  file:
+    path: ${OPENCLI_HUB_LOG_PATH:${OPENCLI_HUB_DATA_DIR:/data/opencli-hub}/logs}
+    max-history: 14
+    max-size: 128MB
+    total-size-cap: 8GB
   level:
     root: info
 
 convention:
   snowflake-id:
     initial-timestamp: 1702214261706
-    # 当前项目固定 worker id，不依赖 Redis 自动申请。
-    worker-id: 0
-
+    worker-id: ${OPENCLI_HUB_WORKER_ID:0}
   i18n:
     base-name: string
     locale: zh_CN
-
   code:
     i18n:
       locale: ${convention.i18n.locale}
 
 opencli:
   hub:
-    execution:
+    data-dir: ${OPENCLI_HUB_DATA_DIR:/data/opencli-hub}
+    opencli:
       binary: ${OPENCLI_HUB_OPENCLI_BINARY:opencli}
-      workdir: ${OPENCLI_HUB_OPENCLI_WORKDIR:/home/fengwk/proj/OpenCLI}
-      default-timeout-millis: 120000
-      max-timeout-millis: 600000
+      workdir: ${OPENCLI_HUB_OPENCLI_WORKDIR:/opt/opencli}
+      extension-dir: ${OPENCLI_HUB_EXTENSION_DIR:/opt/opencli/extension}
+    browser:
+      binary: ${OPENCLI_HUB_CHROME_BINARY:/usr/bin/google-chrome-stable}
+      screen-width: 1600
+      screen-height: 900
+      screen-depth: 24
+      startup-timeout-millis: 60000
+    vnc:
+      startup-timeout-millis: 10000
+    execution:
+      default-timeout-millis: ${OPENCLI_HUB_DEFAULT_TIMEOUT_MILLIS:600000}
+      max-timeout-millis: ${OPENCLI_HUB_MAX_TIMEOUT_MILLIS:1800000}
+      process-stop-grace-millis: 3000
       max-capture-chars: 65535
+      default-max-pending: 5
+    resource:
+      root-dir: ${OPENCLI_HUB_RESOURCE_DIR:${OPENCLI_HUB_DATA_DIR:/data/opencli-hub}/resources}
+      max-file-size: 104857600
+      max-request-size: 524288000
