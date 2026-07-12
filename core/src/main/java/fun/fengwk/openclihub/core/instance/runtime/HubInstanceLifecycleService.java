@@ -140,6 +140,10 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
                 registry.register(runtime);
                 registeredRuntime = true;
                 registry.unexpectedExitListener().watch(instanceId, runtime);
+                // M5: a dispatcher only makes sense once the live runtime is registered,
+                // so the M5 router sees consistent (state=RUNNING, context connected,
+                // dispatcher registered) state for routing and load calculation.
+                dispatchRegistry.register(instanceService.get(instanceId));
                 return instanceService.get(instanceId);
             } catch (RuntimeException ex) {
                 handleStartFailure(instanceId, runtime, registeredRuntime, ex);
@@ -166,13 +170,19 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
                         + " pending=" + snapshot.getPendingCount());
             }
             instanceService.updateState(instanceId, HubInstanceState.STOPPING, null);
+            if (!dispatchRegistry.unregisterWhenIdle(instanceId)) {
+                instanceService.updateState(instanceId, HubInstanceState.RUNNING, null);
+                HubInstanceRuntimeSnapshot raced = dispatchRegistry.getSnapshot(instanceId);
+                throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
+                    "instance accepted work while stopping: active=" + raced.getActiveCount()
+                        + " pending=" + raced.getPendingCount());
+            }
             try {
                 HubInstanceRuntime runtime = registry.get(instanceId);
                 if (runtime != null) {
                     registry.stopProcesses(runtime);
                     registry.unregister(instanceId);
                 }
-                dispatchRegistry.remove(instanceId);
             } finally {
                 instanceService.updateState(instanceId, HubInstanceState.STOPPED, null);
             }
@@ -210,12 +220,17 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
                     "instance is busy; cannot delete: active=" + snapshot.getActiveCount()
                         + " pending=" + snapshot.getPendingCount());
             }
+            if (!dispatchRegistry.unregisterWhenIdle(instanceId)) {
+                HubInstanceRuntimeSnapshot raced = dispatchRegistry.getSnapshot(instanceId);
+                throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
+                    "instance accepted work while deleting: active=" + raced.getActiveCount()
+                        + " pending=" + raced.getPendingCount());
+            }
             HubInstanceRuntime runtime = registry.get(instanceId);
             if (runtime != null) {
                 registry.stopProcesses(runtime);
                 registry.unregister(instanceId);
             }
-            dispatchRegistry.remove(instanceId);
             instanceService.deleteById(instanceId);
             deleteInstanceDirectory(instanceId);
         } finally {
@@ -236,7 +251,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             }
             registry.stopProcesses(runtime);
             registry.unregister(instanceId);
-            dispatchRegistry.remove(instanceId);
+            dispatchRegistry.unregister(instanceId);
             instanceService.updateState(instanceId, HubInstanceState.ERROR, reason);
         } catch (RuntimeException ex) {
             log.warn("markUnexpectedExit({}) failed: {}", instanceId, ex.getMessage(), ex);
@@ -356,6 +371,9 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             registry.register(runtime);
             registeredRuntime = true;
             registry.unexpectedExitListener().watch(id, runtime);
+            // Mirror the start() path: install the per-instance dispatcher once the
+            // runtime is registered, otherwise the M5 router cannot route to it.
+            dispatchRegistry.register(instanceService.get(id));
             try {
                 Files.deleteIfExists(
                     HubInstanceDirectoryLayout.creatingMarker(properties.getDataDir(), id));
@@ -375,7 +393,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             } else if (runtime != null) {
                 registry.allocationService().release(runtime);
             }
-            dispatchRegistry.remove(id);
+            dispatchRegistry.unregisterWhenIdle(id);
             if (rowInserted) {
                 try {
                     instanceService.deleteById(id);
@@ -619,7 +637,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         } else if (runtime != null) {
             registry.allocationService().release(runtime);
         }
-        dispatchRegistry.remove(instanceId);
+        dispatchRegistry.unregister(instanceId);
         try {
             instanceService.updateState(instanceId, HubInstanceState.ERROR, reason);
         } catch (RuntimeException stateEx) {

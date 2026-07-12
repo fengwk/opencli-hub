@@ -64,12 +64,14 @@ class CorePersistenceSmokeTest {
         execution.setSite("bilibili");
         execution.setSiteSession(SiteSessionMode.EPHEMERAL);
         execution.setArgv(List.of("bilibili", "hot", "--limit", "5"));
+        execution.setReuseInstance(true);
         execution.setStatus(HubExecutionStatus.PENDING);
         execution.setTimeoutMillis(600000L);
         execution.setQueuedAt(now);
         assertThat(executionRepository.add(execution)).isTrue();
-        assertThat(executionRepository.findById(2001L).getArgv())
-            .containsExactly("bilibili", "hot", "--limit", "5");
+        HubExecution saved = executionRepository.findById(2001L);
+        assertThat(saved.getArgv()).containsExactly("bilibili", "hot", "--limit", "5");
+        assertThat(saved.isReuseInstance()).isTrue();
     }
 
     private int tableCount(String tableName) {

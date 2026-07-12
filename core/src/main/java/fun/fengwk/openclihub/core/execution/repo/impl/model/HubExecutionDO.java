@@ -21,6 +21,7 @@ public class HubExecutionDO {
     private String site;
     private String siteSession;
     private String argvJson;
+    private boolean reuseInstance;
     private String status;
     private Integer exitCode;
     private String stdoutContent;

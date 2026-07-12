@@ -24,6 +24,7 @@ public class HubExecution {
     private String site;
     private SiteSessionMode siteSession;
     private List<String> argv = List.of();
+    private boolean reuseInstance;
     private HubExecutionStatus status;
     private Integer exitCode;
     private String stdout;
