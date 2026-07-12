@@ -30,6 +30,40 @@
 
     <build>
         <plugins>
+            <!--
+                Package the pre-built frontend into the Spring Boot JAR static
+                resources. CI/Docker must run `npm ci && npm run build` in
+                ../frontend first; Maven only copies the resulting dist and
+                never runs npm itself. When ../frontend/dist is absent (e.g.
+                backend-only `mvn test`), copy-resources skips the missing
+                directory with a warning instead of failing. The dist is copied
+                into target/classes/static and is never written back to
+                src/main/resources.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.4.0</version>
+                <executions>
+                    <execution>
+                        <id>copy-frontend-dist</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}/static</outputDirectory>
+                            <overwrite>true</overwrite>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/../frontend/dist</directory>
+                                    <filtering>false</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
