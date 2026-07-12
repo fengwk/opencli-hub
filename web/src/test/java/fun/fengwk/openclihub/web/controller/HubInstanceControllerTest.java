@@ -1,0 +1,160 @@
+package fun.fengwk.openclihub.web.controller;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import fun.fengwk.convention4j.springboot.starter.web.result.WebExceptionResultHandlerAutoConfiguration;
+import fun.fengwk.openclihub.core.instance.runtime.HubInstanceLifecycleService;
+import fun.fengwk.openclihub.core.instance.runtime.HubInstanceRuntimeSnapshot;
+import fun.fengwk.openclihub.core.instance.service.HubInstanceService;
+import fun.fengwk.openclihub.core.instance.service.converter.HubInstanceConverter;
+import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
+import fun.fengwk.openclihub.share.constant.HubErrorCodes;
+import fun.fengwk.openclihub.share.model.instance.HubInstanceCreateDTO;
+import fun.fengwk.openclihub.share.model.instance.HubInstanceDTO;
+import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
+import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+/**
+ * Covers all Instance REST routes and convention4j domain status mapping.
+ */
+@ImportAutoConfiguration(WebExceptionResultHandlerAutoConfiguration.class)
+@WebMvcTest(
+    controllers = HubInstanceController.class,
+    properties = "logging.file.path=${java.io.tmpdir}/opencli-hub-web-test")
+class HubInstanceControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @MockitoBean
+    private HubInstanceService instanceService;
+
+    @MockitoBean
+    private HubInstanceLifecycleService lifecycleService;
+
+    @MockitoBean
+    private HubInstanceConverter converter;
+
+    private HubInstance instance;
+    private HubInstanceDTO dto;
+
+    @BeforeEach
+    void setUp() {
+        instance = new HubInstance();
+        instance.setId(11L);
+        instance.setCode("primary");
+        instance.setState(HubInstanceState.RUNNING);
+        dto = new HubInstanceDTO();
+        dto.setId(11L);
+        dto.setCode("primary");
+        dto.setState(HubInstanceState.RUNNING);
+        HubInstanceRuntimeSnapshot snapshot = new HubInstanceRuntimeSnapshot(
+            true, 99, 5900, 0, 0);
+        when(lifecycleService.getSnapshot(11L)).thenReturn(snapshot);
+        when(converter.toDTO(instance, snapshot)).thenReturn(dto);
+    }
+
+    /** List and detail responses must include the merged runtime DTO. */
+    @Test
+    void shouldListAndGetInstances() throws Exception {
+        when(instanceService.list()).thenReturn(List.of(instance));
+        when(instanceService.get(11L)).thenReturn(instance);
+
+        mockMvc.perform(get("/api/instances"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data[0].id").value(11));
+        mockMvc.perform(get("/api/instances/11"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.code").value("primary"));
+    }
+
+    /** Create is synchronous and reports HTTP 201 only after lifecycle success. */
+    @Test
+    void shouldCreateInstanceSynchronously() throws Exception {
+        HubInstanceCreateDTO request = new HubInstanceCreateDTO();
+        request.setCode("primary");
+        request.setDisplayName("Primary");
+        request.setWebsites(List.of("bilibili"));
+        request.setMaxPending(5);
+        when(lifecycleService.create(any())).thenReturn(instance);
+
+        mockMvc.perform(post("/api/instances")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(request)))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.data.id").value(11));
+    }
+
+    /** PUT and lifecycle actions must return the latest Instance snapshot. */
+    @Test
+    void shouldUpdateStartStopAndRestartInstance() throws Exception {
+        HubInstanceUpdateDTO request = new HubInstanceUpdateDTO();
+        request.setCode("primary");
+        request.setDisplayName("Primary");
+        request.setWebsites(List.of("bilibili"));
+        request.setMaxPending(5);
+        when(instanceService.update(any(Long.class), any())).thenReturn(instance);
+        when(lifecycleService.start(11L)).thenReturn(instance);
+        when(instanceService.get(11L)).thenReturn(instance);
+        doNothing().when(lifecycleService).stop(11L);
+        doNothing().when(lifecycleService).restart(11L);
+
+        mockMvc.perform(put("/api/instances/11")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(request)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.id").value(11));
+        mockMvc.perform(post("/api/instances/11/start"))
+            .andExpect(status().isOk());
+        mockMvc.perform(post("/api/instances/11/stop"))
+            .andExpect(status().isOk());
+        mockMvc.perform(post("/api/instances/11/restart"))
+            .andExpect(status().isOk());
+    }
+
+    /** Delete success remains a Result response so frontend unwrapping stays uniform. */
+    @Test
+    void shouldDeleteInstance() throws Exception {
+        doNothing().when(lifecycleService).delete(11L);
+
+        mockMvc.perform(delete("/api/instances/11"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.success").value(true));
+        verify(lifecycleService).delete(11L);
+    }
+
+    /** Domain errors must retain their declared HTTP status and stable Hub code. */
+    @Test
+    void shouldMapBusyDomainError() throws Exception {
+        doThrow(HubErrorCodes.INSTANCE_BUSY.asThrowable("busy"))
+            .when(lifecycleService).stop(11L);
+
+        mockMvc.perform(post("/api/instances/11/stop"))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value(HubErrorCodes.INSTANCE_BUSY.getCode()));
+    }
+
+}
