@@ -31,5 +31,7 @@ opencli:
     data-dir: ${java.io.tmpdir}/opencli-hub-core-test
     opencli:
       workdir: ${java.io.tmpdir}
+    runtime:
+      startup-recovery-enabled: false
     resource:
       root-dir: ${java.io.tmpdir}/opencli-hub-core-test/resources

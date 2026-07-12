@@ -35,6 +35,35 @@ public class HubInstanceServiceImpl implements HubInstanceService {
     }
 
     @Override
+    public long reserveId() {
+        return repository.generateId();
+    }
+
+    @Override
+    public void validateAndNormalizeForCreate(HubInstance instance) {
+        if (instance == null) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("instance payload is required");
+        }
+        instance.setCode(validator.validateCode(instance.getCode()));
+        instance.setDisplayName(validator.validateDisplayName(instance.getDisplayName()));
+        instance.setMaxPending(validator.validateMaxPending(instance.getMaxPending()));
+        instance.setWebsites(validator.validateWebsites(instance.getWebsites()));
+        instance.setContextId(validator.validateContextId(instance.getContextId()));
+        if (instance.getState() == null) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("state is required");
+        }
+        if (repository.findByCode(instance.getCode()) != null) {
+            throw HubErrorCodes.INSTANCE_CODE_CONFLICT.asThrowable(
+                "instance code already exists: " + instance.getCode());
+        }
+        if (instance.getContextId() != null
+            && repository.findByContextId(instance.getContextId()) != null) {
+            throw HubErrorCodes.CONTEXT_ID_CONFLICT.asThrowable(
+                "contextId already bound: " + instance.getContextId());
+        }
+    }
+
+    @Override
     public List<HubInstance> list() {
         return repository.listAll();
     }
@@ -50,35 +79,12 @@ public class HubInstanceServiceImpl implements HubInstanceService {
 
     @Override
     public void create(HubInstance instance) {
-        if (instance == null) {
-            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("instance payload is required");
-        }
-        // Same normalization contract as update() so create and update share one set of rules:
-        // trimmed code / displayName / contextId, validated maxPending range, normalized websites.
-        instance.setCode(validator.validateCode(instance.getCode()));
-        instance.setDisplayName(validator.validateDisplayName(instance.getDisplayName()));
-        instance.setMaxPending(validator.validateMaxPending(instance.getMaxPending()));
-        instance.setWebsites(validator.validateWebsites(instance.getWebsites()));
-        instance.setContextId(validator.validateContextId(instance.getContextId()));
-        if (instance.getState() == null) {
-            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("state is required");
-        }
+        validateAndNormalizeForCreate(instance);
         if (instance.getId() <= 0) {
             instance.setId(repository.generateId());
         }
         if (instance.getStateChangedAt() == null) {
             instance.setStateChangedAt(LocalDateTime.now());
-        }
-
-        // Pre-check for races; the database unique index is the ultimate guard.
-        if (repository.findByCode(instance.getCode()) != null) {
-            throw HubErrorCodes.INSTANCE_CODE_CONFLICT.asThrowable(
-                "instance code already exists: " + instance.getCode());
-        }
-        if (instance.getContextId() != null
-            && repository.findByContextId(instance.getContextId()) != null) {
-            throw HubErrorCodes.CONTEXT_ID_CONFLICT.asThrowable(
-                "contextId already bound: " + instance.getContextId());
         }
 
         try {

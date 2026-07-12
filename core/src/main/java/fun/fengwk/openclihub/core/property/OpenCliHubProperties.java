@@ -16,6 +16,7 @@ public class OpenCliHubProperties {
     private OpenCli opencli = new OpenCli();
     private Browser browser = new Browser();
     private Vnc vnc = new Vnc();
+    private Runtime runtime = new Runtime();
     private Execution execution = new Execution();
     private Resource resource = new Resource();
 
@@ -43,6 +44,48 @@ public class OpenCliHubProperties {
     public static class Vnc {
 
         private long startupTimeoutMillis = 10000L;
+
+    }
+
+    /**
+     * Runtime / process launcher tunables. Named separately from Browser/Vnc to keep their
+     * concerns independent and to leave room for future tweaks without churning the public
+     * properties tree.
+     */
+    @Data
+    public static class Runtime {
+
+        /**
+         * Enables asynchronous startup recovery of persisted instances.
+         */
+        private boolean startupRecoveryEnabled = true;
+
+        /**
+         * Starting X display number for allocation. The scanner skips already in-use numbers.
+         */
+        private int displayBase = 99;
+
+        /**
+         * Starting VNC TCP port for allocation. The allocator walks the port space until a
+         * free one on 127.0.0.1 is found.
+         */
+        private int vncPortBase = 5900;
+
+        /**
+         * Hard upper bound for the VNC port scan to keep scanning bounded.
+         */
+        private int vncPortMax = 5999;
+
+        /**
+         * Grace period for {@code destroy()} before falling back to descendant kill and
+         * {@code destroyForcibly()}.
+         */
+        private long processStopGraceMillis = 3000L;
+
+        /**
+         * Polling interval for readiness checks (Xvfb socket, x11vnc TCP, daemon extension).
+         */
+        private long readinessPollMillis = 50L;
 
     }
 

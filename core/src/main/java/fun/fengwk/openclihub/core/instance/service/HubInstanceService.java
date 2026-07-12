@@ -17,6 +17,20 @@ import java.util.List;
 public interface HubInstanceService {
 
     /**
+     * Allocates a new instance id without inserting a row. Used by the M4 lifecycle layer
+     * to reserve an id during the synchronous create flow. The id is returned by the same
+     * underlying generator that backs {@code create}, so consecutive reservations stay
+     * monotonic and unique across retries.
+     */
+    long reserveId();
+
+    /**
+     * Validates and normalizes a prospective create payload and checks current unique-key
+     * availability without persisting it. Database constraints remain the final race guard.
+     */
+    void validateAndNormalizeForCreate(HubInstance instance);
+
+    /**
      * Returns every persisted instance ordered by id ascending.
      */
     List<HubInstance> list();

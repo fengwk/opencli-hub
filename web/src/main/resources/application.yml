@@ -64,6 +64,13 @@ opencli:
       startup-timeout-millis: 60000
     vnc:
       startup-timeout-millis: 10000
+    runtime:
+      startup-recovery-enabled: ${OPENCLI_HUB_STARTUP_RECOVERY_ENABLED:true}
+      display-base: ${OPENCLI_HUB_DISPLAY_BASE:99}
+      vnc-port-base: ${OPENCLI_HUB_VNC_PORT_BASE:5900}
+      vnc-port-max: ${OPENCLI_HUB_VNC_PORT_MAX:5999}
+      process-stop-grace-millis: 3000
+      readiness-poll-millis: 50
     execution:
       default-timeout-millis: ${OPENCLI_HUB_DEFAULT_TIMEOUT_MILLIS:600000}
       max-timeout-millis: ${OPENCLI_HUB_MAX_TIMEOUT_MILLIS:1800000}
