@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import type { ReactNode } from 'react'
-import type { StatusTone } from '@/shared/components/StatusBadge'
+import type { StatusTone } from '@/shared/components/status-tone'
 
 export interface ConfirmDialogProps {
   open: boolean

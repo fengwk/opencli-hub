@@ -17,7 +17,6 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    allowedHosts: true,
     proxy: {
       // `ws: true` upgrades WebSocket requests under `/api`, which covers the
       // Hub VNC endpoint `/api/instances/{id}/vnc` while regular REST calls to
