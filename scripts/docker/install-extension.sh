@@ -38,7 +38,8 @@ ZIP_PATH="${WORK_DIR}/extension.zip"
 EXTRACT_DIR="${WORK_DIR}/unpack"
 
 echo "[install-extension] downloading ${EXT_URL}"
-curl -fsSL -o "${ZIP_PATH}" "${EXT_URL}"
+curl --retry 5 --retry-all-errors --connect-timeout 15 -fsSL \
+    -o "${ZIP_PATH}" "${EXT_URL}"
 
 echo "[install-extension] verifying sha256"
 ACTUAL_SHA256="$(sha256sum "${ZIP_PATH}" | awk '{print $1}')"

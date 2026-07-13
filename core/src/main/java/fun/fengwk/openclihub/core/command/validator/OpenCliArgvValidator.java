@@ -170,31 +170,6 @@ public class OpenCliArgvValidator {
                 continue;
             }
 
-            if (!isBooleanFlag) {
-                // `opencli list -f json` reports valueRequired=false for optional typed
-                // options such as --limit, even though Commander consumes a value when
-                // the option is present. Only a no-value boolean is a bare flag.
-                if (cursor + 1 >= argv.size()) {
-                    throw new OpenCliArgvValidationException(HubErrorCodes.OPENCLI_ARGUMENT_INVALID,
-                        "OpenCLI option requires a value: " + name);
-                }
-                cursor += 1;
-                String value = argv.get(cursor);
-                if (value == null) {
-                    throw new OpenCliArgvValidationException(HubErrorCodes.OPENCLI_ARGUMENT_INVALID,
-                        "OpenCLI option value must not be null: " + name);
-                }
-                if (OpenCliReservedArguments.isReserved(value)) {
-                    throw new OpenCliArgvValidationException(HubErrorCodes.OPENCLI_RESERVED_ARGUMENT,
-                        "Hub-owned option value must not be supplied by the caller: " + value, value);
-                }
-                validateValue(declared, value);
-                namedValues.computeIfAbsent(declared.getName(), ignored -> new ArrayList<>()).add(value);
-                appendNamed(declared, value, normalizedArgv);
-                cursor += 1;
-                continue;
-            }
-
             if (isBooleanFlag) {
                 // Boolean flag with no value: present means true. Record the decision in
                 // namedValues so downstream code can branch on it, but emit only `--name`
@@ -206,7 +181,26 @@ public class OpenCliArgvValidator {
                 continue;
             }
 
-            // Optional non-boolean with no value supplied: omit from normalized argv (default applies).
+            // `opencli list -f json` reports valueRequired=false for optional typed
+            // options such as --limit, even though Commander consumes a value when
+            // the option is present. Only a no-value boolean is a bare flag.
+            if (cursor + 1 >= argv.size()) {
+                throw new OpenCliArgvValidationException(HubErrorCodes.OPENCLI_ARGUMENT_INVALID,
+                    "OpenCLI option requires a value: " + name);
+            }
+            cursor += 1;
+            String value = argv.get(cursor);
+            if (value == null) {
+                throw new OpenCliArgvValidationException(HubErrorCodes.OPENCLI_ARGUMENT_INVALID,
+                    "OpenCLI option value must not be null: " + name);
+            }
+            if (OpenCliReservedArguments.isReserved(value)) {
+                throw new OpenCliArgvValidationException(HubErrorCodes.OPENCLI_RESERVED_ARGUMENT,
+                    "Hub-owned option value must not be supplied by the caller: " + value, value);
+            }
+            validateValue(declared, value);
+            namedValues.computeIfAbsent(declared.getName(), ignored -> new ArrayList<>()).add(value);
+            appendNamed(declared, value, normalizedArgv);
             cursor += 1;
         }
 

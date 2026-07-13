@@ -2,6 +2,7 @@ package fun.fengwk.openclihub.web.vnc;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
@@ -184,9 +185,9 @@ class HubVncWebSocketHandlerTest {
         }
     }
 
-    /** The first close reason must win even if shutdown races with the reader thread's socket error. */
+    /** The first close reason must win when shutdown races with another terminal callback. */
     @Test
-    void shouldPreserveShutdownCloseStatusWhenReaderRaces() throws Exception {
+    void shouldPreserveShutdownCloseStatusWhenTransportErrorRaces() throws Exception {
         try (FakeVncServer server = new FakeVncServer()) {
             handler = newHandler(server.getPort());
             CountDownLatch shutdownCloseEntered = new CountDownLatch(1);
@@ -212,12 +213,13 @@ class HubVncWebSocketHandlerTest {
             assertTrue(shutdownCloseEntered.await(2, TimeUnit.SECONDS),
                 "GOING_AWAY close did not start");
             assertTrue(server.awaitPeerClosed(), "TCP peer was not closed during shutdown");
-            Thread.sleep(100L);
+            handler.handleTransportError(fixture.session, new IOException("simulated concurrent failure"));
             allowShutdownClose.countDown();
             shutdownThread.join(2000L);
-            assertTrue(!shutdownThread.isAlive(), "shutdown thread did not finish");
+            assertFalse(shutdownThread.isAlive(), "shutdown thread did not finish");
 
             assertEquals(CloseStatus.GOING_AWAY.getCode(), fixture.awaitClose().getCode());
+            verify(fixture.session).close(any(CloseStatus.class));
         }
     }
 

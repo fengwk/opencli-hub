@@ -25,7 +25,10 @@ PKG="$1"
 VERSION="$2"
 
 echo "[install-opencli] installing ${PKG}@${VERSION} (ignore-scripts)"
-npm install -g --no-fund --no-audit --ignore-scripts "${PKG}@${VERSION}"
+npm install -g --no-fund --no-audit --ignore-scripts --prefer-offline \
+    --fetch-retries=10 --fetch-retry-factor=2 \
+    --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=120000 \
+    "${PKG}@${VERSION}"
 
 # 安装完成后单独执行 OpenCLI 的 build 步骤（prepare 脚本会做），让 dist/ 目录就绪。
 # prepare 脚本只检查 src 是否存在，存在则 build；不存在则什么也不做；镜像里没有源码则跳过。

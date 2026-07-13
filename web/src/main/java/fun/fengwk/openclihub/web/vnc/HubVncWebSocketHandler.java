@@ -119,7 +119,7 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
             try {
                 readExecutor.execute(() -> forwardTcpToWebSocket(bridge));
             } catch (RejectedExecutionException ex) {
-                closeBridge(session, CloseStatus.SERVER_ERROR);
+                closeBridge(bridge, CloseStatus.SERVER_ERROR);
             }
         } catch (IOException ex) {
             closeSocket(socket);
@@ -140,7 +140,7 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
 
         ByteBuffer payload = message.getPayload().asReadOnlyBuffer();
         if (payload.remaining() > MAX_BINARY_FRAME_BYTES) {
-            closeBridge(session, MESSAGE_TOO_BIG);
+            closeBridge(bridge, MESSAGE_TOO_BIG);
             return;
         }
         byte[] bytes = new byte[payload.remaining()];
@@ -154,7 +154,7 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
             }
         } catch (IOException ex) {
             log.debug("VNC TCP write failed for session {}: {}", session.getId(), ex.getMessage());
-            closeBridge(session, CloseStatus.SERVER_ERROR);
+            closeBridge(bridge, CloseStatus.SERVER_ERROR);
         }
     }
 
@@ -183,7 +183,7 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
             bridgesToClose = List.copyOf(bridges.values());
         }
         for (SessionBridge bridge : bridgesToClose) {
-            closeBridge(bridge.session, CloseStatus.GOING_AWAY);
+            closeBridge(bridge, CloseStatus.GOING_AWAY);
         }
         readExecutor.shutdownNow();
     }
@@ -227,7 +227,7 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
                     ex.getMessage());
             }
         } finally {
-            closeBridge(bridge.session, closeStatus);
+            closeBridge(bridge, closeStatus);
         }
     }
 

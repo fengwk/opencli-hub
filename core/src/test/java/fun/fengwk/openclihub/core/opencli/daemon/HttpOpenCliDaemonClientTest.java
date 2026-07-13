@@ -3,13 +3,21 @@ package fun.fengwk.openclihub.core.opencli.daemon;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -62,8 +70,7 @@ class HttpOpenCliDaemonClientTest {
     void shouldRestartDaemonAndWaitForAuthenticatedStatus() {
         server.setStatusCode(503);
         AtomicInteger starts = new AtomicInteger();
-        java.util.concurrent.atomic.AtomicReference<List<String>> argv =
-            new java.util.concurrent.atomic.AtomicReference<>();
+        AtomicReference<List<String>> argv = new AtomicReference<>();
         HttpOpenCliDaemonClient.ProcessProcessRunner runner =
             new HttpOpenCliDaemonClient.ProcessProcessRunner() {
                 @Override
@@ -72,39 +79,111 @@ class HttpOpenCliDaemonClientTest {
                     starts.incrementAndGet();
                     server.setStatusBody("{\"ok\":true,\"pid\":84,\"daemonVersion\":\"1.8.6\"}");
                     server.setStatusCode(200);
-                    try {
-                        return new ProcessBuilder("true").start();
-                    } catch (IOException ex) {
-                        throw new RuntimeException(ex);
-                    }
+                    return startProcess("true");
                 }
 
                 @Override
-                public int waitFor(Process process, java.time.Duration timeout)
+                public int waitFor(Process process, Duration timeout)
                     throws InterruptedException {
-                    assertThat(process.waitFor(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS))
+                    assertThat(process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS))
                         .isTrue();
                     return process.exitValue();
                 }
             };
         OpenCliHubProperties props = new OpenCliHubProperties();
         props.getOpencli().setBinary("/opt/opencli/bin/opencli");
-        HttpOpenCliDaemonClient localClient = new HttpOpenCliDaemonClient(
-            props,
-            URI.create("http://127.0.0.1:" + server.boundPort()),
-            new com.fasterxml.jackson.databind.ObjectMapper()
-                .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false),
-            java.net.http.HttpClient.newHttpClient(),
-            runner,
-            java.time.Duration.ofSeconds(1),
-            java.time.Duration.ofSeconds(1),
-            java.time.Duration.ofMillis(10));
+        HttpOpenCliDaemonClient localClient = newClient(props, runner);
 
         localClient.ensureRunning();
 
         assertThat(starts).hasValue(1);
         assertThat(argv.get()).containsExactly("/opt/opencli/bin/opencli", "daemon", "restart");
         assertThat(server.lastHeaders()).contains("x-opencli: 1");
+    }
+
+    @Test
+    void shouldRestartWhenStatusPidIsNotPositive() {
+        // A syntactically valid status with pid zero must not be accepted as a live daemon.
+        server.setStatusBody("{\"ok\":true,\"pid\":0,\"daemonVersion\":\"1.8.6\"}");
+        AtomicInteger starts = new AtomicInteger();
+        HttpOpenCliDaemonClient.ProcessProcessRunner runner =
+            new HttpOpenCliDaemonClient.ProcessProcessRunner() {
+                @Override
+                public Process start(String[] command, String workdir) {
+                    starts.incrementAndGet();
+                    server.setStatusBody("{\"ok\":true,\"pid\":84,\"daemonVersion\":\"1.8.6\"}");
+                    return startProcess("true");
+                }
+
+                @Override
+                public int waitFor(Process process, Duration timeout)
+                    throws InterruptedException {
+                    assertThat(process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)).isTrue();
+                    return process.exitValue();
+                }
+            };
+        HttpOpenCliDaemonClient localClient = newClient(new OpenCliHubProperties(), runner);
+
+        localClient.ensureRunning();
+
+        assertThat(starts).hasValue(1);
+    }
+
+    @Test
+    void shouldTerminateRestartCommandWhenCallerIsInterrupted() throws Exception {
+        // Interrupting daemon bootstrap must stop the accepted restart process and preserve the flag.
+        server.setStatusCode(503);
+        AtomicReference<Process> processRef = new AtomicReference<>();
+        CountDownLatch started = new CountDownLatch(1);
+        HttpOpenCliDaemonClient.ProcessProcessRunner runner =
+            new HttpOpenCliDaemonClient.ProcessProcessRunner() {
+                @Override
+                public Process start(String[] command, String workdir) {
+                    Process process = startProcess("sleep", "30");
+                    processRef.set(process);
+                    started.countDown();
+                    return process;
+                }
+
+                @Override
+                public int waitFor(Process process, Duration timeout)
+                    throws InterruptedException {
+                    return process.waitFor();
+                }
+            };
+        HttpOpenCliDaemonClient localClient = newClient(new OpenCliHubProperties(), runner);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicBoolean interrupted = new AtomicBoolean();
+        Thread caller = new Thread(() -> {
+            try {
+                localClient.ensureRunning();
+            } catch (Throwable ex) {
+                failure.set(ex);
+                interrupted.set(Thread.currentThread().isInterrupted());
+            }
+        }, "daemon-restart-interrupt-test");
+        caller.start();
+
+        try {
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+            caller.interrupt();
+            caller.join(2000L);
+
+            assertThat(caller.isAlive()).isFalse();
+            assertThat(failure.get()).isInstanceOf(OpenCliDaemonException.class);
+            assertThat(interrupted).isTrue();
+            Process process = processRef.get();
+            assertThat(process).isNotNull();
+            assertThat(process.waitFor(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(process.isAlive()).isFalse();
+        } finally {
+            caller.interrupt();
+            caller.join(2000L);
+            Process process = processRef.get();
+            if (process != null) {
+                process.destroyForcibly();
+            }
+        }
     }
 
     @Test
@@ -119,14 +198,36 @@ class HttpOpenCliDaemonClientTest {
             HttpOpenCliDaemonClient localClient = new HttpOpenCliDaemonClient(
                 props,
                 base,
-                new com.fasterxml.jackson.databind.ObjectMapper(),
-                java.net.http.HttpClient.newHttpClient(),
+                new ObjectMapper(),
+                HttpClient.newHttpClient(),
                 HttpOpenCliDaemonClient.ProcessProcessRunner.DEFAULT,
-                java.time.Duration.ofMillis(200),
-                java.time.Duration.ofMillis(200),
-                java.time.Duration.ofMillis(20));
+                Duration.ofMillis(200),
+                Duration.ofMillis(200),
+                Duration.ofMillis(20));
             assertThatThrownBy(localClient::fetchStatus)
                 .isInstanceOf(OpenCliDaemonException.class);
+        }
+    }
+
+    private HttpOpenCliDaemonClient newClient(
+        OpenCliHubProperties properties,
+        HttpOpenCliDaemonClient.ProcessProcessRunner runner) {
+        return new HttpOpenCliDaemonClient(
+            properties,
+            URI.create("http://127.0.0.1:" + server.boundPort()),
+            new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false),
+            HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build(),
+            runner,
+            Duration.ofSeconds(1),
+            Duration.ofSeconds(1),
+            Duration.ofMillis(10));
+    }
+
+    private static Process startProcess(String... command) {
+        try {
+            return new ProcessBuilder(command).start();
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to start test process", ex);
         }
     }
 

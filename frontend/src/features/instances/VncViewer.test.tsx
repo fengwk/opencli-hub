@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VncViewer } from '@/features/instances/VncViewer'
@@ -39,7 +39,7 @@ describe('VncViewer', () => {
     render(<VncViewer instanceId={42} available />)
 
     await user.click(screen.getByRole('button', { name: '连接 VNC' }))
-    expect(rfbMock.RFB).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
     expect(rfbMock.instances[0].url).toBe(`ws://${window.location.host}/api/instances/42/vnc`)
 
     act(() => rfbMock.instances[0].emit('connect'))
@@ -54,11 +54,13 @@ describe('VncViewer', () => {
     const user = userEvent.setup()
     const view = render(<VncViewer instanceId={42} available />)
     await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
     const first = rfbMock.instances[0]
 
     view.rerender(<VncViewer instanceId={43} available />)
     expect(first.disconnect).toHaveBeenCalledTimes(1)
     await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(2))
     const second = rfbMock.instances[1]
     view.unmount()
     expect(second.disconnect).toHaveBeenCalledTimes(1)
@@ -69,6 +71,7 @@ describe('VncViewer', () => {
     const user = userEvent.setup()
     render(<VncViewer instanceId={42} available />)
     await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
 
     act(() => rfbMock.instances[0].emit('disconnect', new CustomEvent('disconnect', { detail: { clean: false } })))
 

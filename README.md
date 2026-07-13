@@ -9,9 +9,9 @@ web -> core -> share
 ```
 
 - `share`：REST DTO、枚举和稳定错误码；
-- `core`：领域模型、MyBatis Repository、本地进程基础设施和后续业务模块；
-- `web`：Spring Boot 启动模块及后续 REST/WebSocket 接口；
-- `frontend`：后续 React/Vite 管理端，不作为 Maven module。
+- `core`：领域模型、MyBatis Repository、本地进程基础设施和业务服务；
+- `web`：Spring Boot 启动模块、REST API 与 VNC WebSocket 代理；
+- `frontend`：React/Vite 管理端，不作为 Maven module。
 
 生产目标是 Docker 单容器部署。Hub 自身不实现认证和授权，访问控制由上游 SCG Gateway 负责。
 
@@ -38,14 +38,14 @@ env JAVA_HOME=$JAVA_HOME_17 \
 ## 数据库
 
 - 本地联调：H2，自动执行 `schema-h2.sql` 和 `data-h2.sql`；
-- 生产环境：MySQL，部署前手工执行 `schema-mysql.sql` 和 `data-mysql.sql`；
+- 生产环境：MySQL，通用部署需预先执行 `schema-mysql.sql` 和 `data-mysql.sql`；仓库内 Compose 示例仅在新卷首启时由 MySQL 官方 entrypoint 自动执行；
 - Service、Repository 和 Mapper 不负责运行时建表。
 
 MyBatis SQL 由 Auto Mapper 在 Maven `compile` 阶段生成到 `target/classes`，不要在源码资源目录提交同路径空 Mapper XML。
 
 ## Docker 部署
 
-正式镜像是多阶段构建：先按 `frontend/package-lock.json` 执行 `npm ci && npm run build`，再以 JDK 17 打包 Spring Boot JAR。最终镜像默认以非 root `1000:1000` 启动 Hub，使用持久化 H2 profile；Chrome/OpenCLI 实例由 Hub 生命周期管理，镜像不会自行启动 Chrome 或发布 VNC 端口。
+正式镜像是多阶段构建：先按 `frontend/package-lock.json` 执行 `npm ci && npm run build`，再以 JDK 17 打包 Spring Boot JAR。最终镜像默认以非 root `1000:1000` 启动 Hub，使用持久化 H2 profile；Chrome/OpenCLI 实例由 Hub 生命周期管理，镜像不会自行启动 Chrome 或发布 VNC 端口。由于固定的正式 Google Chrome Debian 包仅提供 AMD64 构建，当前镜像目标平台为 `linux/amd64`。
 
 H2 单容器 smoke 部署（Docker 主机须验证可使用 `seccomp=unconfined`，并保留 `2gb` shared memory）：
 
@@ -59,9 +59,9 @@ OPENCLI_HUB_SMOKE_BUILD_MODE=local scripts/docker/smoke-h2.sh
 docker compose -f compose.h2.yml down
 ```
 
-`opencli-hub-h2-data` 保存 `/data/opencli-hub`（H2 文件数据库、日志、资源和实例目录），`opencli-hub-h2-home` 保存 `/var/lib/opencli`。`application-docker-h2.yml` 以幂等 H2 schema/data 脚本初始化新库；该 profile 仅适合单容器 H2。`OPENCLI_HUB_SMOKE_BUILD_MODE=local` 会先执行 `scripts/docker/build-local.sh`，再用 Compose 启动同一 `opencli-hub:local` 镜像，适合网络不稳定时的本地回归。
+`opencli-hub-h2-data` 保存 `/data/opencli-hub`（H2 文件数据库、日志、资源和实例目录），`opencli-hub-h2-home` 保存 `/var/lib/opencli`。`application-docker-h2.yml` 以幂等 H2 schema/data 脚本初始化新库；该 profile 仅适合单容器 H2。`OPENCLI_HUB_SMOKE_BUILD_MODE=local` 会先执行 `scripts/docker/build-local.sh`，再用 Compose 启动同一 `opencli-hub:local` 镜像，适合网络不稳定时的本地回归。Smoke 脚本默认使用隔离的 `opencli-hub-smoke-$UID` Compose project 和宿主端口 `18080`，退出时只删除自己的临时 volumes；可通过 `OPENCLI_HUB_SMOKE_PROJECT`、`OPENCLI_HUB_SMOKE_PORT` 覆盖。
 
-MySQL 部署使用固定 `mysql:8.4.5`，并在**新建** `opencli-hub-mysql-data` 卷的首次启动时由 MySQL 官方 entrypoint 执行版本化的 `schema-mysql.sql`、`data-mysql.sql`。Hub 的运行时 `spring.sql.init.mode` 仍为 `never`：不要依赖 Hub 对既有 MySQL 建表。
+MySQL 部署使用固定 `mysql:8.4.5`，并在**新建** `opencli-hub-mysql-data` 卷的首次启动时由 MySQL 官方 entrypoint 执行版本化的 `schema-mysql.sql`、`data-mysql.sql`。该 Compose 文件 bind mount 仓库内 SQL，因此应从仓库根目录执行。Hub 的运行时 `spring.sql.init.mode` 仍为 `never`：不要依赖 Hub 对既有 MySQL 建表；两个密码环境变量均为必填，避免误用弱默认值。
 
 ```bash
 export MYSQL_ROOT_PASSWORD='replace-with-a-secret'
@@ -71,7 +71,32 @@ curl --fail http://127.0.0.1:8080/actuator/health
 docker compose -f compose.yml down
 ```
 
-`compose.yml` 用 `SPRING_PROFILES_ACTIVE=mysql` 覆盖镜像默认 H2 profile，并直接使用基础 `application.yml` 的 MySQL 配置。两个 Compose 文件均只发布 Hub 的 `8080`；VNC 保持容器内部 loopback。不要删除 `shm_size: 2gb` 或 `security_opt: seccomp=unconfined`，否则宿主 Docker 的默认 seccomp 可能阻断 Chrome sandbox。生产环境应由调用方提供上述密码，且应显式管理 named volumes 的备份与保留。
+`compose.yml` 用 `SPRING_PROFILES_ACTIVE=mysql` 覆盖镜像默认 H2 profile，并直接使用基础 `application.yml` 的 MySQL 配置。由于 Hub 本身不做认证，两个 Compose 文件默认只把 Hub 发布到宿主 `127.0.0.1:8080`，交由 SCG/反向代理提供外部入口；可用 `OPENCLI_HUB_BIND_ADDRESS`、`OPENCLI_HUB_HOST_PORT` 显式覆盖。VNC 仍保持容器内部 loopback。不要删除 `shm_size: 2gb` 或 `security_opt: seccomp=unconfined`，否则宿主 Docker 的默认 seccomp 可能阻断 Chrome sandbox。生产环境应显式管理 named volumes 的备份与保留。
+
+### 关键环境变量
+
+| 变量 | 默认值/要求 | 用途 |
+|---|---|---|
+| `OPENCLI_HUB_BIND_ADDRESS` | `127.0.0.1`（Compose） | Hub 在宿主机上的发布地址 |
+| `OPENCLI_HUB_HOST_PORT` | `8080`（Compose） | Hub 在宿主机上的发布端口 |
+| `OPENCLI_HUB_DATA_DIR` | `/data/opencli-hub` | 数据库、日志、资源和 Instance 根目录 |
+| `OPENCLI_HUB_MYSQL_PASSWORD` | MySQL Compose 必填 | Hub/MySQL 业务账号密码 |
+| `MYSQL_ROOT_PASSWORD` | MySQL Compose 必填 | MySQL 首启 root 密码及健康检查 |
+| `OPENCLI_HUB_WORKER_ID` | `0` | 单机 Snowflake worker ID；多 Hub 部署必须唯一 |
+| `OPENCLI_HUB_STARTUP_RECOVERY_ENABLED` | `true` | 启动后按 ID 顺序恢复数据库中的 Instance |
+| `OPENCLI_HUB_DEFAULT_TIMEOUT_MILLIS` | `600000` | 同步执行默认端到端 deadline |
+| `OPENCLI_HUB_MAX_TIMEOUT_MILLIS` | `1800000` | 调用方可请求的最大 deadline |
+| `OPENCLI_HUB_SHUTDOWN_TIMEOUT_SECONDS` | `30` | entrypoint 等待 Hub/CRX 子进程退出的单进程上限 |
+| `JAVA_OPTS` | 空 | 以空白分隔的 JVM 参数，不用于 Spring `--` 参数 |
+
+其他路径、DISPLAY/VNC 范围和资源限制可按 `web/src/main/resources/application.yml` 中的占位符覆盖。
+
+### SCG/反向代理要求
+
+- 管理前端和普通 API 转发 `/`、`/api/**`；
+- `/api/instances/{id}/vnc` 必须允许 WebSocket Upgrade 并透传二进制帧；
+- 认证、授权、限流和公网 TLS 均在 Gateway 完成，Hub 不接受 Bearer Token 等认证配置；
+- `/api/opencli/execute` 是同步接口，Gateway/客户端 timeout 应由部署方按业务 deadline 配置；连接断开不会取消 Hub 已接受的 Execution。
 
 ## 文档
 

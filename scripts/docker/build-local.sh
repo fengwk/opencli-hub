@@ -17,13 +17,18 @@ trap cleanup EXIT
 printf '[build-local] building frontend with host npm cache\n'
 (
     cd "${PROJECT_DIR}/frontend"
-    npm ci --prefer-offline
+    npm ci --prefer-offline --fetch-retries=10 --fetch-retry-factor=2 \
+        --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=120000
     npm run build
 )
 
 printf '[build-local] packaging Hub with host Maven repository %s\n' "${HOME}/.m2/repository"
 env JAVA_HOME="${JAVA_HOME_17_VALUE}" \
-    mvn --batch-mode -DskipTests package -f "${PROJECT_DIR}/pom.xml"
+    mvn --batch-mode --no-transfer-progress -DskipTests \
+        -Dmaven.wagon.http.connectionTimeout=5000 \
+        -Dmaven.wagon.http.readTimeout=60000 \
+        -Dmaven.wagon.http.retryHandler.count=5 \
+        clean package -f "${PROJECT_DIR}/pom.xml"
 
 readonly jar_path="${PROJECT_DIR}/web/target/opencli-hub-web-1.0.0.jar"
 [[ -s "${jar_path}" ]] || {
@@ -37,6 +42,7 @@ cp "${jar_path}" "${artifact_dir}/artifact/opencli-hub.jar"
 
 printf '[build-local] assembling %s from the host-built JAR\n' "${IMAGE_TAG}"
 docker build \
+    --platform linux/amd64 \
     --build-context "prebuilt-artifact=${artifact_dir}" \
     --build-arg HUB_ARTIFACT_SOURCE=prebuilt-artifact \
     --tag "${IMAGE_TAG}" \

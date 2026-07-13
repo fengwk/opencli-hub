@@ -79,7 +79,7 @@ public class HubCommandOutputRuleService {
         validateRule(commandKey, argumentName, targetType, fileName);
         ensureLoaded();
         HubCommandOutputRule existing = cache.get(commandKey);
-        HubCommandOutputRule rule = existing == null ? new HubCommandOutputRule() : existing;
+        HubCommandOutputRule rule = new HubCommandOutputRule();
         rule.setCommandKey(commandKey);
         rule.setArgumentName(argumentName);
         rule.setTargetType(targetType);
@@ -91,6 +91,8 @@ public class HubCommandOutputRuleService {
                     "Failed to persist output rule: " + commandKey);
             }
         } else {
+            rule.setId(existing.getId());
+            rule.setCreateTime(existing.getCreateTime());
             if (!repository.update(rule)) {
                 throw new OpenCliCommandPolicyException(HubErrorCodes.EXECUTION_PERSIST_FAILED,
                     "Failed to update output rule: " + commandKey);

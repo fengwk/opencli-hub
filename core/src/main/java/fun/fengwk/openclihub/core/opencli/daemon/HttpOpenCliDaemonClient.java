@@ -137,14 +137,14 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
     @Override
     public void ensureRunning() {
         OpenCliDaemonStatus initial = fetchStatusSafe();
-        if (initial != null && initial.getPid() != null) {
+        if (hasValidPid(initial)) {
             return;
         }
         triggerRestart();
         long deadline = System.nanoTime() + bootstrapTimeout.toNanos();
         while (System.nanoTime() < deadline) {
             OpenCliDaemonStatus status = fetchStatusSafe();
-            if (status != null && status.getPid() != null) {
+            if (hasValidPid(status)) {
                 log.info("OpenCLI daemon is up: pid={}, version={}",
                     status.getPid(), status.getDaemonVersion());
                 return;
@@ -166,6 +166,7 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
                     "`opencli daemon restart` exited with non-zero code " + code);
             }
         } catch (InterruptedException ex) {
+            p.destroyForcibly();
             Thread.currentThread().interrupt();
             throw new OpenCliDaemonException("interrupted while waiting for daemon restart", ex);
         }
@@ -175,8 +176,15 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
         try {
             return fetchStatus();
         } catch (OpenCliDaemonException ex) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw ex;
+            }
             return null;
         }
+    }
+
+    private static boolean hasValidPid(OpenCliDaemonStatus status) {
+        return status != null && status.getPid() != null && status.getPid() > 0L;
     }
 
     private static void sleepForBootstrap(long millis) {

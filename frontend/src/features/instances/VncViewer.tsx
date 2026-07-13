@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import RFB from '@novnc/novnc/lib/rfb.js'
+import type RFB from '@novnc/novnc/lib/rfb.js'
 import { buildVncWebSocketUrl } from '@/features/instances/vnc-url'
 
 type VncConnectionState = 'disconnected' | 'connecting' | 'connected' | 'failed'
@@ -8,10 +8,12 @@ type VncConnectionState = 'disconnected' | 'connecting' | 'connected' | 'failed'
 export function VncViewer({ instanceId, available }: { instanceId: number; available: boolean }) {
   const targetRef = useRef<HTMLDivElement>(null)
   const rfbRef = useRef<RFB | null>(null)
+  const connectionAttemptRef = useRef(0)
   const [connectionState, setConnectionState] = useState<VncConnectionState>('disconnected')
   const [connectionError, setConnectionError] = useState<string | null>(null)
 
   const dispose = useCallback(() => {
+    connectionAttemptRef.current += 1
     const rfb = rfbRef.current
     rfbRef.current = null
     rfb?.disconnect()
@@ -30,15 +32,23 @@ export function VncViewer({ instanceId, available }: { instanceId: number; avail
     }
   }, [available, dispose])
 
-  function connect() {
+  async function connect() {
     if (!available || !targetRef.current || rfbRef.current) {
       return
     }
+    const attempt = connectionAttemptRef.current + 1
+    connectionAttemptRef.current = attempt
     setConnectionError(null)
     setConnectionState('connecting')
     let connected = false
     try {
-      const rfb = new RFB(targetRef.current, buildVncWebSocketUrl(instanceId))
+      // noVNC is only needed on explicit connect; keep it out of the management UI's initial bundle.
+      const { default: RFBClient } = await import('@novnc/novnc/lib/rfb.js')
+      const target = targetRef.current
+      if (connectionAttemptRef.current !== attempt || !target) {
+        return
+      }
+      const rfb = new RFBClient(target, buildVncWebSocketUrl(instanceId))
       rfbRef.current = rfb
       rfb.scaleViewport = true
       rfb.addEventListener('connect', () => {
@@ -63,6 +73,9 @@ export function VncViewer({ instanceId, available }: { instanceId: number; avail
         setConnectionState('disconnected')
       })
     } catch (error) {
+      if (connectionAttemptRef.current !== attempt) {
+        return
+      }
       dispose()
       setConnectionError(error instanceof Error ? error.message : '无法建立 VNC 连接。')
       setConnectionState('failed')
