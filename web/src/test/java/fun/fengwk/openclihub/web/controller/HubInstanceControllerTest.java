@@ -108,6 +108,41 @@ class HubInstanceControllerTest {
             .andExpect(jsonPath("$.data.id").value(11));
     }
 
+    /** VNC status must expose availability flags without leaking the loopback VNC port. */
+    @Test
+    void shouldReportVncStatusForAvailableAndUnavailableRuntime() throws Exception {
+        when(instanceService.get(11L)).thenReturn(instance);
+
+        mockMvc.perform(get("/api/instances/11/vnc/status"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.instanceId").value(11))
+            .andExpect(jsonPath("$.data.instanceAvailable").value(true))
+            .andExpect(jsonPath("$.data.running").value(true))
+            .andExpect(jsonPath("$.data.runtimeAvailable").value(true))
+            .andExpect(jsonPath("$.data.vncAvailable").value(true))
+            .andExpect(jsonPath("$.data.vncPort").doesNotExist());
+
+        instance.setState(HubInstanceState.STOPPED);
+        when(lifecycleService.getSnapshot(11L)).thenReturn(HubInstanceRuntimeSnapshot.absent());
+        mockMvc.perform(get("/api/instances/11/vnc/status"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.instanceAvailable").value(true))
+            .andExpect(jsonPath("$.data.running").value(false))
+            .andExpect(jsonPath("$.data.runtimeAvailable").value(false))
+            .andExpect(jsonPath("$.data.vncAvailable").value(false));
+    }
+
+    /** A missing persisted Instance remains the stable not-found domain error for VNC status. */
+    @Test
+    void shouldMapNotFoundDomainErrorForVncStatus() throws Exception {
+        doThrow(HubErrorCodes.INSTANCE_NOT_FOUND.asThrowable("missing"))
+            .when(instanceService).get(12L);
+
+        mockMvc.perform(get("/api/instances/12/vnc/status"))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.code").value(HubErrorCodes.INSTANCE_NOT_FOUND.getCode()));
+    }
+
     /** PUT and lifecycle actions must return the latest Instance snapshot. */
     @Test
     void shouldUpdateStartStopAndRestartInstance() throws Exception {
