@@ -22,6 +22,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
@@ -118,7 +119,7 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
             try {
                 readExecutor.execute(() -> forwardTcpToWebSocket(bridge));
             } catch (RejectedExecutionException ex) {
-                closeBridge(session, CloseStatus.SERVER_ERROR);
+                closeBridge(bridge, CloseStatus.SERVER_ERROR);
             }
         } catch (IOException ex) {
             closeSocket(socket);
@@ -139,7 +140,7 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
 
         ByteBuffer payload = message.getPayload().asReadOnlyBuffer();
         if (payload.remaining() > MAX_BINARY_FRAME_BYTES) {
-            closeBridge(session, MESSAGE_TOO_BIG);
+            closeBridge(bridge, MESSAGE_TOO_BIG);
             return;
         }
         byte[] bytes = new byte[payload.remaining()];
@@ -153,7 +154,7 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
             }
         } catch (IOException ex) {
             log.debug("VNC TCP write failed for session {}: {}", session.getId(), ex.getMessage());
-            closeBridge(session, CloseStatus.SERVER_ERROR);
+            closeBridge(bridge, CloseStatus.SERVER_ERROR);
         }
     }
 
@@ -182,7 +183,7 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
             bridgesToClose = List.copyOf(bridges.values());
         }
         for (SessionBridge bridge : bridgesToClose) {
-            closeBridge(bridge.session, CloseStatus.GOING_AWAY);
+            closeBridge(bridge, CloseStatus.GOING_AWAY);
         }
         readExecutor.shutdownNow();
     }
@@ -226,7 +227,7 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
                     ex.getMessage());
             }
         } finally {
-            closeBridge(bridge.session, closeStatus);
+            closeBridge(bridge, closeStatus);
         }
     }
 
@@ -240,12 +241,25 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
     }
 
     private void closeBridge(WebSocketSession session, CloseStatus status) {
-        SessionBridge bridge = bridges.remove(session.getId());
-        if (bridge != null) {
+        SessionBridge bridge = bridges.get(session.getId());
+        if (bridge == null) {
+            closeSession(session, status);
+            return;
+        }
+        closeBridge(bridge, status);
+    }
+
+    private void closeBridge(SessionBridge bridge, CloseStatus status) {
+        if (!bridge.closeStatus.compareAndSet(null, status)) {
+            return;
+        }
+        try {
             closeSocket(bridge.socket);
             connectionSlots.release();
+            closeSession(bridge.session, status);
+        } finally {
+            bridges.remove(bridge.session.getId(), bridge);
         }
-        closeSession(session, status);
     }
 
     private void closeSession(WebSocketSession session, CloseStatus status) {
@@ -274,6 +288,7 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
         private final Socket socket;
         private final Object webSocketSendLock = new Object();
         private final Object tcpWriteLock = new Object();
+        private final AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
 
         private SessionBridge(WebSocketSession session, Socket socket) {
             this.session = session;

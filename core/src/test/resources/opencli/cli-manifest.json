@@ -93,6 +93,7 @@
         "type": "int",
         "default": 20,
         "required": false,
+        "valueRequired": false,
         "help": "Number of videos"
       }
     ],

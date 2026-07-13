@@ -44,8 +44,8 @@ class HubCommandOutputRuleServiceTest {
         org.mockito.Mockito.when(catalog.findPublicCommand("chatgpt", "image"))
             .thenReturn(Optional.of(commandWithArgs("chatgpt", "image",
                 arg("prompt", true, true, false),
-                arg("op", false, true, false),
-                arg("sd", false, false, false))));
+                arg("op", false, false, false),
+                booleanFlag("sd"))));
         org.mockito.Mockito.when(catalog.findPublicCommand("missing", "cmd"))
             .thenReturn(Optional.empty());
         return catalog;
@@ -147,6 +147,27 @@ class HubCommandOutputRuleServiceTest {
     }
 
     @Test
+    void shouldKeepCachedRuleUnchangedWhenUpdateFails() {
+        // A failed database update must not leak the attempted values into the live cache.
+        HubCommandOutputRule existing = new HubCommandOutputRule();
+        existing.setId(2002L);
+        existing.setCommandKey("chatgpt/image");
+        existing.setArgumentName("op");
+        existing.setTargetType(HubCommandOutputTargetType.DIRECTORY);
+        repository.addDirectly(existing);
+        service.findByCommandKey("chatgpt/image");
+        repository.failUpdates = true;
+
+        assertThatThrownBy(() -> service.upsert("chatgpt/image", "op",
+            HubCommandOutputTargetType.FILE, "result.png"))
+            .isInstanceOf(OpenCliCommandPolicyException.class);
+
+        HubCommandOutputRule cached = service.findByCommandKey("chatgpt/image").orElseThrow();
+        assertThat(cached.getTargetType()).isEqualTo(HubCommandOutputTargetType.DIRECTORY);
+        assertThat(cached.getFileName()).isNull();
+    }
+
+    @Test
     void shouldDeleteExistingRuleAndClearCache() {
         HubCommandOutputRule existing = new HubCommandOutputRule();
         existing.setId(2002L);
@@ -239,6 +260,12 @@ class HubCommandOutputRuleServiceTest {
         return a;
     }
 
+    private static OpenCliCommandArg booleanFlag(String name) {
+        OpenCliCommandArg arg = arg(name, false, false, false);
+        arg.setType("boolean");
+        return arg;
+    }
+
     /**
      * Test-only repository mirroring the JDBC contract; the service cache stays in
      * sync with the backing store across {@code refresh()} calls.
@@ -248,6 +275,7 @@ class HubCommandOutputRuleServiceTest {
         final java.util.LinkedHashMap<String, HubCommandOutputRule> byKey = new java.util.LinkedHashMap<>();
         final AtomicLong idGen = new AtomicLong(2000L);
         int listAllCallCount = 0;
+        boolean failUpdates;
 
         void addDirectly(HubCommandOutputRule rule) {
             byKey.put(rule.getCommandKey(), rule);
@@ -271,7 +299,7 @@ class HubCommandOutputRuleServiceTest {
 
         @Override
         public boolean update(HubCommandOutputRule rule) {
-            if (!byKey.containsKey(rule.getCommandKey())) {
+            if (failUpdates || !byKey.containsKey(rule.getCommandKey())) {
                 return false;
             }
             rule.setUpdateTime(java.time.LocalDateTime.now());

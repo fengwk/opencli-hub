@@ -5,6 +5,7 @@ import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandArg;
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandCatalog;
 import fun.fengwk.openclihub.core.command.repo.HubCommandOutputRuleRepository;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandOutputRule;
+import fun.fengwk.openclihub.core.command.validator.OpenCliArgumentType;
 import fun.fengwk.openclihub.core.opencli.catalog.OpenCliReservedManagementCommands;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.command.HubCommandOutputRuleDTO;
@@ -78,7 +79,7 @@ public class HubCommandOutputRuleService {
         validateRule(commandKey, argumentName, targetType, fileName);
         ensureLoaded();
         HubCommandOutputRule existing = cache.get(commandKey);
-        HubCommandOutputRule rule = existing == null ? new HubCommandOutputRule() : existing;
+        HubCommandOutputRule rule = new HubCommandOutputRule();
         rule.setCommandKey(commandKey);
         rule.setArgumentName(argumentName);
         rule.setTargetType(targetType);
@@ -90,6 +91,8 @@ public class HubCommandOutputRuleService {
                     "Failed to persist output rule: " + commandKey);
             }
         } else {
+            rule.setId(existing.getId());
+            rule.setCreateTime(existing.getCreateTime());
             if (!repository.update(rule)) {
                 throw new OpenCliCommandPolicyException(HubErrorCodes.EXECUTION_PERSIST_FAILED,
                     "Failed to update output rule: " + commandKey);
@@ -186,7 +189,11 @@ public class HubCommandOutputRuleService {
                 HubErrorCodes.OPENCLI_OUTPUT_RULE_ARGUMENT_NOT_FOUND,
                 "Output rule references unknown argument: " + argumentName
                     + " on command " + commandKey));
-        if (!argument.isValueRequired() && !argument.isRequired()) {
+        boolean noValueBoolean = OpenCliArgumentType.of(argument.getType())
+            == OpenCliArgumentType.BOOLEAN
+            && !argument.isValueRequired()
+            && !argument.isRequired();
+        if (noValueBoolean) {
             throw new OpenCliCommandPolicyException(
                 HubErrorCodes.OPENCLI_OUTPUT_RULE_ARGUMENT_NOT_FOUND,
                 "Output rule references non-value argument: " + argumentName

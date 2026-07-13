@@ -1,12 +1,14 @@
 package fun.fengwk.openclihub.core.opencli.catalog;
 
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
-import lombok.extern.slf4j.Slf4j;
 
 /**
  * Production catalog source: shells out to the pinned OpenCLI {@code list -f json} binary
@@ -17,7 +19,6 @@ import lombok.extern.slf4j.Slf4j;
  *
  * @author fengwk
  */
-@Slf4j
 public class ProcessBuilderOpenCliCatalogSource implements OpenCliCatalogSource {
 
     private final OpenCliHubProperties properties;
@@ -34,6 +35,7 @@ public class ProcessBuilderOpenCliCatalogSource implements OpenCliCatalogSource 
 
     @Override
     public InputStream open() throws IOException {
+        Process process = null;
         try {
             List<String> command = List.of(
                 properties.getOpencli().getBinary(),
@@ -46,20 +48,67 @@ public class ProcessBuilderOpenCliCatalogSource implements OpenCliCatalogSource 
                 builder.directory(Path.of(workdir).toFile());
             }
             builder.redirectErrorStream(true);
-            Process process = builder.start();
+            process = builder.start();
+            Process runningProcess = process;
+            FutureTask<byte[]> outputTask = new FutureTask<>(() -> {
+                try (InputStream inputStream = runningProcess.getInputStream()) {
+                    return inputStream.readAllBytes();
+                }
+            });
+            Thread outputReader = new Thread(outputTask, "opencli-catalog-output");
+            outputReader.setDaemon(true);
+            outputReader.start();
+
             if (!process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS)) {
-                process.destroyForcibly();
-                throw new IOException("Timed out waiting for `opencli list -f json` after "
-                    + timeoutMillis + " ms");
+                terminateProcess(process);
+                throw timeoutException();
             }
+            byte[] output = awaitOutput(outputTask);
             int exit = process.exitValue();
             if (exit != 0) {
                 throw new IOException("`opencli list -f json` exited with code " + exit);
             }
-            return process.getInputStream();
+            return new ByteArrayInputStream(output);
         } catch (InterruptedException ex) {
+            if (process != null) {
+                terminateProcess(process);
+            }
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted while loading OpenCLI catalog", ex);
+        }
+    }
+
+    private IOException timeoutException() {
+        return new IOException("Timed out waiting for `opencli list -f json` after "
+            + timeoutMillis + " ms");
+    }
+
+    private static void terminateProcess(Process process) {
+        List<ProcessHandle> descendants = process.descendants().toList();
+        descendants.forEach(ProcessHandle::destroyForcibly);
+        process.destroyForcibly();
+        process.descendants().forEach(ProcessHandle::destroyForcibly);
+        try {
+            process.getInputStream().close();
+        } catch (IOException ignored) {
+            // Closing the process stream is best-effort cleanup for a blocked output reader.
+        }
+        try {
+            process.waitFor(5, TimeUnit.SECONDS);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static byte[] awaitOutput(FutureTask<byte[]> outputTask) throws IOException, InterruptedException {
+        try {
+            return outputTask.get();
+        } catch (ExecutionException ex) {
+            Throwable cause = ex.getCause();
+            if (cause instanceof IOException ioException) {
+                throw ioException;
+            }
+            throw new IOException("Failed to capture `opencli list -f json` output", cause);
         }
     }
 

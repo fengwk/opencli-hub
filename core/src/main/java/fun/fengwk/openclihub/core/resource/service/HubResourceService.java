@@ -381,9 +381,10 @@ public class HubResourceService {
                     if (keyword != null && !fileName.toLowerCase(Locale.ROOT).contains(keyword)) {
                         return FileVisitResult.CONTINUE;
                     }
+                    Path groupRelative = relative.subpath(1, relative.getNameCount());
+                    String declaredRelative = groupRelative.toString().replace('\\', '/');
                     String virtualPath = HubResourcePaths.VIRTUAL_PREFIX
-                        + date.format(HubResourcePaths.DATE_FORMAT) + "/" + group + "/" + relStr;
-                    String declaredRelative = relStr;
+                        + date.format(HubResourcePaths.DATE_FORMAT) + "/" + group + "/" + declaredRelative;
                     items.add(toItemDTO(date, group, declaredRelative, virtualPath, source, fileName, attrs.size(), file));
                     return FileVisitResult.CONTINUE;
                 }

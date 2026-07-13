@@ -6,7 +6,7 @@ spring:
       preferred-json-mapper: jackson
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${OPENCLI_HUB_MYSQL_HOST:127.0.0.1}:${OPENCLI_HUB_MYSQL_PORT:3306}/${OPENCLI_HUB_MYSQL_DATABASE:opencli_hub}?useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&connectTimeout=3000&socketTimeout=3000&useSSL=false
+    url: jdbc:mysql://${OPENCLI_HUB_MYSQL_HOST:127.0.0.1}:${OPENCLI_HUB_MYSQL_PORT:3306}/${OPENCLI_HUB_MYSQL_DATABASE:opencli_hub}?useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&connectTimeout=3000&socketTimeout=3000&useSSL=false&allowPublicKeyRetrieval=true
     username: ${OPENCLI_HUB_MYSQL_USERNAME:root}
     password: ${OPENCLI_HUB_MYSQL_PASSWORD:}
   sql:
