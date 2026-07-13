@@ -170,7 +170,10 @@ public class OpenCliArgvValidator {
                 continue;
             }
 
-            if (declared.isValueRequired() || declared.isRequired()) {
+            if (!isBooleanFlag) {
+                // `opencli list -f json` reports valueRequired=false for optional typed
+                // options such as --limit, even though Commander consumes a value when
+                // the option is present. Only a no-value boolean is a bare flag.
                 if (cursor + 1 >= argv.size()) {
                     throw new OpenCliArgvValidationException(HubErrorCodes.OPENCLI_ARGUMENT_INVALID,
                         "OpenCLI option requires a value: " + name);

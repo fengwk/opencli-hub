@@ -22,6 +22,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
@@ -240,12 +241,22 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
     }
 
     private void closeBridge(WebSocketSession session, CloseStatus status) {
-        SessionBridge bridge = bridges.remove(session.getId());
-        if (bridge != null) {
-            closeSocket(bridge.socket);
-            connectionSlots.release();
+        SessionBridge bridge = bridges.get(session.getId());
+        if (bridge == null) {
+            closeSession(session, status);
+            return;
         }
-        closeSession(session, status);
+        closeBridge(bridge, status);
+    }
+
+    private void closeBridge(SessionBridge bridge, CloseStatus status) {
+        if (!bridge.closeStatus.compareAndSet(null, status)) {
+            return;
+        }
+        bridges.remove(bridge.session.getId(), bridge);
+        closeSocket(bridge.socket);
+        connectionSlots.release();
+        closeSession(bridge.session, status);
     }
 
     private void closeSession(WebSocketSession session, CloseStatus status) {
@@ -274,6 +285,7 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
         private final Socket socket;
         private final Object webSocketSendLock = new Object();
         private final Object tcpWriteLock = new Object();
+        private final AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
 
         private SessionBridge(WebSocketSession session, Socket socket) {
             this.session = session;

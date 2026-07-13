@@ -20,7 +20,7 @@ public class HubVncWebSocketConfiguration implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(handler, "/api/instances/*/vnc");
+        registry.addHandler(handler, "/api/instances/{id}/vnc");
     }
 
 }

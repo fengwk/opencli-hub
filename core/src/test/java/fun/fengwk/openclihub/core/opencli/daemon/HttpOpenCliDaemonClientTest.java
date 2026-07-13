@@ -29,16 +29,7 @@ class HttpOpenCliDaemonClientTest {
         server.start();
         OpenCliHubProperties props = new OpenCliHubProperties();
         URI base = URI.create("http://127.0.0.1:" + server.boundPort());
-        client = new HttpOpenCliDaemonClient(
-            props,
-            base,
-            new com.fasterxml.jackson.databind.ObjectMapper()
-                .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false),
-            java.net.http.HttpClient.newHttpClient(),
-            HttpOpenCliDaemonClient.ProcessProcessRunner.DEFAULT,
-            java.time.Duration.ofSeconds(2),
-            java.time.Duration.ofSeconds(2),
-            java.time.Duration.ofMillis(20));
+        client = new HttpOpenCliDaemonClient(props, base);
     }
 
     @AfterEach
@@ -57,6 +48,7 @@ class HttpOpenCliDaemonClientTest {
         assertThat(status.connectedContextIds()).containsExactly("ctx-a");
         assertThat(status.getProfiles().get(0).getLastSeenAt()).isEqualTo(1783872000123L);
         assertThat(server.lastHeaders()).contains("x-opencli: 1");
+        assertThat(server.lastHeaders()).noneMatch(header -> header.startsWith("upgrade:"));
     }
 
     @Test

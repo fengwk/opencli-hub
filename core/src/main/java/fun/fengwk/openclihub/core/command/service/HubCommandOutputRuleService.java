@@ -5,6 +5,7 @@ import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandArg;
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandCatalog;
 import fun.fengwk.openclihub.core.command.repo.HubCommandOutputRuleRepository;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandOutputRule;
+import fun.fengwk.openclihub.core.command.validator.OpenCliArgumentType;
 import fun.fengwk.openclihub.core.opencli.catalog.OpenCliReservedManagementCommands;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.command.HubCommandOutputRuleDTO;
@@ -186,7 +187,11 @@ public class HubCommandOutputRuleService {
                 HubErrorCodes.OPENCLI_OUTPUT_RULE_ARGUMENT_NOT_FOUND,
                 "Output rule references unknown argument: " + argumentName
                     + " on command " + commandKey));
-        if (!argument.isValueRequired() && !argument.isRequired()) {
+        boolean noValueBoolean = OpenCliArgumentType.of(argument.getType())
+            == OpenCliArgumentType.BOOLEAN
+            && !argument.isValueRequired()
+            && !argument.isRequired();
+        if (noValueBoolean) {
             throw new OpenCliCommandPolicyException(
                 HubErrorCodes.OPENCLI_OUTPUT_RULE_ARGUMENT_NOT_FOUND,
                 "Output rule references non-value argument: " + argumentName

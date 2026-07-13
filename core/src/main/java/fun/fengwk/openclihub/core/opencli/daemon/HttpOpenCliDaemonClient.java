@@ -45,7 +45,7 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
             baseUri,
             new ObjectMapper()
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false),
-            HttpClient.newHttpClient(),
+            newHttp11Client(),
             ProcessProcessRunner.DEFAULT,
             Duration.ofSeconds(2),
             Duration.ofSeconds(30),
@@ -92,6 +92,14 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
     private static int defaultPort() {
         // 19825 is the OpenCLI daemon's documented default.
         return 19825;
+    }
+
+    private static HttpClient newHttp11Client() {
+        // OpenCLI treats JDK HttpClient's clear-text HTTP/2 Upgrade header as a WebSocket
+        // upgrade and returns HTTP 400. Force plain HTTP/1.1 for the loopback REST endpoint.
+        return HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .build();
     }
 
     @Override

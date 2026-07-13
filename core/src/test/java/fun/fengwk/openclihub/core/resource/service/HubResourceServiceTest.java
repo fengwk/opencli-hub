@@ -101,6 +101,13 @@ class HubResourceServiceTest {
 
         List<HubResourceItemDTO> day = resourceService.listDay(listFor(date));
         assertThat(day).hasSize(2);
+        // Day listing paths remain relative to the group and round-trip to upload paths.
+        assertThat(day).extracting(HubResourceItemDTO::getRelativePath)
+            .containsExactlyInAnyOrder("report.pdf", "report (2).pdf");
+        assertThat(day).extracting(HubResourceItemDTO::getResourcePath)
+            .containsExactlyInAnyOrderElementsOf(uploadResult.getItems().stream()
+                .map(HubResourceItemDTO::getResourcePath)
+                .toList());
 
         String reportVp = uploadResult.getItems().get(0).getResourcePath();
         HubResourcePaths.ResolvedResource resolved = resourceService.resolve(reportVp);

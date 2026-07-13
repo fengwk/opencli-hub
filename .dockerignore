@@ -1,0 +1,12 @@
+.git
+.github
+.workspace
+**/target
+**/node_modules
+frontend/dist
+data
+logs
+runtime
+*.log
+*.pid
+README.md

@@ -161,8 +161,10 @@ docker run -d \
   --security-opt seccomp=unconfined \
   -e OPENCLI_PROFILE_NAME=profile-A \
   -v opencli-hub-poc-data:/var/lib/opencli \
-  opencli-hub:poc
+  opencli-hub:poc poc-entrypoint.sh
 ```
+
+The production image now defaults to `hub-entrypoint.sh`; append `poc-entrypoint.sh` explicitly only for the retained F1 diagnostic stack.
 
 This was verified to produce a connected extension and non-empty `contextId`
 without adding `--no-sandbox` to Chrome.

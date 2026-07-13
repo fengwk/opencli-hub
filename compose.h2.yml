@@ -1,0 +1,23 @@
+services:
+  hub:
+    build:
+      context: .
+    image: opencli-hub:local
+    user: "1000:1000"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker-h2
+      OPENCLI_HUB_DATA_DIR: /data/opencli-hub
+    ports:
+      - "8080:8080"
+    volumes:
+      - opencli-hub-h2-data:/data/opencli-hub
+      - opencli-hub-h2-home:/var/lib/opencli
+    shm_size: 2gb
+    security_opt:
+      - seccomp=unconfined
+    stop_grace_period: 45s
+    restart: unless-stopped
+
+volumes:
+  opencli-hub-h2-data:
+  opencli-hub-h2-home:

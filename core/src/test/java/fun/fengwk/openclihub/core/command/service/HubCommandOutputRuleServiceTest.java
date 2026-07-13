@@ -44,8 +44,8 @@ class HubCommandOutputRuleServiceTest {
         org.mockito.Mockito.when(catalog.findPublicCommand("chatgpt", "image"))
             .thenReturn(Optional.of(commandWithArgs("chatgpt", "image",
                 arg("prompt", true, true, false),
-                arg("op", false, true, false),
-                arg("sd", false, false, false))));
+                arg("op", false, false, false),
+                booleanFlag("sd"))));
         org.mockito.Mockito.when(catalog.findPublicCommand("missing", "cmd"))
             .thenReturn(Optional.empty());
         return catalog;
@@ -237,6 +237,12 @@ class HubCommandOutputRuleServiceTest {
         a.setValueRequired(valueRequired);
         a.setPositional(positional);
         return a;
+    }
+
+    private static OpenCliCommandArg booleanFlag(String name) {
+        OpenCliCommandArg arg = arg(name, false, false, false);
+        arg.setType("boolean");
+        return arg;
     }
 
     /**
