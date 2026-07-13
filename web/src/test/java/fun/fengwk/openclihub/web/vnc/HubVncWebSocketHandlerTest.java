@@ -29,6 +29,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.BinaryMessage;
@@ -183,6 +184,43 @@ class HubVncWebSocketHandlerTest {
         }
     }
 
+    /** The first close reason must win even if shutdown races with the reader thread's socket error. */
+    @Test
+    void shouldPreserveShutdownCloseStatusWhenReaderRaces() throws Exception {
+        try (FakeVncServer server = new FakeVncServer()) {
+            handler = newHandler(server.getPort());
+            CountDownLatch shutdownCloseEntered = new CountDownLatch(1);
+            CountDownLatch allowShutdownClose = new CountDownLatch(1);
+            SessionFixture fixture = newSession(11L, status -> {
+                if (status.getCode() == CloseStatus.GOING_AWAY.getCode()) {
+                    shutdownCloseEntered.countDown();
+                    try {
+                        assertTrue(allowShutdownClose.await(2, TimeUnit.SECONDS),
+                            "Timed out waiting to release GOING_AWAY close");
+                    } catch (InterruptedException ex) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(ex);
+                    }
+                }
+            });
+            handler.afterConnectionEstablished(fixture.session);
+            server.awaitConnected();
+
+            Thread shutdownThread = new Thread(handler::shutdown, "hub-vnc-shutdown-test");
+            shutdownThread.start();
+
+            assertTrue(shutdownCloseEntered.await(2, TimeUnit.SECONDS),
+                "GOING_AWAY close did not start");
+            assertTrue(server.awaitPeerClosed(), "TCP peer was not closed during shutdown");
+            Thread.sleep(100L);
+            allowShutdownClose.countDown();
+            shutdownThread.join(2000L);
+            assertTrue(!shutdownThread.isAlive(), "shutdown thread did not finish");
+
+            assertEquals(CloseStatus.GOING_AWAY.getCode(), fixture.awaitClose().getCode());
+        }
+    }
+
     private HubVncWebSocketHandler newHandler(int vncPort) {
         HubInstanceService instanceService = mock(HubInstanceService.class);
         HubInstanceLifecycleService lifecycleService = mock(HubInstanceLifecycleService.class);
@@ -200,6 +238,11 @@ class HubVncWebSocketHandlerTest {
     }
 
     private SessionFixture newSession(long instanceId) {
+        return newSession(instanceId, ignored -> {
+        });
+    }
+
+    private SessionFixture newSession(long instanceId, Consumer<CloseStatus> beforeClose) {
         WebSocketSession session = mock(WebSocketSession.class);
         AtomicBoolean open = new AtomicBoolean(true);
         AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
@@ -218,7 +261,9 @@ class HubVncWebSocketHandlerTest {
                 return null;
             }).when(session).sendMessage(any(WebSocketMessage.class));
             doAnswer(invocation -> {
-                closeStatus.set(invocation.getArgument(0));
+                CloseStatus status = invocation.getArgument(0);
+                beforeClose.accept(status);
+                closeStatus.set(status);
                 open.set(false);
                 closeLatch.countDown();
                 return null;

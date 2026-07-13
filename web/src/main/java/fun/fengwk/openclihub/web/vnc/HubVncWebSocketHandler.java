@@ -253,10 +253,13 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
         if (!bridge.closeStatus.compareAndSet(null, status)) {
             return;
         }
-        bridges.remove(bridge.session.getId(), bridge);
-        closeSocket(bridge.socket);
-        connectionSlots.release();
-        closeSession(bridge.session, status);
+        try {
+            closeSocket(bridge.socket);
+            connectionSlots.release();
+            closeSession(bridge.session, status);
+        } finally {
+            bridges.remove(bridge.session.getId(), bridge);
+        }
     }
 
     private void closeSession(WebSocketSession session, CloseStatus status) {
