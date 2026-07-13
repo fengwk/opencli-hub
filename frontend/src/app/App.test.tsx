@@ -37,7 +37,7 @@ describe('App shell and routing', () => {
 
     await user.click(screen.getByRole('link', { name: 'Executions' }))
 
-    // Heading updates to the Executions placeholder after navigation.
+    // Heading updates to prove the Executions route mounted.
     expect(screen.getByRole('heading', { name: 'Executions' })).toBeInTheDocument()
   })
 

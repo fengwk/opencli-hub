@@ -1,5 +1,125 @@
-import { FeaturePlaceholder } from '@/shared/components'
+import { useState } from 'react'
+import type { FormEvent } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
+import { listExecutions } from '@/features/executions/executions-api'
+import { formatDateTime, formatMillis } from '@/features/executions/execution-format'
+import { Empty, ErrorState, Loading, StatusBadge } from '@/shared/components'
+
+const defaultPageSize = 20
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : '请求失败，请稍后重试。'
+}
+
+function parseInstanceId(value: string): number | undefined {
+  const normalized = value.trim()
+  if (!normalized) return undefined
+  if (!/^\d+$/.test(normalized)) return Number.NaN
+  const instanceId = Number(normalized)
+  return Number.isSafeInteger(instanceId) && instanceId > 0 ? instanceId : Number.NaN
+}
 
 export function ExecutionsPage() {
-  return <FeaturePlaceholder title="Executions" />
+  const [pageNumber, setPageNumber] = useState(1)
+  const [pageSize, setPageSize] = useState(defaultPageSize)
+  const [instanceInput, setInstanceInput] = useState('')
+  const [instanceId, setInstanceId] = useState<number | undefined>()
+  const [filterError, setFilterError] = useState<string | null>(null)
+  const executionsQuery = useQuery({
+    queryKey: ['executions', pageNumber, pageSize, instanceId],
+    queryFn: () => listExecutions({ pageNumber, pageSize, instanceId }),
+  })
+  const totalCount = Number(executionsQuery.data?.totalCount ?? 0)
+  const hasPreviousPage = pageNumber > 1
+  const hasNextPage = pageNumber * pageSize < totalCount
+
+  function submitFilter(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const nextInstanceId = parseInstanceId(instanceInput)
+    if (Number.isNaN(nextInstanceId)) {
+      setFilterError('Instance ID 必须是正整数。')
+      return
+    }
+    setFilterError(null)
+    setPageNumber(1)
+    setInstanceId(nextInstanceId)
+  }
+
+  function changePageSize(nextPageSize: number) {
+    setPageSize(nextPageSize)
+    setPageNumber(1)
+  }
+
+  return (
+    <div className="page">
+      <header className="page-header">
+        <h1 className="page-title">Executions</h1>
+        <p className="page-subtitle">查看 OpenCLI 命令的执行历史、状态和耗时。</p>
+      </header>
+
+      <form className="filter-bar" aria-label="Execution 筛选" onSubmit={submitFilter}>
+        <label>
+          Instance ID
+          <input
+            aria-describedby={filterError ? 'execution-filter-error' : undefined}
+            inputMode="numeric"
+            value={instanceInput}
+            onChange={(event) => setInstanceInput(event.target.value)}
+          />
+        </label>
+        <label>
+          每页数量
+          <select value={pageSize} onChange={(event) => changePageSize(Number(event.target.value))}>
+            <option value={20}>20</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
+        </label>
+        <button type="submit" className="btn btn-primary">筛选</button>
+      </form>
+      {filterError ? <p className="page-error" id="execution-filter-error" role="alert">{filterError}</p> : null}
+
+      {executionsQuery.isPending ? <Loading label="正在加载执行历史…" /> : null}
+      {executionsQuery.isError ? <ErrorState title="无法加载执行历史" description={errorMessage(executionsQuery.error)} onRetry={() => void executionsQuery.refetch()} /> : null}
+      {executionsQuery.isSuccess && executionsQuery.data.results.length === 0 ? <Empty title="暂无执行记录" description="命令执行完成后会在这里显示。" /> : null}
+      {executionsQuery.isSuccess && executionsQuery.data.results.length > 0 ? (
+        <>
+          <div className="execution-table-wrap">
+            <table className="execution-table">
+              <thead>
+                <tr>
+                  <th scope="col">状态</th>
+                  <th scope="col">Instance</th>
+                  <th scope="col">命令</th>
+                  <th scope="col">耗时</th>
+                  <th scope="col">时间</th>
+                  <th scope="col"><span className="visually-hidden">操作</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {executionsQuery.data.results.map((execution) => (
+                  <tr key={execution.id}>
+                    <td><StatusBadge status={execution.status} /></td>
+                    <td>{execution.instanceCode ?? '未分配'}{execution.instanceId !== null ? ` (#${execution.instanceId})` : ''}</td>
+                    <td>{execution.commandKey ?? '—'}</td>
+                    <td>{formatMillis(execution.durationMillis)}</td>
+                    <td>{formatDateTime(execution.finishedAt ?? execution.startedAt ?? execution.queuedAt)}</td>
+                    <td><Link className="btn compact-button" to={`/executions/${execution.id}`}>查看详情 {execution.id}</Link></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <nav className="pagination" aria-label="Execution 分页">
+            <span>第 {pageNumber} 页，共 {Number.isFinite(totalCount) ? totalCount : 0} 条</span>
+            <div className="pagination-actions">
+              <button type="button" className="btn" disabled={!hasPreviousPage} onClick={() => setPageNumber((current) => current - 1)}>上一页</button>
+              <button type="button" className="btn" disabled={!hasNextPage} onClick={() => setPageNumber((current) => current + 1)}>下一页</button>
+            </div>
+          </nav>
+        </>
+      ) : null}
+    </div>
+  )
 }

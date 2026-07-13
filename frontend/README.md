@@ -1,9 +1,8 @@
 # OpenCLI Hub Frontend
 
-React + TypeScript + Vite base for the OpenCLI Hub management UI. This is the
-FE0 foundation: app shell, routing, API client, shared state components and
-tests. Feature pages are intentional "功能尚未接入" placeholders and are
-implemented by the feature agents (FE1/FE2/FE3).
+React + TypeScript + Vite application for the OpenCLI Hub management UI. It
+provides the app shell, API client, shared components, and management pages for
+Instances, Executions, Commands, Resources, VNC, and Logs.
 
 ## Requirements
 
