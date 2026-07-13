@@ -8,6 +8,7 @@ import fun.fengwk.openclihub.core.instance.service.converter.HubInstanceConverte
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceCreateDTO;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceDTO;
+import fun.fengwk.openclihub.share.model.instance.HubInstanceVncStatusDTO;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -48,6 +49,29 @@ public class HubInstanceController {
     @GetMapping("/{id}")
     public Result<HubInstanceDTO> get(@PathVariable long id) {
         return Results.ok(toDTO(instanceService.get(id)));
+    }
+
+    /**
+     * Reports VNC availability without exposing the loopback TCP address.
+     */
+    @GetMapping("/{id}/vnc/status")
+    public Result<HubInstanceVncStatusDTO> vncStatus(@PathVariable long id) {
+        HubInstance instance = instanceService.get(id);
+        var snapshot = lifecycleService.getSnapshot(id);
+        boolean runtimeAvailable = snapshot.isRegistered();
+        boolean vncAvailable = instance.isRunning()
+            && runtimeAvailable
+            && snapshot.getVncPort() != null
+            && snapshot.getVncPort() > 0
+            && snapshot.getVncPort() <= 65535;
+
+        HubInstanceVncStatusDTO dto = new HubInstanceVncStatusDTO();
+        dto.setInstanceId(id);
+        dto.setInstanceAvailable(true);
+        dto.setRunning(instance.isRunning());
+        dto.setRuntimeAvailable(runtimeAvailable);
+        dto.setVncAvailable(vncAvailable);
+        return Results.ok(dto);
     }
 
     @PutMapping("/{id}")
