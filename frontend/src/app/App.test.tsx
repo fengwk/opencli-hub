@@ -41,9 +41,10 @@ describe('App shell and routing', () => {
     expect(screen.getByRole('heading', { name: 'Executions' })).toBeInTheDocument()
   })
 
-  it('shows an explicit not-yet-wired empty state instead of business data', () => {
+  it('renders the Commands management page route', () => {
     renderApp('/commands')
-    expect(screen.getByText('功能尚未接入')).toBeInTheDocument()
+    // The page heading proves the route mounts the implemented feature page.
+    expect(screen.getByRole('heading', { name: 'Commands' })).toBeInTheDocument()
   })
 
   it('renders the 404 page for unknown routes', () => {

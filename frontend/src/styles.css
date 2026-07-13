@@ -329,3 +329,276 @@ body {
     transform: translateX(0);
   }
 }
+
+/* Feature pages */
+.page-subtitle,
+.muted {
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+
+.page-subtitle {
+  margin: 6px 0 0;
+}
+
+.page-error,
+.inline-error {
+  color: var(--color-danger);
+}
+
+.page-error {
+  margin: 0 0 16px;
+}
+
+.filter-bar,
+.upload-form,
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.filter-bar label,
+.upload-form label,
+.inline-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+input,
+select {
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.command-list {
+  display: grid;
+  gap: 16px;
+}
+
+.command-card,
+.resource-group {
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.command-card-header,
+.section-heading-row,
+.policy-row,
+.resource-item,
+.date-summary {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-title,
+.command-section h3,
+.resource-group h2,
+.date-list h2 {
+  margin: 0;
+}
+
+.card-title {
+  font-size: 17px;
+}
+
+.card-description {
+  margin: 6px 0 0;
+  color: var(--color-text-muted);
+}
+
+.badge-row,
+.resource-actions,
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.metadata-grid dt {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.metadata-grid dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.command-section {
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border);
+}
+
+.command-section + .command-section {
+  margin-top: 14px;
+}
+
+.argument-list {
+  display: grid;
+  gap: 8px;
+  padding-left: 20px;
+}
+
+.argument-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.argument-list strong {
+  color: var(--color-text);
+}
+
+.output-rule-form {
+  margin-top: 10px;
+}
+
+.resource-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.date-list,
+.resource-content {
+  min-width: 0;
+}
+
+.date-list {
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.date-list h2 {
+  margin-bottom: 10px;
+  font-size: 16px;
+}
+
+.date-summary {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+}
+
+.date-summary.selected {
+  border-color: var(--color-primary);
+}
+
+.date-select {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.date-select span,
+.resource-item-details span {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.compact-button {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.resource-content > .filter-bar {
+  margin-top: 0;
+}
+
+.resource-group + .resource-group {
+  margin-top: 14px;
+}
+
+.resource-list {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.resource-item {
+  align-items: flex-start;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.resource-item-details {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.resource-item-details strong {
+  overflow-wrap: anywhere;
+}
+
+.resource-preview-dialog {
+  max-width: min(900px, calc(100% - 32px));
+}
+
+.resource-preview-image,
+.resource-preview-video,
+.resource-preview-pdf {
+  display: block;
+  width: 100%;
+  max-height: 70vh;
+  margin-top: 12px;
+  border: 0;
+}
+
+.resource-preview-image {
+  object-fit: contain;
+}
+
+.resource-preview-pdf {
+  min-height: 60vh;
+}
+
+@media (max-width: 768px) {
+  .resource-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .command-card-header,
+  .resource-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
