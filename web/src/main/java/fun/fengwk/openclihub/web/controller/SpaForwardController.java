@@ -19,6 +19,7 @@ public class SpaForwardController {
         "/executions/{id}",
         "/commands",
         "/resources",
+        "/settings",
         "/logs"
     })
     public String forwardToIndex() {
