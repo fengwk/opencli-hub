@@ -33,6 +33,15 @@ afterEach(() => {
 })
 
 describe('VncViewer', () => {
+  it('provides a definite viewport height before noVNC initializes', () => {
+    // noVNC measures the target during construction; a min-height-only target resolves its
+    // internal 100%-height screen to zero and hides an otherwise valid framebuffer.
+    render(<VncViewer instanceId="343020517415976960" available />)
+
+    expect(getComputedStyle(screen.getByLabelText('VNC 远程桌面')).height)
+      .toBe('55vh')
+  })
+
   it('uses noVNC with the same-origin WebSocket URL and disposes on explicit disconnect', async () => {
     // The URL assertion prevents host, port, token, or password fields from leaking into the VNC client contract.
     const user = userEvent.setup()
