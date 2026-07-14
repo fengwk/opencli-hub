@@ -25,6 +25,7 @@ import fun.fengwk.openclihub.share.model.execution.HubExecutionRequestDTO;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionStatus;
 import fun.fengwk.openclihub.share.model.execution.SiteSessionMode;
 import fun.fengwk.openclihub.share.model.resource.HubResourceItemDTO;
+import fun.fengwk.openclihub.share.util.HubIds;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -116,7 +117,10 @@ public class HubExecutionService {
         return converter.toDTO(execution, outcome.resources());
     }
 
-    public HubExecutionDTO getById(long id) {
+    public HubExecutionDTO getById(String id) {
+        if (!HubIds.isSupported(id)) {
+            return null;
+        }
         HubExecution execution = executionRepository.findById(id);
         if (execution == null) {
             return null;
@@ -124,7 +128,7 @@ public class HubExecutionService {
         return converter.toDTO(execution, executionResources.scanExisting(id));
     }
 
-    public Page<HubExecutionDTO> page(PageQuery pageQuery, Long instanceId) {
+    public Page<HubExecutionDTO> page(PageQuery pageQuery, String instanceId) {
         return executionRepository.page(pageQuery, instanceId)
             .map(execution -> converter.toDTO(execution, List.of()));
     }
@@ -300,9 +304,13 @@ public class HubExecutionService {
             throw HubErrorCodes.INVALID_EXECUTION_REQUEST.asThrowable(
                 "execution request and argv are required");
         }
+        if (request.getInstanceId() != null && !HubIds.isSupported(request.getInstanceId())) {
+            throw HubErrorCodes.INVALID_EXECUTION_REQUEST.asThrowable(
+                "instanceId must be a UUID or a migrated positive-long id");
+        }
     }
 
-    private long generateExecutionId() {
+    private String generateExecutionId() {
         try {
             return executionRepository.generateId();
         } catch (RuntimeException ex) {

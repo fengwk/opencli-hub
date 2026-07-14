@@ -15,7 +15,7 @@ import lombok.Data;
 @Data
 public class HubInstance {
 
-    private long id;
+    private String id;
     private String code;
     private String displayName;
     private String contextId;

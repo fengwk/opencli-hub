@@ -80,13 +80,13 @@ class HubLogServiceTest {
     /** Instance source selection maps only fixed enum values to the existing layout paths. */
     @Test
     void shouldUseOnlyFixedInstanceLogPaths() throws IOException {
-        Path chromeLog = HubInstanceDirectoryLayout.chromeLog(dataDir.toString(), 41L);
+        Path chromeLog = HubInstanceDirectoryLayout.chromeLog(dataDir.toString(), "41");
         Files.createDirectories(chromeLog.getParent());
         Files.writeString(chromeLog, "chrome-line\n");
         Path outside = dataDir.resolve("secret.log");
         Files.writeString(outside, "secret\n");
 
-        HubLogContentDTO content = logService.tailInstance(41L, HubLogSource.CHROME, 1);
+        HubLogContentDTO content = logService.tailInstance("41", HubLogSource.CHROME, 1);
 
         assertThat(content.getSource()).isEqualTo(HubLogSource.CHROME);
         assertThat(content.getContent()).isEqualTo("chrome-line\n");
@@ -94,7 +94,7 @@ class HubLogServiceTest {
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .satisfies(error -> assertThat(((ThrowableConventionErrorCode) error).getCode())
                 .isEqualTo(HubErrorCodes.INSTANCE_LOG_SOURCE_INVALID.getCode()));
-        assertThatThrownBy(() -> logService.tailInstance(41L, HubLogSource.SYSTEM, 1))
+        assertThatThrownBy(() -> logService.tailInstance("41", HubLogSource.SYSTEM, 1))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .satisfies(error -> assertThat(((ThrowableConventionErrorCode) error).getCode())
                 .isEqualTo(HubErrorCodes.INSTANCE_LOG_SOURCE_INVALID.getCode()));
@@ -103,15 +103,19 @@ class HubLogServiceTest {
     /** Fixed downloads expose exact bytes and missing managed files retain the Hub 404 code. */
     @Test
     void shouldStreamFixedLogAndMapMissingFile() throws IOException {
-        Path xvfbLog = HubInstanceDirectoryLayout.xvfbLog(dataDir.toString(), 42L);
+        Path xvfbLog = HubInstanceDirectoryLayout.xvfbLog(dataDir.toString(), "42");
         Files.createDirectories(xvfbLog.getParent());
         Files.writeString(xvfbLog, "xvfb-output\n");
 
-        try (HubLogStream stream = logService.openInstanceDownload(42L, HubLogSource.XVFB)) {
+        try (HubLogStream stream = logService.openInstanceDownload("42", HubLogSource.XVFB)) {
             assertThat(stream.getFileName()).isEqualTo(HubInstanceDirectoryLayout.LOG_XVFB);
             assertThat(new String(stream.getInputStream().readAllBytes())).isEqualTo("xvfb-output\n");
         }
-        assertThatThrownBy(() -> logService.tailInstance(99L, HubLogSource.OPENBOX, 1))
+        assertThatThrownBy(() -> logService.tailInstance("99", HubLogSource.OPENBOX, 1))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(error -> assertThat(((ThrowableConventionErrorCode) error).getCode())
+                .isEqualTo(HubErrorCodes.LOG_FILE_NOT_FOUND.getCode()));
+        assertThatThrownBy(() -> logService.tailInstance("not-an-id", HubLogSource.CHROME, 1))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .satisfies(error -> assertThat(((ThrowableConventionErrorCode) error).getCode())
                 .isEqualTo(HubErrorCodes.LOG_FILE_NOT_FOUND.getCode()));

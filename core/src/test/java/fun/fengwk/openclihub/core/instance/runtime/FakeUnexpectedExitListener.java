@@ -10,17 +10,17 @@ import java.util.List;
  */
 public class FakeUnexpectedExitListener implements UnexpectedExitListener {
 
-    private final List<long[]> watched = new ArrayList<>();
-    private final List<long[]> unwatched = new ArrayList<>();
+    private final List<String> watched = new ArrayList<>();
+    private final List<String> unwatched = new ArrayList<>();
 
     @Override
-    public void watch(long instanceId, HubInstanceRuntime runtime) {
-        watched.add(new long[] { instanceId, runtime == null ? -1 : 1 });
+    public void watch(String instanceId, HubInstanceRuntime runtime) {
+        watched.add(instanceId);
     }
 
     @Override
-    public void unwatch(long instanceId) {
-        unwatched.add(new long[] { instanceId });
+    public void unwatch(String instanceId) {
+        unwatched.add(instanceId);
     }
 
     public int watchedCount() {

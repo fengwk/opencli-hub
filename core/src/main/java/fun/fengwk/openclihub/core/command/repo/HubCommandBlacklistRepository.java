@@ -11,17 +11,17 @@ import java.util.Optional;
  */
 public interface HubCommandBlacklistRepository {
 
-    long generateId();
+    String generateId();
 
     boolean add(HubCommandBlacklist blacklist);
 
     boolean update(HubCommandBlacklist blacklist);
 
-    boolean deleteById(long id);
+    boolean deleteById(String id);
 
     boolean deleteByCommandKey(String commandKey);
 
-    HubCommandBlacklist findById(long id);
+    HubCommandBlacklist findById(String id);
 
     Optional<HubCommandBlacklist> findByCommandKey(String commandKey);
 

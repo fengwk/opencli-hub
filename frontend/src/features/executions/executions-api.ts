@@ -1,5 +1,5 @@
 import { apiClient } from '@/shared/api/client'
-import type { PageResult } from '@/shared/api/contracts'
+import type { BackendId, PageResult } from '@/shared/api/contracts'
 import type { ExecutionListQuery, HubExecution } from '@/features/executions/types'
 
 /** Request the M6 execution history endpoint with its 1-based pagination contract. */
@@ -13,6 +13,6 @@ export function listExecutions(query: ExecutionListQuery): Promise<PageResult<Hu
   })
 }
 
-export function getExecution(id: string): Promise<HubExecution> {
+export function getExecution(id: BackendId): Promise<HubExecution> {
   return apiClient.get<HubExecution>(`/executions/${encodeURIComponent(id)}`)
 }

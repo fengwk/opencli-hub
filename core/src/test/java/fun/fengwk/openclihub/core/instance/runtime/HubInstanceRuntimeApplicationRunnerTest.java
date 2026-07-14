@@ -71,9 +71,9 @@ class HubInstanceRuntimeApplicationRunnerTest {
     @Test
     void shouldReturnImmediatelyFromApplicationRunner() throws Exception {
         // Seed three rows: A wins, B/C fail. The ApplicationRunner must NOT block the caller.
-        long a = seedRow("bilibili-a");
-        long b = seedRow("bilibili-b");
-        long c = seedRow("bilibili-c");
+        String a = seedRow("bilibili-a");
+        String b = seedRow("bilibili-b");
+        String c = seedRow("bilibili-c");
         instanceService.updateState(a, fun.fengwk.openclihub.share.model.instance.HubInstanceState.RUNNING, null);
         instanceService.updateState(b, fun.fengwk.openclihub.share.model.instance.HubInstanceState.RUNNING, null);
         instanceService.updateState(c, fun.fengwk.openclihub.share.model.instance.HubInstanceState.RUNNING, null);
@@ -110,7 +110,7 @@ class HubInstanceRuntimeApplicationRunnerTest {
         assertThat(b.vncPort).isEqualTo(a.vncPort);
     }
 
-    private long seedRow(String code) {
+    private String seedRow(String code) {
         var inst = new fun.fengwk.openclihub.core.instance.service.model.HubInstance();
         inst.setCode(code);
         inst.setDisplayName(code);

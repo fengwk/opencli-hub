@@ -21,11 +21,11 @@ public interface HubCommandBlacklistMapper extends BaseMapper {
 
     int updateById(HubCommandBlacklistDO blacklistDO);
 
-    int deleteById(long id);
+    int deleteById(String id);
 
     int deleteByCommandKey(String commandKey);
 
-    HubCommandBlacklistDO findById(long id);
+    HubCommandBlacklistDO findById(String id);
 
     HubCommandBlacklistDO findByCommandKey(String commandKey);
 

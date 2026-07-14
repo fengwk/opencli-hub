@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type RFB from '@novnc/novnc/lib/rfb.js'
 import { buildVncWebSocketUrl } from '@/features/instances/vnc-url'
+import type { BackendId } from '@/shared/api/contracts'
 
 type VncConnectionState = 'disconnected' | 'connecting' | 'connected' | 'failed'
 
@@ -12,7 +13,7 @@ const connectionStateLabels: Record<VncConnectionState, string> = {
 }
 
 /** noVNC-backed viewer for the Hub's same-origin WebSocket bridge. */
-export function VncViewer({ instanceId, available }: { instanceId: number; available: boolean }) {
+export function VncViewer({ instanceId, available }: { instanceId: BackendId; available: boolean }) {
   const targetRef = useRef<HTMLDivElement>(null)
   const rfbRef = useRef<RFB | null>(null)
   const connectionAttemptRef = useRef(0)

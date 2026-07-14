@@ -1,6 +1,5 @@
 package fun.fengwk.openclihub.core.command.repo.impl;
 
-import fun.fengwk.convention4j.common.idgen.NamespaceIdGenerator;
 import fun.fengwk.openclihub.core.command.repo.HubCommandBlacklistRepository;
 import fun.fengwk.openclihub.core.command.repo.impl.mapper.HubCommandBlacklistMapper;
 import fun.fengwk.openclihub.core.command.repo.impl.model.HubCommandBlacklistDO;
@@ -8,6 +7,7 @@ import fun.fengwk.openclihub.core.command.service.model.HubCommandBlacklist;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Repository;
 
@@ -24,12 +24,11 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class MysqlHubCommandBlacklistRepository implements HubCommandBlacklistRepository {
 
-    private final NamespaceIdGenerator<Long> idGenerator;
     private final HubCommandBlacklistMapper mapper;
 
     @Override
-    public long generateId() {
-        return idGenerator.next(HubCommandBlacklist.class);
+    public String generateId() {
+        return UUID.randomUUID().toString();
     }
 
     @Override
@@ -43,7 +42,7 @@ public class MysqlHubCommandBlacklistRepository implements HubCommandBlacklistRe
     }
 
     @Override
-    public boolean deleteById(long id) {
+    public boolean deleteById(String id) {
         return mapper.deleteById(id) == 1;
     }
 
@@ -53,7 +52,7 @@ public class MysqlHubCommandBlacklistRepository implements HubCommandBlacklistRe
     }
 
     @Override
-    public HubCommandBlacklist findById(long id) {
+    public HubCommandBlacklist findById(String id) {
         return fromDO(mapper.findById(id));
     }
 

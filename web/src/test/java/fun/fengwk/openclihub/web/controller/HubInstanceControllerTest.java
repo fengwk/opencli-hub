@@ -64,16 +64,16 @@ class HubInstanceControllerTest {
     @BeforeEach
     void setUp() {
         instance = new HubInstance();
-        instance.setId(11L);
+        instance.setId("11");
         instance.setCode("primary");
         instance.setState(HubInstanceState.RUNNING);
         dto = new HubInstanceDTO();
-        dto.setId(11L);
+        dto.setId("11");
         dto.setCode("primary");
         dto.setState(HubInstanceState.RUNNING);
         HubInstanceRuntimeSnapshot snapshot = new HubInstanceRuntimeSnapshot(
             true, 99, 5900, 0, 0);
-        when(lifecycleService.getSnapshot(11L)).thenReturn(snapshot);
+        when(lifecycleService.getSnapshot("11")).thenReturn(snapshot);
         when(converter.toDTO(instance, snapshot)).thenReturn(dto);
     }
 
@@ -81,11 +81,11 @@ class HubInstanceControllerTest {
     @Test
     void shouldListAndGetInstances() throws Exception {
         when(instanceService.list()).thenReturn(List.of(instance));
-        when(instanceService.get(11L)).thenReturn(instance);
+        when(instanceService.get("11")).thenReturn(instance);
 
         mockMvc.perform(get("/api/instances"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data[0].id").value(11));
+            .andExpect(jsonPath("$.data[0].id").value("11"));
         mockMvc.perform(get("/api/instances/11"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.code").value("primary"));
@@ -105,17 +105,17 @@ class HubInstanceControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsBytes(request)))
             .andExpect(status().isCreated())
-            .andExpect(jsonPath("$.data.id").value(11));
+            .andExpect(jsonPath("$.data.id").value("11"));
     }
 
     /** VNC status must expose availability flags without leaking the loopback VNC port. */
     @Test
     void shouldReportVncStatusForAvailableAndUnavailableRuntime() throws Exception {
-        when(instanceService.get(11L)).thenReturn(instance);
+        when(instanceService.get("11")).thenReturn(instance);
 
         mockMvc.perform(get("/api/instances/11/vnc/status"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.instanceId").value(11))
+            .andExpect(jsonPath("$.data.instanceId").value("11"))
             .andExpect(jsonPath("$.data.instanceAvailable").value(true))
             .andExpect(jsonPath("$.data.running").value(true))
             .andExpect(jsonPath("$.data.runtimeAvailable").value(true))
@@ -123,7 +123,7 @@ class HubInstanceControllerTest {
             .andExpect(jsonPath("$.data.vncPort").doesNotExist());
 
         instance.setState(HubInstanceState.STOPPED);
-        when(lifecycleService.getSnapshot(11L)).thenReturn(HubInstanceRuntimeSnapshot.absent());
+        when(lifecycleService.getSnapshot("11")).thenReturn(HubInstanceRuntimeSnapshot.absent());
         mockMvc.perform(get("/api/instances/11/vnc/status"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.instanceAvailable").value(true))
@@ -136,7 +136,7 @@ class HubInstanceControllerTest {
     @Test
     void shouldMapNotFoundDomainErrorForVncStatus() throws Exception {
         doThrow(HubErrorCodes.INSTANCE_NOT_FOUND.asThrowable("missing"))
-            .when(instanceService).get(12L);
+            .when(instanceService).get("12");
 
         mockMvc.perform(get("/api/instances/12/vnc/status"))
             .andExpect(status().isNotFound())
@@ -151,17 +151,17 @@ class HubInstanceControllerTest {
         request.setDisplayName("Primary");
         request.setWebsites(List.of("bilibili"));
         request.setMaxPending(5);
-        when(instanceService.update(any(Long.class), any())).thenReturn(instance);
-        when(lifecycleService.start(11L)).thenReturn(instance);
-        when(instanceService.get(11L)).thenReturn(instance);
-        doNothing().when(lifecycleService).stop(11L);
-        doNothing().when(lifecycleService).restart(11L);
+        when(instanceService.update(any(String.class), any())).thenReturn(instance);
+        when(lifecycleService.start("11")).thenReturn(instance);
+        when(instanceService.get("11")).thenReturn(instance);
+        doNothing().when(lifecycleService).stop("11");
+        doNothing().when(lifecycleService).restart("11");
 
         mockMvc.perform(put("/api/instances/11")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsBytes(request)))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.id").value(11));
+            .andExpect(jsonPath("$.data.id").value("11"));
         mockMvc.perform(post("/api/instances/11/start"))
             .andExpect(status().isOk());
         mockMvc.perform(post("/api/instances/11/stop"))
@@ -173,19 +173,19 @@ class HubInstanceControllerTest {
     /** Delete success remains a Result response so frontend unwrapping stays uniform. */
     @Test
     void shouldDeleteInstance() throws Exception {
-        doNothing().when(lifecycleService).delete(11L);
+        doNothing().when(lifecycleService).delete("11");
 
         mockMvc.perform(delete("/api/instances/11"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.success").value(true));
-        verify(lifecycleService).delete(11L);
+        verify(lifecycleService).delete("11");
     }
 
     /** Domain errors must retain their declared HTTP status and stable Hub code. */
     @Test
     void shouldMapBusyDomainError() throws Exception {
         doThrow(HubErrorCodes.INSTANCE_BUSY.asThrowable("busy"))
-            .when(lifecycleService).stop(11L);
+            .when(lifecycleService).stop("11");
 
         mockMvc.perform(post("/api/instances/11/stop"))
             .andExpect(status().isConflict())

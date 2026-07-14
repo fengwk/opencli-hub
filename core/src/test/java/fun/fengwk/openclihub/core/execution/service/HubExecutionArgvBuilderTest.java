@@ -134,7 +134,7 @@ class HubExecutionArgvBuilderTest {
 
     private static HubInstance newInstance(String contextId) {
         HubInstance instance = new HubInstance();
-        instance.setId(1L);
+        instance.setId("1");
         instance.setCode("a");
         instance.setDisplayName("A");
         instance.setContextId(contextId);

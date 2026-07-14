@@ -13,8 +13,8 @@ import lombok.Data;
 @Data
 public class HubExecutionDTO {
 
-    private long id;
-    private Long instanceId;
+    private String id;
+    private String instanceId;
     private String instanceCode;
     private String commandKey;
     private String site;

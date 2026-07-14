@@ -10,15 +10,15 @@ import java.util.List;
  */
 public interface HubInstanceRepository {
 
-    long generateId();
+    String generateId();
 
     boolean add(HubInstance instance);
 
     boolean update(HubInstance instance);
 
-    boolean deleteById(long id);
+    boolean deleteById(String id);
 
-    HubInstance findById(long id);
+    HubInstance findById(String id);
 
     HubInstance findByCode(String code);
 

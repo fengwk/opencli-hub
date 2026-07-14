@@ -583,7 +583,7 @@ supportedCommands
 
 ### 2. Repository
 
-CRUD、code/contextId 唯一查询、全量按 ID 排序。
+CRUD、code/contextId 唯一查询、全量按创建时间和字符串 ID 稳定排序。
 
 ### 3. Service
 

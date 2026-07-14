@@ -63,14 +63,14 @@ public class HubExecutionResources {
      * group is left null and the substituted argv contains only the real paths of the
      * inputs.
      */
-    public ResourceContext prepare(long executionId,
+    public ResourceContext prepare(String executionId,
                                    NormalizedOpenCliArgv normalized,
                                    HubCommandOutputRule outputRule) {
         if (normalized == null) {
             throw new IllegalArgumentException("normalized must not be null");
         }
-        if (executionId <= 0L) {
-            throw HubErrorCodes.INVALID_EXECUTION_REQUEST.asThrowable("execution id must be positive");
+        if (executionId == null || executionId.isBlank()) {
+            throw HubErrorCodes.INVALID_EXECUTION_REQUEST.asThrowable("execution id must not be blank");
         }
 
         List<HubResourceLease> leases = new ArrayList<>();
@@ -92,7 +92,7 @@ public class HubExecutionResources {
         return new ResourceContext(substitutedArgv, group, leases);
     }
 
-    private List<String> substituteInputs(long executionId,
+    private List<String> substituteInputs(String executionId,
                                           List<HubResourceLease> leases,
                                           List<String> argv) {
         List<String> substituted = new ArrayList<>(argv.size());
@@ -117,7 +117,7 @@ public class HubExecutionResources {
     }
 
     private HubExecutionResourceGroup createOutputGroupSafely(
-        long executionId, List<HubResourceLease> leases) {
+        String executionId, List<HubResourceLease> leases) {
         try {
             return resourceService.createExecutionGroup(executionId, null);
         } catch (RuntimeException ex) {
@@ -143,7 +143,7 @@ public class HubExecutionResources {
      * dates are UTC and are not stored on the execution row, so detail reads inspect only
      * the root's date-directory level instead of guessing from the server timezone.
      */
-    public List<HubResourceItemDTO> scanExisting(long executionId) {
+    public List<HubResourceItemDTO> scanExisting(String executionId) {
         String groupName = HubResourcePaths.executionGroup(executionId);
         if (!Files.exists(resourceRoot, LinkOption.NOFOLLOW_LINKS)) {
             return List.of();

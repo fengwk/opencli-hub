@@ -28,7 +28,7 @@ class HubInstanceUnexpectedExitWatcherTest {
             scheduler);
         try {
             HubInstanceRuntime runtime = new HubInstanceRuntime();
-            runtime.setInstanceId(1001L);
+            runtime.setInstanceId("1001");
             FakeInstanceProcessLauncher.FakeHandle xvfb =
                 new FakeInstanceProcessLauncher.FakeHandle(1L, "Xvfb", "Xvfb :8200");
             FakeInstanceProcessLauncher.FakeHandle chrome =

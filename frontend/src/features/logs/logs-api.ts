@@ -1,4 +1,6 @@
 import { apiBaseUrl, apiClient } from '@/shared/api/client'
+import { parseBackendId } from '@/shared/api/backend-id'
+import type { BackendId } from '@/shared/api/contracts'
 import { instanceLogSources } from '@/features/logs/types'
 import type { HubLogContent, InstanceLogSource, LogRequest } from '@/features/logs/types'
 
@@ -12,11 +14,12 @@ function requireLineCount(lines: number): number {
   return lines
 }
 
-function requirePositiveInstanceId(instanceId: number): number {
-  if (!Number.isSafeInteger(instanceId) || instanceId <= 0) {
-    throw new RangeError('Instance ID 必须是正整数。')
+function requireInstanceId(instanceId: BackendId): BackendId {
+  const normalized = parseBackendId(instanceId)
+  if (!normalized) {
+    throw new RangeError('Instance ID 不能为空。')
   }
-  return instanceId
+  return normalized
 }
 
 function requireInstanceLogSource(source: string): InstanceLogSource {
@@ -30,9 +33,9 @@ export function getSystemLogs(lines: number): Promise<HubLogContent> {
   return apiClient.get<HubLogContent>('/logs/system', { params: { lines: requireLineCount(lines) } })
 }
 
-export function getInstanceLogs(instanceId: number, source: InstanceLogSource, lines: number): Promise<HubLogContent> {
-  const safeInstanceId = requirePositiveInstanceId(instanceId)
-  return apiClient.get<HubLogContent>(`/instances/${safeInstanceId}/logs`, {
+export function getInstanceLogs(instanceId: BackendId, source: InstanceLogSource, lines: number): Promise<HubLogContent> {
+  const safeInstanceId = requireInstanceId(instanceId)
+  return apiClient.get<HubLogContent>(`/instances/${encodeURIComponent(safeInstanceId)}/logs`, {
     params: { source: requireInstanceLogSource(source), lines: requireLineCount(lines) },
   })
 }
@@ -47,7 +50,7 @@ export function getLogs(request: LogRequest): Promise<HubLogContent> {
 export function getLogDownloadUrl(request: LogRequest): string {
   if (request.mode === 'SYSTEM') return `${apiBaseUrl}/logs/system/download`
 
-  const instanceId = requirePositiveInstanceId(request.instanceId)
+  const instanceId = requireInstanceId(request.instanceId)
   const source = requireInstanceLogSource(request.source)
-  return `${apiBaseUrl}/instances/${instanceId}/logs/download?${new URLSearchParams({ source }).toString()}`
+  return `${apiBaseUrl}/instances/${encodeURIComponent(instanceId)}/logs/download?${new URLSearchParams({ source }).toString()}`
 }

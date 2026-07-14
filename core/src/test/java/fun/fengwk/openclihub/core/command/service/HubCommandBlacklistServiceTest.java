@@ -9,7 +9,7 @@ import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -162,7 +162,7 @@ class HubCommandBlacklistServiceTest {
 
     private static HubCommandBlacklist entry(String commandKey, String reason) {
         HubCommandBlacklist b = new HubCommandBlacklist();
-        b.setId(1001L);
+        b.setId("1001");
         b.setCommandKey(commandKey);
         b.setReason(reason);
         b.setCreateTime(java.time.LocalDateTime.now());
@@ -177,7 +177,6 @@ class HubCommandBlacklistServiceTest {
     private static final class InMemoryBlacklist implements HubCommandBlacklistRepository {
 
         final java.util.LinkedHashMap<String, HubCommandBlacklist> byKey = new java.util.LinkedHashMap<>();
-        final AtomicLong idGen = new AtomicLong(1000L);
         int addCount = 0;
         int deleteCount = 0;
         int listAllCallCount = 0;
@@ -188,8 +187,8 @@ class HubCommandBlacklistServiceTest {
         }
 
         @Override
-        public long generateId() {
-            return idGen.incrementAndGet();
+        public String generateId() {
+            return UUID.randomUUID().toString();
         }
 
         @Override
@@ -216,8 +215,8 @@ class HubCommandBlacklistServiceTest {
         }
 
         @Override
-        public boolean deleteById(long id) {
-            return byKey.entrySet().removeIf(e -> e.getValue().getId() == id);
+        public boolean deleteById(String id) {
+            return byKey.entrySet().removeIf(e -> e.getValue().getId().equals(id));
         }
 
         @Override
@@ -227,8 +226,8 @@ class HubCommandBlacklistServiceTest {
         }
 
         @Override
-        public HubCommandBlacklist findById(long id) {
-            return byKey.values().stream().filter(b -> b.getId() == id).findFirst().orElse(null);
+        public HubCommandBlacklist findById(String id) {
+            return byKey.values().stream().filter(b -> b.getId().equals(id)).findFirst().orElse(null);
         }
 
         @Override

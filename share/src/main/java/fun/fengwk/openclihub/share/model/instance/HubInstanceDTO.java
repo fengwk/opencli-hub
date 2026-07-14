@@ -12,7 +12,7 @@ import lombok.Data;
 @Data
 public class HubInstanceDTO {
 
-    private long id;
+    private String id;
     private String code;
     private String displayName;
     private String contextId;

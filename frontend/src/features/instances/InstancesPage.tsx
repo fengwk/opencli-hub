@@ -65,7 +65,7 @@ function InstanceCard({
       <header className="instance-card-header">
         <div>
           <p className="eyebrow">实例 #{instance.id} · {instance.code}</p>
-          <h2 className="card-title"><Link to={`/instances/${instance.id}`}>{instance.displayName}</Link></h2>
+          <h2 className="card-title"><Link to={`/instances/${encodeURIComponent(instance.id)}`}>{instance.displayName}</Link></h2>
         </div>
         <StatusBadge status={instance.state} label={stateLabel} />
       </header>
@@ -80,7 +80,7 @@ function InstanceCard({
       </dl>
       {instance.lastErrorMessage ? <p className="inline-error instance-error" role="alert">最近错误：{instance.lastErrorMessage}</p> : null}
       <footer className="instance-card-footer">
-        <Link className="btn btn-primary" to={`/instances/${instance.id}`}><SquareTerminal aria-hidden="true" />详情与控制台</Link>
+        <Link className="btn btn-primary" to={`/instances/${encodeURIComponent(instance.id)}`}><SquareTerminal aria-hidden="true" />详情与控制台</Link>
         <InstanceLifecycleActions compact instance={instance} busy={busy} onAction={(action) => onLifecycle(instance, action)} />
         <button type="button" className="btn btn-danger btn-quiet-danger" disabled={busy || !canDelete} onClick={() => onDelete(instance)}>删除</button>
       </footer>

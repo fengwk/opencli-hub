@@ -7,6 +7,7 @@ import { InstanceLifecycleActions } from '@/features/instances/InstanceLifecycle
 import type { InstanceEditableProperties } from '@/features/instances/types'
 import { VncViewer } from '@/features/instances/VncViewer'
 import { ConfirmDialog, ErrorState, Loading, StatusBadge } from '@/shared/components'
+import { parseBackendId } from '@/shared/api/backend-id'
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '请求失败，请稍后重试。'
@@ -14,8 +15,8 @@ function errorMessage(error: unknown): string {
 
 export function InstanceDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const instanceId = Number(id)
-  const validId = Number.isSafeInteger(instanceId) && instanceId > 0
+  const instanceId = parseBackendId(id ?? '')
+  const validId = instanceId !== undefined
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [actionError, setActionError] = useState<string | null>(null)
@@ -24,24 +25,25 @@ export function InstanceDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const instanceQuery = useQuery({
     queryKey: ['instance', instanceId],
-    queryFn: () => getInstance(instanceId),
+    queryFn: () => getInstance(instanceId!),
     enabled: validId,
   })
   const vncStatusQuery = useQuery({
     queryKey: ['instance', instanceId, 'vnc-status'],
-    queryFn: () => getInstanceVncStatus(instanceId),
+    queryFn: () => getInstanceVncStatus(instanceId!),
     enabled: validId,
   })
 
   if (!validId) {
-    return <ErrorState title="无效的实例 ID" description="实例 ID 必须是正整数。" />
+    return <ErrorState title="无效的实例 ID" description="实例 ID 不能为空。" />
   }
+  const resolvedInstanceId = instanceId
 
   async function refresh() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['instances'] }),
-      queryClient.invalidateQueries({ queryKey: ['instance', instanceId] }),
-      queryClient.invalidateQueries({ queryKey: ['instance', instanceId, 'vnc-status'] }),
+      queryClient.invalidateQueries({ queryKey: ['instance', resolvedInstanceId] }),
+      queryClient.invalidateQueries({ queryKey: ['instance', resolvedInstanceId, 'vnc-status'] }),
     ])
   }
 
@@ -49,7 +51,7 @@ export function InstanceDetailPage() {
     setActionError(null)
     setActionPending(true)
     try {
-      await runInstanceLifecycleAction(instanceId, action)
+      await runInstanceLifecycleAction(resolvedInstanceId, action)
       await refresh()
     } catch (error) {
       setActionError(errorMessage(error))
@@ -62,7 +64,7 @@ export function InstanceDetailPage() {
     setActionError(null)
     setActionPending(true)
     try {
-      await updateInstance(instanceId, properties)
+      await updateInstance(resolvedInstanceId, properties)
       setEditing(false)
       await refresh()
     } catch (error) {
@@ -76,7 +78,7 @@ export function InstanceDetailPage() {
     setActionError(null)
     setActionPending(true)
     try {
-      await deleteInstance(instanceId)
+      await deleteInstance(resolvedInstanceId)
       await queryClient.invalidateQueries({ queryKey: ['instances'] })
       navigate('/instances')
     } catch (error) {
@@ -136,7 +138,7 @@ export function InstanceDetailPage() {
                 <div><dt>VNC 可用</dt><dd>{vncStatusQuery.data.vncAvailable ? '是' : '否'}</dd></div>
               </dl>
             ) : null}
-            <VncViewer key={instanceId} instanceId={instanceId} available={vncStatusQuery.data?.vncAvailable === true} />
+            <VncViewer key={resolvedInstanceId} instanceId={resolvedInstanceId} available={vncStatusQuery.data?.vncAvailable === true} />
           </section>
         </div>
 
@@ -159,7 +161,7 @@ export function InstanceDetailPage() {
             {instance.lastErrorMessage ? <p className="inline-error instance-error" role="alert">最近错误：{instance.lastErrorMessage}</p> : null}
             <div className="instance-sidebar-actions">
               <InstanceLifecycleActions instance={instance} busy={actionPending} onAction={(action) => void runAction(action)} />
-              <Link className="btn" to={`/logs?instanceId=${encodeURIComponent(String(instance.id))}`}>查看日志</Link>
+              <Link className="btn" to={`/logs?instanceId=${encodeURIComponent(instance.id)}`}>查看日志</Link>
               <button type="button" className="btn btn-danger" disabled={actionPending || !canDelete} onClick={() => setConfirmDelete(true)}>删除实例</button>
             </div>
           </section>

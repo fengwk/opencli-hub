@@ -1,4 +1,4 @@
-import type { BackendDateTime } from '@/shared/api/contracts'
+import type { BackendDateTime, BackendId } from '@/shared/api/contracts'
 
 export type HubExecutionStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT'
 export type SiteSessionMode = 'EPHEMERAL' | 'PERSISTENT'
@@ -19,8 +19,8 @@ export interface ExecutionResource {
 
 /** Mirrors HubExecutionDTO returned by the execution history endpoints. */
 export interface HubExecution {
-  id: number
-  instanceId: number | null
+  id: BackendId
+  instanceId: BackendId | null
   instanceCode: string | null
   commandKey: string | null
   site: string | null
@@ -46,5 +46,5 @@ export interface HubExecution {
 export interface ExecutionListQuery {
   pageNumber: number
   pageSize: number
-  instanceId?: number
+  instanceId?: BackendId
 }

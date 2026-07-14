@@ -19,11 +19,11 @@ public interface HubCommandOutputRuleMapper extends BaseMapper {
 
     int updateById(HubCommandOutputRuleDO ruleDO);
 
-    int deleteById(long id);
+    int deleteById(String id);
 
     int deleteByCommandKey(String commandKey);
 
-    HubCommandOutputRuleDO findById(long id);
+    HubCommandOutputRuleDO findById(String id);
 
     HubCommandOutputRuleDO findByCommandKey(String commandKey);
 

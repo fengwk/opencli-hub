@@ -5,6 +5,7 @@ import fun.fengwk.convention4j.springboot.starter.mybatis.BaseMapper;
 import fun.fengwk.openclihub.core.execution.repo.impl.model.HubExecutionDO;
 import java.util.List;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 /**
  * Auto-generated SQL mapper for hub_execution.
@@ -18,16 +19,46 @@ public interface HubExecutionMapper extends BaseMapper {
 
     int updateById(HubExecutionDO executionDO);
 
-    HubExecutionDO findById(long id);
+    HubExecutionDO findById(String id);
 
     long countAll();
 
-    List<HubExecutionDO> pageAllOrderByIdDesc(@Param("offset") long offset, @Param("limit") int limit);
+    @Select("""
+        select id, instance_id as instanceId, instance_code as instanceCode,
+               command_key as commandKey, site, site_session as siteSession,
+               argv_json as argvJson, reuse_instance as reuseInstance, status,
+               exit_code as exitCode, stdout_content as stdoutContent,
+               stdout_truncated as stdoutTruncated, stderr_content as stderrContent,
+               stderr_truncated as stderrTruncated, error_message as errorMessage,
+               timeout_millis as timeoutMillis, queued_at as queuedAt,
+               started_at as startedAt, finished_at as finishedAt,
+               gmt_create as createTime, gmt_modified as modifiedTime, version
+        from hub_execution
+        order by queued_at desc, id desc
+        limit #{offset}, #{limit}
+        """)
+    List<HubExecutionDO> pageAllOrderByQueuedAtDescIdDesc(
+        @Param("offset") long offset, @Param("limit") int limit);
 
-    long countByInstanceId(long instanceId);
+    long countByInstanceId(String instanceId);
 
-    List<HubExecutionDO> pageByInstanceIdOrderByIdDesc(
-        @Param("instanceId") long instanceId,
+    @Select("""
+        select id, instance_id as instanceId, instance_code as instanceCode,
+               command_key as commandKey, site, site_session as siteSession,
+               argv_json as argvJson, reuse_instance as reuseInstance, status,
+               exit_code as exitCode, stdout_content as stdoutContent,
+               stdout_truncated as stdoutTruncated, stderr_content as stderrContent,
+               stderr_truncated as stderrTruncated, error_message as errorMessage,
+               timeout_millis as timeoutMillis, queued_at as queuedAt,
+               started_at as startedAt, finished_at as finishedAt,
+               gmt_create as createTime, gmt_modified as modifiedTime, version
+        from hub_execution
+        where instance_id = #{instanceId}
+        order by queued_at desc, id desc
+        limit #{offset}, #{limit}
+        """)
+    List<HubExecutionDO> pageByInstanceIdOrderByQueuedAtDescIdDesc(
+        @Param("instanceId") String instanceId,
         @Param("offset") long offset,
         @Param("limit") int limit);
 

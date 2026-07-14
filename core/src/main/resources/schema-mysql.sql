@@ -1,5 +1,5 @@
 create table if not exists hub_instance (
-    id bigint not null,
+    id varchar(36) not null,
     code varchar(64) not null,
     display_name varchar(128) not null,
     context_id varchar(128) null,
@@ -18,8 +18,8 @@ create table if not exists hub_instance (
 ) engine=InnoDB default charset=utf8mb4 comment='OpenCLI browser instance';
 
 create table if not exists hub_execution (
-    id bigint not null,
-    instance_id bigint null,
+    id varchar(36) not null,
+    instance_id varchar(36) null,
     instance_code varchar(64) null,
     command_key varchar(160) not null,
     site varchar(80) not null,
@@ -47,7 +47,7 @@ create table if not exists hub_execution (
 ) engine=InnoDB default charset=utf8mb4 comment='OpenCLI execution history';
 
 create table if not exists hub_command_blacklist (
-    id bigint not null,
+    id varchar(36) not null,
     command_key varchar(160) not null,
     reason varchar(512) null,
     gmt_create timestamp(3) not null,
@@ -58,7 +58,7 @@ create table if not exists hub_command_blacklist (
 ) engine=InnoDB default charset=utf8mb4 comment='Globally disabled OpenCLI commands';
 
 create table if not exists hub_command_output_rule (
-    id bigint not null,
+    id varchar(36) not null,
     command_key varchar(160) not null,
     argument_name varchar(64) not null,
     target_type varchar(32) not null,

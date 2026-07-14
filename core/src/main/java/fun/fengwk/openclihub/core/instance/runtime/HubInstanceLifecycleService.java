@@ -116,7 +116,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     /**
      * Starts an existing instance (no DB insert). Follows the priority rules in design §17.3.
      */
-    public HubInstance start(long instanceId) {
+    public HubInstance start(String instanceId) {
         ReentrantLock lock = registry.lifecycleLock(instanceId);
         lock.lock();
         try {
@@ -158,7 +158,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
      * Stops an instance: refuses active/pending requests, stops processes in reverse order,
      * unregisters the runtime.
      */
-    public void stop(long instanceId) {
+    public void stop(String instanceId) {
         ReentrantLock lock = registry.lifecycleLock(instanceId);
         lock.lock();
         try {
@@ -194,7 +194,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     /**
      * Restarts an instance: stop + start, preserving the on-disk Profile.
      */
-    public void restart(long instanceId) {
+    public void restart(String instanceId) {
         ReentrantLock lock = registry.lifecycleLock(instanceId);
         lock.lock();
         try {
@@ -209,7 +209,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
      * Hard delete: remove DB row, unregister runtime, then recursively delete the on-disk
      * directory. Active/pending requests cause rejection.
      */
-    public void delete(long instanceId) {
+    public void delete(String instanceId) {
         ReentrantLock lock = registry.lifecycleLock(instanceId);
         lock.lock();
         try {
@@ -241,7 +241,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     /**
      * Called by the unexpected-exit watcher when a tracked process dies.
      */
-    public void markUnexpectedExit(long instanceId, String reason) {
+    public void markUnexpectedExit(String instanceId, String reason) {
         ReentrantLock lock = registry.lifecycleLock(instanceId);
         lock.lock();
         try {
@@ -264,7 +264,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
      * Returns the current snapshot for the instance. Returns an absent snapshot when the
      * runtime is not registered.
      */
-    public HubInstanceRuntimeSnapshot getSnapshot(long instanceId) {
+    public HubInstanceRuntimeSnapshot getSnapshot(String instanceId) {
         HubInstanceRuntime runtime = registry.get(instanceId);
         if (runtime == null) {
             return HubInstanceRuntimeSnapshot.absent();
@@ -301,9 +301,9 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
      * Single-threaded recovery over the supplied instance list. Failures are isolated and
      * the loop continues — the Hub itself MUST stay healthy even when every Instance fails.
      */
-    public void recoverAll(List<HubInstance> orderedById) {
-        for (HubInstance instance : orderedById) {
-            long id = instance.getId();
+    public void recoverAll(List<HubInstance> orderedByCreationTime) {
+        for (HubInstance instance : orderedByCreationTime) {
+            String id = instance.getId();
             try {
                 start(id);
             } catch (RuntimeException ex) {
@@ -317,9 +317,9 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     }
 
     /**
-     * Returns instances ordered by id ascending — the canonical recovery order.
+     * Returns instances ordered by creation time ascending, then id ascending — the canonical recovery order.
      */
-    public List<HubInstance> listInstancesOrderedById() {
+    public List<HubInstance> listInstancesOrderedByCreationTime() {
         return instanceService.list();
     }
 
@@ -329,9 +329,9 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
 
     private HubInstance createUnderLock(HubInstance preset) {
         // Step 1: reserve an id, but DO NOT insert yet. The repository generator is the
-        // source of truth for monotonic, namespace-scoped ids; using it here keeps the row id
+        // source of truth for UUID ids; using it here keeps the row id
         // and the directory id aligned without leaking a half-written row.
-        long id;
+        String id;
         try {
             id = instanceService.reserveId();
         } catch (RuntimeException ex) {
@@ -422,7 +422,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
 
     private HubInstanceRuntime startRuntime(HubInstance descriptor) {
         String dataDir = properties.getDataDir();
-        long id = descriptor.getId();
+        String id = descriptor.getId();
         HubInstanceAllocationService.Allocation allocation = registry.allocationService().allocate();
         HubInstanceRuntime runtime = new HubInstanceRuntime();
         runtime.setInstanceId(id);
@@ -497,7 +497,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         }
     }
 
-    private List<String> chromeArgs(String dataDir, long instanceId) {
+    private List<String> chromeArgs(String dataDir, String instanceId) {
         Path chromeDir = HubInstanceDirectoryLayout.chromeDir(dataDir, instanceId);
         List<String> args = new ArrayList<>();
         args.add("--user-data-dir=" + chromeDir.toString());
@@ -556,7 +556,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     }
 
     private void waitForExpectedOrUniqueContext(
-        long instanceId, HubInstance instance, Set<String> before, HubInstanceRuntime runtime) {
+        String instanceId, HubInstance instance, Set<String> before, HubInstanceRuntime runtime) {
         long startup = properties.getBrowser().getStartupTimeoutMillis();
         long deadline = System.currentTimeMillis() + startup;
         String expected = instance.getContextId();
@@ -626,7 +626,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             .collect(Collectors.toSet());
     }
 
-    private void handleStartFailure(long instanceId, HubInstanceRuntime runtime,
+    private void handleStartFailure(String instanceId, HubInstanceRuntime runtime,
         boolean registeredRuntime, RuntimeException ex) {
         String reason = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
         if (runtime != null) {
@@ -646,7 +646,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         }
     }
 
-    private HubInstance loadInstance(long instanceId) {
+    private HubInstance loadInstance(String instanceId) {
         return instanceService.get(instanceId);
     }
 
@@ -659,7 +659,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         }
     }
 
-    private void cleanupCreateFailureArtifacts(long instanceId) {
+    private void cleanupCreateFailureArtifacts(String instanceId) {
         try {
             Files.deleteIfExists(
                 HubInstanceDirectoryLayout.creatingMarker(properties.getDataDir(), instanceId));
@@ -675,7 +675,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         }
     }
 
-    private void deleteInstanceDirectory(long instanceId) {
+    private void deleteInstanceDirectory(String instanceId) {
         Path dir = HubInstanceDirectoryLayout.instanceDir(properties.getDataDir(), instanceId);
         if (!Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) {
             return;

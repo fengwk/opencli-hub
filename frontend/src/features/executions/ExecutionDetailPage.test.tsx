@@ -16,10 +16,14 @@ vi.mock('@/shared/api/client', () => ({
   },
 }))
 
+const executionId = 'f90ce19f-38e7-4ba8-9e6b-e1a7df60fd86'
+const instanceId = '8babcbf2-5850-47ca-9f6e-bd77a0a45210'
+const resourceGroup = `execution-${executionId}`
+
 const execution: HubExecution = {
-  id: 7,
-  instanceId: 3,
-  instanceCode: 'persistent-3',
+  id: executionId,
+  instanceId,
+  instanceCode: 'persistent-uuid',
   commandKey: 'demo/profile',
   site: 'demo',
   siteSession: 'PERSISTENT',
@@ -37,9 +41,9 @@ const execution: HubExecution = {
   durationMillis: 95,
   resources: [{
     date: '2026-07-13',
-    group: 'execution-7',
+    group: resourceGroup,
     relativePath: 'reports/result file.json',
-    resourcePath: '2026-07-13/execution-7/reports/result file.json',
+    resourcePath: `2026-07-13/${resourceGroup}/reports/result file.json`,
     fileName: 'result file.json',
     source: 'EXECUTION',
     mimeType: 'application/json',
@@ -53,7 +57,7 @@ const execution: HubExecution = {
   finishedAt: '2026-07-13T10:00:02',
 }
 
-function renderDetail(path = '/executions/7') {
+function renderDetail(path = `/executions/${executionId}`) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
@@ -79,16 +83,17 @@ describe('ExecutionDetailPage', () => {
 
     renderDetail()
 
-    expect(await screen.findByRole('heading', { name: '执行记录 #7' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: `执行记录 #${executionId}` })).toBeInTheDocument()
+    expect(apiClient.get).toHaveBeenCalledWith(`/executions/${executionId}`)
     expect(outputBlocks().map((block) => block.textContent)).toContain('{\n  "answer": 42,\n  "items": [\n    "one"\n  ]\n}')
     expect(screen.getByRole('note')).toHaveTextContent('复用实例（persistent affinity）')
     expect(screen.getByRole('link', { name: '预览 result file.json' })).toHaveAttribute(
       'href',
-      '/api/resources/2026-07-13/execution-7/reports/result%20file.json?inline=true',
+      `/api/resources/2026-07-13/${resourceGroup}/reports/result%20file.json?inline=true`,
     )
     expect(screen.getByRole('link', { name: '下载 result file.json' })).toHaveAttribute(
       'href',
-      '/api/resources/2026-07-13/execution-7/reports/result%20file.json',
+      `/api/resources/2026-07-13/${resourceGroup}/reports/result%20file.json`,
     )
   })
 
@@ -107,7 +112,7 @@ describe('ExecutionDetailPage', () => {
 
     renderDetail()
 
-    await screen.findByRole('heading', { name: '执行记录 #7' })
+    await screen.findByRole('heading', { name: `执行记录 #${executionId}` })
     expect(outputBlocks().map((block) => block.textContent)).toEqual(expect.arrayContaining([
       'not json\nstill useful',
       'permission denied',

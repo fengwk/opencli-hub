@@ -12,9 +12,9 @@ package fun.fengwk.openclihub.core.instance.runtime;
 public interface UnexpectedExitListener {
 
     /** Begin watching all tracked processes of an instance. Idempotent. */
-    void watch(long instanceId, HubInstanceRuntime runtime);
+    void watch(String instanceId, HubInstanceRuntime runtime);
 
     /** Cancel any in-flight watcher for the instance. Idempotent. */
-    void unwatch(long instanceId);
+    void unwatch(String instanceId);
 
 }

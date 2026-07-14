@@ -1,6 +1,8 @@
 package fun.fengwk.openclihub.core.instance.runtime;
 
 import fun.fengwk.openclihub.core.instance.runtime.HubInstanceRuntime.HubInstanceProcessKind;
+import fun.fengwk.openclihub.share.constant.HubErrorCodes;
+import fun.fengwk.openclihub.share.util.HubIds;
 import jakarta.annotation.PreDestroy;
 import java.util.List;
 import java.util.Map;
@@ -28,8 +30,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class HubInstanceRuntimeRegistry {
 
-    private final Map<Long, HubInstanceRuntime> runtimes = new ConcurrentHashMap<>();
-    private final Map<Long, ReentrantLock> lifecycleLocks = new ConcurrentHashMap<>();
+    private final Map<String, HubInstanceRuntime> runtimes = new ConcurrentHashMap<>();
+    private final Map<String, ReentrantLock> lifecycleLocks = new ConcurrentHashMap<>();
     private final InstanceProcessLauncher launcher;
     private final HubInstanceAllocationService allocationService;
     private final UnexpectedExitListener unexpectedExitListener;
@@ -43,7 +45,10 @@ public class HubInstanceRuntimeRegistry {
         this.unexpectedExitListener = unexpectedExitListener;
     }
 
-    public ReentrantLock lifecycleLock(long instanceId) {
+    public ReentrantLock lifecycleLock(String instanceId) {
+        if (!HubIds.isSupported(instanceId)) {
+            throw HubErrorCodes.INSTANCE_NOT_FOUND.asThrowable("instance not found: " + instanceId);
+        }
         return lifecycleLocks.computeIfAbsent(instanceId, ignored -> new ReentrantLock());
     }
 
@@ -57,7 +62,7 @@ public class HubInstanceRuntimeRegistry {
     }
 
     /** Drops a runtime from the registry. Idempotent. */
-    public void unregister(long instanceId) {
+    public void unregister(String instanceId) {
         HubInstanceRuntime runtime = runtimes.remove(instanceId);
         if (runtime != null) {
             allocationService.release(new HubInstanceAllocationService.Allocation(
@@ -65,7 +70,7 @@ public class HubInstanceRuntimeRegistry {
         }
     }
 
-    public HubInstanceRuntime get(long instanceId) {
+    public HubInstanceRuntime get(String instanceId) {
         return runtimes.get(instanceId);
     }
 
@@ -73,7 +78,7 @@ public class HubInstanceRuntimeRegistry {
         return List.copyOf(runtimes.values());
     }
 
-    public boolean contains(long instanceId) {
+    public boolean contains(String instanceId) {
         return runtimes.containsKey(instanceId);
     }
 
@@ -83,7 +88,7 @@ public class HubInstanceRuntimeRegistry {
      * lifecycle service (planned) and the unexpected exit path (unplanned).
      */
     public void stopProcesses(HubInstanceRuntime runtime) {
-        long instanceId = runtime.getInstanceId();
+        String instanceId = runtime.getInstanceId();
         unexpectedExitListener.unwatch(instanceId);
         for (HubInstanceProcessKind kind : runtime.shutdownOrder()) {
             ProcessHandle handle = runtime.getProcesses().get(kind);

@@ -5,7 +5,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import fun.fengwk.convention4j.api.page.Page;
 import fun.fengwk.convention4j.api.page.PageQuery;
-import fun.fengwk.convention4j.common.idgen.NamespaceIdGenerator;
 import fun.fengwk.convention4j.common.page.Pages;
 import fun.fengwk.openclihub.core.execution.repo.HubExecutionRepository;
 import fun.fengwk.openclihub.core.execution.repo.impl.mapper.HubExecutionMapper;
@@ -16,6 +15,7 @@ import fun.fengwk.openclihub.share.model.execution.SiteSessionMode;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Repository;
 
@@ -28,13 +28,12 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class MysqlHubExecutionRepository implements HubExecutionRepository {
 
-    private final NamespaceIdGenerator<Long> idGenerator;
     private final HubExecutionMapper mapper;
     private final ObjectMapper objectMapper;
 
     @Override
-    public long generateId() {
-        return idGenerator.next(HubExecution.class);
+    public String generateId() {
+        return UUID.randomUUID().toString();
     }
 
     @Override
@@ -48,21 +47,21 @@ public class MysqlHubExecutionRepository implements HubExecutionRepository {
     }
 
     @Override
-    public HubExecution findById(long id) {
+    public HubExecution findById(String id) {
         return fromDO(mapper.findById(id));
     }
 
     @Override
-    public Page<HubExecution> page(PageQuery pageQuery, Long instanceId) {
+    public Page<HubExecution> page(PageQuery pageQuery, String instanceId) {
         long offset = Pages.queryOffset(pageQuery);
         int limit = Pages.queryLimit(pageQuery);
         List<HubExecutionDO> rows;
         long totalCount;
         if (instanceId == null) {
-            rows = mapper.pageAllOrderByIdDesc(offset, limit);
+            rows = mapper.pageAllOrderByQueuedAtDescIdDesc(offset, limit);
             totalCount = mapper.countAll();
         } else {
-            rows = mapper.pageByInstanceIdOrderByIdDesc(instanceId, offset, limit);
+            rows = mapper.pageByInstanceIdOrderByQueuedAtDescIdDesc(instanceId, offset, limit);
             totalCount = mapper.countByInstanceId(instanceId);
         }
         return Pages.page(pageQuery, rows, totalCount).map(this::fromDO);

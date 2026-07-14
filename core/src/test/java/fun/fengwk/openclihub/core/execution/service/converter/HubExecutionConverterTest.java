@@ -25,8 +25,8 @@ class HubExecutionConverterTest {
     @Test
     void shouldCopyAllFieldsAndResources() {
         HubExecution domain = new HubExecution();
-        domain.setId(9001L);
-        domain.setInstanceId(7L);
+        domain.setId("9001");
+        domain.setInstanceId("7");
         domain.setInstanceCode("worker-7");
         domain.setCommandKey("bilibili/hot");
         domain.setSite("bilibili");
@@ -61,8 +61,8 @@ class HubExecutionConverterTest {
 
         HubExecutionDTO dto = new HubExecutionConverter().toDTO(domain, List.of(item));
 
-        assertThat(dto.getId()).isEqualTo(9001L);
-        assertThat(dto.getInstanceId()).isEqualTo(7L);
+        assertThat(dto.getId()).isEqualTo("9001");
+        assertThat(dto.getInstanceId()).isEqualTo("7");
         assertThat(dto.getInstanceCode()).isEqualTo("worker-7");
         assertThat(dto.getCommandKey()).isEqualTo("bilibili/hot");
         assertThat(dto.getSite()).isEqualTo("bilibili");

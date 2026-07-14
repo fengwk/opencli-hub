@@ -5,7 +5,7 @@ import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonClient;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.function.ObjLongConsumer;
+import java.util.function.BiConsumer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
@@ -66,7 +66,7 @@ public class HubInstanceRuntimeConfiguration {
     @ConditionalOnMissingBean(UnexpectedExitListener.class)
     public HubInstanceUnexpectedExitWatcher hubInstanceUnexpectedExitWatcher(
         @Lazy HubInstanceLifecycleServiceConsumer lifecycleService) {
-        ObjLongConsumer<String> consumer = (reason, instanceId) -> {
+        BiConsumer<String, String> consumer = (reason, instanceId) -> {
             log.warn("instance {} exited unexpectedly: {}", instanceId, reason);
             lifecycleService.markUnexpectedExit(instanceId, reason);
         };

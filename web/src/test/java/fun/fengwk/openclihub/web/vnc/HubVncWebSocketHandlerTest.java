@@ -57,7 +57,7 @@ class HubVncWebSocketHandlerTest {
     void shouldForwardBinaryFramesBidirectionally() throws Exception {
         try (FakeVncServer server = new FakeVncServer()) {
             handler = newHandler(server.getPort());
-            SessionFixture fixture = newSession(11L);
+            SessionFixture fixture = newSession("11");
 
             handler.afterConnectionEstablished(fixture.session);
             server.awaitConnected();
@@ -78,15 +78,15 @@ class HubVncWebSocketHandlerTest {
         HubInstanceService instanceService = mock(HubInstanceService.class);
         HubInstanceLifecycleService lifecycleService = mock(HubInstanceLifecycleService.class);
         HubInstance instance = runningInstance();
-        when(instanceService.get(11L)).thenReturn(instance);
-        when(lifecycleService.getSnapshot(11L)).thenReturn(HubInstanceRuntimeSnapshot.absent());
+        when(instanceService.get("11")).thenReturn(instance);
+        when(lifecycleService.getSnapshot("11")).thenReturn(HubInstanceRuntimeSnapshot.absent());
         handler = new HubVncWebSocketHandler(instanceService, lifecycleService);
-        SessionFixture fixture = newSession(11L);
+        SessionFixture fixture = newSession("11");
 
         handler.afterConnectionEstablished(fixture.session);
 
         assertEquals(CloseStatus.POLICY_VIOLATION.getCode(), fixture.awaitClose().getCode());
-        verify(lifecycleService).getSnapshot(11L);
+        verify(lifecycleService).getSnapshot("11");
     }
 
     /** Text is not RFB data and must be rejected instead of being converted or forwarded. */
@@ -94,7 +94,7 @@ class HubVncWebSocketHandlerTest {
     void shouldRejectTextFramesAndCloseTcpPeer() throws Exception {
         try (FakeVncServer server = new FakeVncServer()) {
             handler = newHandler(server.getPort());
-            SessionFixture fixture = newSession(11L);
+            SessionFixture fixture = newSession("11");
             handler.afterConnectionEstablished(fixture.session);
             server.awaitConnected();
 
@@ -110,7 +110,7 @@ class HubVncWebSocketHandlerTest {
     void shouldCloseTcpPeerWhenClientCloses() throws Exception {
         try (FakeVncServer server = new FakeVncServer()) {
             handler = newHandler(server.getPort());
-            SessionFixture fixture = newSession(11L);
+            SessionFixture fixture = newSession("11");
             handler.afterConnectionEstablished(fixture.session);
             server.awaitConnected();
 
@@ -126,7 +126,7 @@ class HubVncWebSocketHandlerTest {
     void shouldCloseWebSocketWhenBackendReachesEof() throws Exception {
         try (FakeVncServer server = new FakeVncServer()) {
             handler = newHandler(server.getPort());
-            SessionFixture fixture = newSession(11L);
+            SessionFixture fixture = newSession("11");
             handler.afterConnectionEstablished(fixture.session);
             server.awaitConnected();
 
@@ -144,7 +144,7 @@ class HubVncWebSocketHandlerTest {
             unusedPort = socket.getLocalPort();
         }
         handler = newHandler(unusedPort);
-        SessionFixture fixture = newSession(11L);
+        SessionFixture fixture = newSession("11");
 
         handler.afterConnectionEstablished(fixture.session);
 
@@ -156,7 +156,7 @@ class HubVncWebSocketHandlerTest {
     void shouldCloseTcpPeerWhenWebSocketSendFails() throws Exception {
         try (FakeVncServer server = new FakeVncServer()) {
             handler = newHandler(server.getPort());
-            SessionFixture fixture = newSession(11L);
+            SessionFixture fixture = newSession("11");
             doThrow(new IOException("client disconnected"))
                 .when(fixture.session).sendMessage(any(WebSocketMessage.class));
             handler.afterConnectionEstablished(fixture.session);
@@ -174,7 +174,7 @@ class HubVncWebSocketHandlerTest {
     void shouldCloseTcpPeerOnShutdown() throws Exception {
         try (FakeVncServer server = new FakeVncServer()) {
             handler = newHandler(server.getPort());
-            SessionFixture fixture = newSession(11L);
+            SessionFixture fixture = newSession("11");
             handler.afterConnectionEstablished(fixture.session);
             server.awaitConnected();
 
@@ -192,7 +192,7 @@ class HubVncWebSocketHandlerTest {
             handler = newHandler(server.getPort());
             CountDownLatch shutdownCloseEntered = new CountDownLatch(1);
             CountDownLatch allowShutdownClose = new CountDownLatch(1);
-            SessionFixture fixture = newSession(11L, status -> {
+            SessionFixture fixture = newSession("11", status -> {
                 if (status.getCode() == CloseStatus.GOING_AWAY.getCode()) {
                     shutdownCloseEntered.countDown();
                     try {
@@ -226,25 +226,25 @@ class HubVncWebSocketHandlerTest {
     private HubVncWebSocketHandler newHandler(int vncPort) {
         HubInstanceService instanceService = mock(HubInstanceService.class);
         HubInstanceLifecycleService lifecycleService = mock(HubInstanceLifecycleService.class);
-        when(instanceService.get(11L)).thenReturn(runningInstance());
-        when(lifecycleService.getSnapshot(11L))
+        when(instanceService.get("11")).thenReturn(runningInstance());
+        when(lifecycleService.getSnapshot("11"))
             .thenReturn(new HubInstanceRuntimeSnapshot(true, 99, vncPort, 0, 0));
         return new HubVncWebSocketHandler(instanceService, lifecycleService);
     }
 
     private HubInstance runningInstance() {
         HubInstance instance = new HubInstance();
-        instance.setId(11L);
+        instance.setId("11");
         instance.setState(HubInstanceState.RUNNING);
         return instance;
     }
 
-    private SessionFixture newSession(long instanceId) {
+    private SessionFixture newSession(String instanceId) {
         return newSession(instanceId, ignored -> {
         });
     }
 
-    private SessionFixture newSession(long instanceId, Consumer<CloseStatus> beforeClose) {
+    private SessionFixture newSession(String instanceId, Consumer<CloseStatus> beforeClose) {
         WebSocketSession session = mock(WebSocketSession.class);
         AtomicBoolean open = new AtomicBoolean(true);
         AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();

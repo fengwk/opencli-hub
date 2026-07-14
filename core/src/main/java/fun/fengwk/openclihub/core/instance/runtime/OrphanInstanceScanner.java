@@ -11,30 +11,19 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
  * Reconciles the on-disk instance directory tree against the database after an ungraceful
- * Hub shutdown. Implements design §16.7:
- * <ul>
- *   <li>{@code .creating} + no DB row -> delete the orphan directory (create never inserted).</li>
- *   <li>{@code .creating} + DB row -> remove the marker only (create completed; the marker
- *       removal step didn't run).</li>
- *   <li>Pure-numeric directory name + no DB row -> delete (a delete-in-DB-but-not-on-disk
- *       hang).</li>
- *   <li>Non-numeric directory -> NEVER auto-delete; surface as warning so operators can
- *       triage manually.</li>
- * </ul>
+ * Hub shutdown. Only canonical UUID and migrated positive-long directory names are managed
+ * automatically. Every other directory is protected, including one containing {@code .creating}.
  *
  * @author fengwk
  */
 @Slf4j
 @Component
 public class OrphanInstanceScanner {
-
-    private static final Pattern NUMERIC_NAME = Pattern.compile("^[0-9]+$");
 
     private final OpenCliHubProperties properties;
     private final HubInstanceService instanceService;
@@ -48,25 +37,23 @@ public class OrphanInstanceScanner {
     public static final class Result {
         public int creatingOrphanDeleted;
         public int creatingMarkerRemoved;
-        public int numericOrphanDeleted;
-        public int nonNumericProtected;
+        public int managedOrphanDeleted;
+        public int unsafeNameProtected;
 
         public int total() {
             return creatingOrphanDeleted + creatingMarkerRemoved
-                + numericOrphanDeleted + nonNumericProtected;
+                + managedOrphanDeleted + unsafeNameProtected;
         }
     }
 
-    /**
-     * Performs a single scan and returns the counters.
-     */
+    /** Performs a single scan and returns the counters. */
     public Result scan() {
         Result result = new Result();
         Path root = HubInstanceDirectoryLayout.instancesRoot(properties.getDataDir());
         if (!Files.exists(root)) {
             return result;
         }
-        Set<Long> knownIds = new HashSet<>();
+        Set<String> knownIds = new HashSet<>();
         for (HubInstance instance : instanceService.list()) {
             knownIds.add(instance.getId());
         }
@@ -78,26 +65,18 @@ public class OrphanInstanceScanner {
         }
         if (result.total() > 0) {
             log.info("orphan scan: creatingOrphanDeleted={} creatingMarkerRemoved={} "
-                + "numericOrphanDeleted={} nonNumericProtected={}",
+                + "managedOrphanDeleted={} unsafeNameProtected={}",
                 result.creatingOrphanDeleted, result.creatingMarkerRemoved,
-                result.numericOrphanDeleted, result.nonNumericProtected);
+                result.managedOrphanDeleted, result.unsafeNameProtected);
         }
         return result;
     }
 
-    private void classify(Path dir, Set<Long> knownIds, Result result) {
-        String name = dir.getFileName().toString();
-        if (!NUMERIC_NAME.matcher(name).matches()) {
-            log.warn("orphan scanner: protected non-numeric directory: {}", dir);
-            result.nonNumericProtected++;
-            return;
-        }
-        long id;
-        try {
-            id = Long.parseLong(name);
-        } catch (NumberFormatException ex) {
-            log.warn("orphan scanner: protected out-of-range numeric directory: {}", dir);
-            result.nonNumericProtected++;
+    private void classify(Path dir, Set<String> knownIds, Result result) {
+        String id = dir.getFileName().toString();
+        if (!HubInstanceDirectoryLayout.isManagedInstanceId(id)) {
+            log.warn("orphan scanner: protected directory with unmanaged name: {}", dir);
+            result.unsafeNameProtected++;
             return;
         }
         Path marker = dir.resolve(HubInstanceDirectoryLayout.MARKER_CREATING);
@@ -108,16 +87,16 @@ public class OrphanInstanceScanner {
         if (!knownIds.contains(id)) {
             try {
                 deleteRecursively(dir);
-                log.warn("orphan scanner: removed numeric directory with no DB row: {}", dir);
-                result.numericOrphanDeleted++;
+                log.warn("orphan scanner: removed managed directory with no DB row: {}", dir);
+                result.managedOrphanDeleted++;
             } catch (IOException ex) {
                 log.warn("orphan scanner: failed to delete {}: {}", dir, ex.getMessage());
             }
         }
     }
 
-    private void handleCreating(Path dir, long id, Path marker, Set<Long> knownIds,
-        Result result) {
+    private void handleCreating(Path dir, String id, Path marker, Set<String> knownIds,
+                                Result result) {
         if (knownIds.contains(id)) {
             try {
                 Files.deleteIfExists(marker);

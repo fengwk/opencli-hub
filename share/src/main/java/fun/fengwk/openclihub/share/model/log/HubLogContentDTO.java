@@ -12,7 +12,7 @@ import lombok.Data;
 public class HubLogContentDTO {
 
     private HubLogSource source;
-    private Long instanceId;
+    private String instanceId;
     private String content;
     private boolean truncated;
     private long fileSize;

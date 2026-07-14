@@ -11,17 +11,17 @@ import java.util.Optional;
  */
 public interface HubCommandOutputRuleRepository {
 
-    long generateId();
+    String generateId();
 
     boolean add(HubCommandOutputRule rule);
 
     boolean update(HubCommandOutputRule rule);
 
-    boolean deleteById(long id);
+    boolean deleteById(String id);
 
     boolean deleteByCommandKey(String commandKey);
 
-    HubCommandOutputRule findById(long id);
+    HubCommandOutputRule findById(String id);
 
     Optional<HubCommandOutputRule> findByCommandKey(String commandKey);
 

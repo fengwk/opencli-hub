@@ -4,6 +4,7 @@ import fun.fengwk.automapper.annotation.AutoMapper;
 import fun.fengwk.convention4j.springboot.starter.mybatis.BaseMapper;
 import fun.fengwk.openclihub.core.instance.repo.impl.model.HubInstanceDO;
 import java.util.List;
+import org.apache.ibatis.annotations.Select;
 
 /**
  * Auto-generated SQL mapper for hub_instance.
@@ -17,14 +18,22 @@ public interface HubInstanceMapper extends BaseMapper {
 
     int updateById(HubInstanceDO instanceDO);
 
-    int deleteById(long id);
+    int deleteById(String id);
 
-    HubInstanceDO findById(long id);
+    HubInstanceDO findById(String id);
 
     HubInstanceDO findByCode(String code);
 
     HubInstanceDO findByContextId(String contextId);
 
-    List<HubInstanceDO> findAllOrderByIdAsc();
+    @Select("""
+        select id, code, display_name as displayName, context_id as contextId, state,
+               websites_json as websitesJson, max_pending as maxPending,
+               last_error_message as lastErrorMessage, state_changed_at as stateChangedAt,
+               gmt_create as createTime, gmt_modified as modifiedTime, version
+        from hub_instance
+        order by gmt_create asc, id asc
+        """)
+    List<HubInstanceDO> findAllOrderByCreateTimeAscIdAsc();
 
 }

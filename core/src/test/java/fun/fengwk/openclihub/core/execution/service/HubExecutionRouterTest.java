@@ -227,7 +227,7 @@ class HubExecutionRouterTest {
 
     private HubInstance persist(String code, List<String> websites, HubInstanceState state, String ctx, int maxPending) {
         HubInstance instance = new HubInstance();
-        instance.setId(runtimeSeq.incrementAndGet());
+        instance.setId(Long.toString(runtimeSeq.incrementAndGet()));
         instance.setCode(code);
         instance.setDisplayName(code);
         instance.setState(state);
@@ -342,9 +342,9 @@ class HubExecutionRouterTest {
 
     static class NoopExitListener implements UnexpectedExitListener {
         @Override
-        public void watch(long instanceId, HubInstanceRuntime runtime) { }
+        public void watch(String instanceId, HubInstanceRuntime runtime) { }
         @Override
-        public void unwatch(long instanceId) { }
+        public void unwatch(String instanceId) { }
     }
 
 }

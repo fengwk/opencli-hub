@@ -18,10 +18,13 @@ vi.mock('@/shared/api/client', () => ({
   },
 }))
 
+const executionId = '9db30295-04b8-437d-85d7-036f1a9a43f4'
+const instanceId = 'f267a11f-a8dd-4f73-9179-313c4d4b1c4d'
+
 const execution: HubExecution = {
-  id: 101,
-  instanceId: 7,
-  instanceCode: 'chrome-7',
+  id: executionId,
+  instanceId,
+  instanceCode: 'chrome-uuid',
   commandKey: 'demo/search',
   site: 'demo',
   siteSession: 'EPHEMERAL',
@@ -61,8 +64,8 @@ function renderPage() {
 afterEach(() => vi.clearAllMocks())
 
 describe('ExecutionsPage', () => {
-  it('uses 1-based pagination and sends only a positive submitted Instance filter', async () => {
-    // Each interaction asserts the exact M6 query parameters, including the reset to page 1 on filter/page-size changes.
+  it('uses 1-based pagination and preserves an opaque submitted Instance filter', async () => {
+    // Each interaction asserts the exact query parameters, including the reset to page 1 and lossless UUID transport.
     const user = userEvent.setup()
     vi.mocked(apiClient.get).mockResolvedValue(page([execution], 45))
 
@@ -75,15 +78,15 @@ describe('ExecutionsPage', () => {
       params: { pageNumber: 2, pageSize: 20 },
     }))
 
-    await user.type(screen.getByRole('textbox', { name: 'Instance ID' }), '7')
+    await user.type(screen.getByRole('textbox', { name: 'Instance ID' }), instanceId)
     await user.click(screen.getByRole('button', { name: '筛选' }))
     await waitFor(() => expect(apiClient.get).toHaveBeenLastCalledWith('/executions', {
-      params: { pageNumber: 1, pageSize: 20, instanceId: 7 },
+      params: { pageNumber: 1, pageSize: 20, instanceId },
     }))
 
     await user.selectOptions(screen.getByRole('combobox', { name: '每页数量' }), '50')
     await waitFor(() => expect(apiClient.get).toHaveBeenLastCalledWith('/executions', {
-      params: { pageNumber: 1, pageSize: 50, instanceId: 7 },
+      params: { pageNumber: 1, pageSize: 50, instanceId },
     }))
   })
 
@@ -91,8 +94,8 @@ describe('ExecutionsPage', () => {
     // Status badge tones distinguish successful, failed, and timed-out terminal records in the history table.
     vi.mocked(apiClient.get).mockResolvedValue(page([
       execution,
-      { ...execution, id: 102, status: 'FAILED' },
-      { ...execution, id: 103, status: 'TIMED_OUT' },
+      { ...execution, id: '918f075c-e754-46d7-b670-0056feb43ea4', status: 'FAILED' },
+      { ...execution, id: '176f3f07-f479-45b2-8ea9-c2f30bd15076', status: 'TIMED_OUT' },
     ]))
 
     renderPage()

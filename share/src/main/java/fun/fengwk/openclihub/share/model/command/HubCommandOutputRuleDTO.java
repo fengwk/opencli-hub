@@ -11,7 +11,7 @@ import lombok.Data;
 @Data
 public class HubCommandOutputRuleDTO {
 
-    private long id;
+    private String id;
     private String commandKey;
     private String argumentName;
     private HubCommandOutputTargetType targetType;

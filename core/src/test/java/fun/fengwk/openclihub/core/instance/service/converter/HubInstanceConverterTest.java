@@ -83,7 +83,7 @@ class HubInstanceConverterTest {
 
     private HubInstance sampleDomain() {
         HubInstance inst = new HubInstance();
-        inst.setId(42L);
+        inst.setId("42");
         inst.setCode("instance-01");
         inst.setDisplayName("Instance One");
         inst.setContextId("ctx-1");

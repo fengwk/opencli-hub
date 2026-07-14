@@ -3,7 +3,7 @@ package fun.fengwk.openclihub.core.instance.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
@@ -22,7 +22,7 @@ import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -50,8 +50,8 @@ class HubInstanceServiceImplTest {
     @Test
     void shouldListAllInstancesFromRepository() {
         // list() is a pass-through; verifies no extra validation or filtering is injected.
-        HubInstance a = newInstance(1L, "a");
-        HubInstance b = newInstance(2L, "b");
+        HubInstance a = newInstance("1", "a");
+        HubInstance b = newInstance("2", "b");
         doReturn(List.of(a, b)).when(repository).listAll();
 
         List<HubInstance> result = service.list();
@@ -62,18 +62,27 @@ class HubInstanceServiceImplTest {
     @Test
     void shouldThrowNotFoundWhenGetMissingInstance() {
         // A missing row must surface INSTANCE_NOT_FOUND so the web layer maps to 404.
-        doReturn(null).when(repository).findById(404L);
+        doReturn(null).when(repository).findById("404");
 
-        assertThatThrownBy(() -> service.get(404L))
+        assertThatThrownBy(() -> service.get("404"))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_NOT_FOUND));
+    }
+
+    /** Unsupported path IDs short-circuit before SQL and retain the stable not-found contract. */
+    @Test
+    void shouldRejectUnsupportedIdBeforeRepositoryLookup() {
+        assertThatThrownBy(() -> service.get("not-an-id"))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_NOT_FOUND));
+
+        verify(repository, never()).findById(anyString());
     }
 
     @Test
     void shouldCreateInstanceAndFillTimestamps() {
         // Service auto-generates id when caller leaves it empty and stamps stateChangedAt.
-        AtomicLong ids = new AtomicLong(1000L);
-        doAnswer(inv -> ids.incrementAndGet()).when(repository).generateId();
+        doReturn(UUID.randomUUID().toString()).when(repository).generateId();
         doReturn(null).when(repository).findByCode(any());
         doReturn(null).when(repository).findByContextId(any());
         doReturn(true).when(repository).add(any());
@@ -91,7 +100,7 @@ class HubInstanceServiceImplTest {
         ArgumentCaptor<HubInstance> captor = ArgumentCaptor.forClass(HubInstance.class);
         verify(repository, times(1)).add(captor.capture());
         HubInstance saved = captor.getValue();
-        assertThat(saved.getId()).isPositive();
+        assertThat(saved.getId()).matches("[0-9a-f-]{36}");
         assertThat(saved.getWebsites()).containsExactly("bilibili");
         assertThat(saved.getStateChangedAt()).isNotNull();
     }
@@ -99,7 +108,7 @@ class HubInstanceServiceImplTest {
     @Test
     void shouldRejectCreateWhenCodeAlreadyExists() {
         // Pre-check short-circuits before insert so a known conflict never hits SQL.
-        HubInstance existing = newInstance(1L, "bilibili-a");
+        HubInstance existing = newInstance("1", "bilibili-a");
         doReturn(existing).when(repository).findByCode("bilibili-a");
 
         HubInstance instance = new HubInstance();
@@ -142,10 +151,10 @@ class HubInstanceServiceImplTest {
     @Test
     void shouldUpdateEditablePropertiesAndRejectCodeConflict() {
         // Renaming to a code already used by another row must fail with INSTANCE_CODE_CONFLICT.
-        HubInstance existing = newInstance(1L, "old-code");
+        HubInstance existing = newInstance("1", "old-code");
         existing.setState(HubInstanceState.RUNNING);
-        HubInstance other = newInstance(2L, "new-code");
-        doReturn(existing).when(repository).findById(1L);
+        HubInstance other = newInstance("2", "new-code");
+        doReturn(existing).when(repository).findById("1");
         doReturn(other).when(repository).findByCode("new-code");
         doReturn(true).when(repository).update(any());
 
@@ -155,7 +164,7 @@ class HubInstanceServiceImplTest {
         dto.setWebsites(List.of("bilibili", "chatgpt"));
         dto.setMaxPending(3);
 
-        assertThatThrownBy(() -> service.update(1L, dto))
+        assertThatThrownBy(() -> service.update("1", dto))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_CODE_CONFLICT));
 
@@ -165,9 +174,9 @@ class HubInstanceServiceImplTest {
     @Test
     void shouldAllowUpdateKeepingSameCode() {
         // Keeping the same code is allowed: pre-check must skip the row itself.
-        HubInstance existing = newInstance(1L, "kept-code");
+        HubInstance existing = newInstance("1", "kept-code");
         existing.setState(HubInstanceState.RUNNING);
-        doReturn(existing).when(repository).findById(1L);
+        doReturn(existing).when(repository).findById("1");
         // Simulating repository.findByCode returning self row.
         doReturn(existing).when(repository).findByCode("kept-code");
         doReturn(true).when(repository).update(any());
@@ -178,7 +187,7 @@ class HubInstanceServiceImplTest {
         dto.setWebsites(List.of("chatgpt"));
         dto.setMaxPending(10);
 
-        HubInstance result = service.update(1L, dto);
+        HubInstance result = service.update("1", dto);
 
         assertThat(result.getWebsites()).containsExactly("chatgpt");
         assertThat(result.getDisplayName()).isEqualTo("Renamed");
@@ -188,13 +197,13 @@ class HubInstanceServiceImplTest {
     @Test
     void shouldMaintainStateAndClearErrorOnNormalTransition() {
         // Transitioning out of an error state must clear lastErrorMessage.
-        HubInstance existing = newInstance(1L, "code");
+        HubInstance existing = newInstance("1", "code");
         existing.setState(HubInstanceState.STARTING);
         existing.setLastErrorMessage("prev error");
-        doReturn(existing).when(repository).findById(1L);
+        doReturn(existing).when(repository).findById("1");
         doReturn(true).when(repository).update(any());
 
-        service.updateState(1L, HubInstanceState.RUNNING, "ignored");
+        service.updateState("1", HubInstanceState.RUNNING, "ignored");
 
         ArgumentCaptor<HubInstance> captor = ArgumentCaptor.forClass(HubInstance.class);
         verify(repository).update(captor.capture());
@@ -207,12 +216,12 @@ class HubInstanceServiceImplTest {
     @Test
     void shouldPreserveErrorMessageOnErrorState() {
         // Moving into ERROR must record the supplied message verbatim for UI/log scraping.
-        HubInstance existing = newInstance(1L, "code");
+        HubInstance existing = newInstance("1", "code");
         existing.setState(HubInstanceState.STARTING);
-        doReturn(existing).when(repository).findById(1L);
+        doReturn(existing).when(repository).findById("1");
         doReturn(true).when(repository).update(any());
 
-        service.updateState(1L, HubInstanceState.ERROR, "boom");
+        service.updateState("1", HubInstanceState.ERROR, "boom");
 
         ArgumentCaptor<HubInstance> captor = ArgumentCaptor.forClass(HubInstance.class);
         verify(repository).update(captor.capture());
@@ -223,14 +232,14 @@ class HubInstanceServiceImplTest {
     void shouldBindContextIdAndDetectConflict() {
         // Internal context binding (used by M4 lifecycle) must reject a context already
         // bound to another instance.
-        HubInstance existing = newInstance(1L, "code");
+        HubInstance existing = newInstance("1", "code");
         existing.setContextId("old");
-        HubInstance other = newInstance(2L, "other");
+        HubInstance other = newInstance("2", "other");
         other.setContextId("new-ctx");
-        doReturn(existing).when(repository).findById(1L);
+        doReturn(existing).when(repository).findById("1");
         doReturn(other).when(repository).findByContextId("new-ctx");
 
-        assertThatThrownBy(() -> service.bindContextId(1L, "new-ctx"))
+        assertThatThrownBy(() -> service.bindContextId("1", "new-ctx"))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .extracting("code").isEqualTo(prefixed(HubErrorCodes.CONTEXT_ID_CONFLICT));
 
@@ -240,7 +249,7 @@ class HubInstanceServiceImplTest {
     @Test
     void shouldRejectBlankContextIdBinding() {
         // Blank context ids are invalid input; we must not even query the repository.
-        assertThatThrownBy(() -> service.bindContextId(1L, " "))
+        assertThatThrownBy(() -> service.bindContextId("1", " "))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_ARGUMENT_INVALID));
 
@@ -250,30 +259,29 @@ class HubInstanceServiceImplTest {
     @Test
     void shouldDeleteExistingInstance() {
         // deleteById is the database-only delete path used by M4 lifecycle.
-        HubInstance existing = newInstance(1L, "code");
-        doReturn(existing).when(repository).findById(1L);
-        doReturn(true).when(repository).deleteById(1L);
+        HubInstance existing = newInstance("1", "code");
+        doReturn(existing).when(repository).findById("1");
+        doReturn(true).when(repository).deleteById("1");
 
-        service.deleteById(1L);
+        service.deleteById("1");
 
-        verify(repository).deleteById(1L);
+        verify(repository).deleteById("1");
     }
 
     @Test
     void shouldMakeDeleteIdempotentWhenInstanceMissing() {
         // Missing row must be treated as no-op so M4 retries are safe.
-        doReturn(null).when(repository).findById(anyLong());
+        doReturn(null).when(repository).findById(anyString());
 
-        service.deleteById(404L);
+        service.deleteById("404");
 
-        verify(repository, never()).deleteById(anyLong());
+        verify(repository, never()).deleteById(anyString());
     }
 
     @Test
     void shouldTrimAndPersistCodeOnCreate() {
         // Caller-supplied code with surrounding whitespace must be persisted in canonical form.
-        AtomicLong ids = new AtomicLong(1000L);
-        doAnswer(inv -> ids.incrementAndGet()).when(repository).generateId();
+        doReturn(UUID.randomUUID().toString()).when(repository).generateId();
         doReturn(null).when(repository).findByCode(any());
         doReturn(true).when(repository).add(any());
 
@@ -294,8 +302,7 @@ class HubInstanceServiceImplTest {
     @Test
     void shouldTrimAndPersistContextIdOnCreate() {
         // contextId set on create must also be trimmed before uniqueness check and insert.
-        AtomicLong ids = new AtomicLong(1000L);
-        doAnswer(inv -> ids.incrementAndGet()).when(repository).generateId();
+        doReturn(UUID.randomUUID().toString()).when(repository).generateId();
         doReturn(null).when(repository).findByCode(any());
         doReturn(null).when(repository).findByContextId(any());
         doReturn(true).when(repository).add(any());
@@ -352,12 +359,12 @@ class HubInstanceServiceImplTest {
     @Test
     void shouldTrimContextIdOnBind() {
         // bindContextId must query and persist the trimmed canonical value.
-        HubInstance existing = newInstance(1L, "code");
-        doReturn(existing).when(repository).findById(1L);
+        HubInstance existing = newInstance("1", "code");
+        doReturn(existing).when(repository).findById("1");
         doReturn(null).when(repository).findByContextId("ctx-y");
         doReturn(true).when(repository).update(any());
 
-        service.bindContextId(1L, "  ctx-y  ");
+        service.bindContextId("1", "  ctx-y  ");
 
         ArgumentCaptor<HubInstance> captor = ArgumentCaptor.forClass(HubInstance.class);
         verify(repository).update(captor.capture());
@@ -366,7 +373,7 @@ class HubInstanceServiceImplTest {
         verify(repository).findByContextId("ctx-y");
     }
 
-    private HubInstance newInstance(long id, String code) {
+    private HubInstance newInstance(String id, String code) {
         HubInstance inst = new HubInstance();
         inst.setId(id);
         inst.setCode(code);

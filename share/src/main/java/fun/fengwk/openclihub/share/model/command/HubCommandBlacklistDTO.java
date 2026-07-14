@@ -11,7 +11,7 @@ import lombok.Data;
 @Data
 public class HubCommandBlacklistDTO {
 
-    private long id;
+    private String id;
     private String commandKey;
     private String reason;
     private LocalDateTime createTime;

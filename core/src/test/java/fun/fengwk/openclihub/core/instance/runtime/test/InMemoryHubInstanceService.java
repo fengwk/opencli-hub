@@ -7,12 +7,14 @@ import fun.fengwk.openclihub.core.instance.service.validation.HubInstanceValidat
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.UUID;
 
 /**
  * In-memory test double for {@link HubInstanceService} that mirrors the production
@@ -23,10 +25,9 @@ import java.util.concurrent.atomic.AtomicLong;
 public class InMemoryHubInstanceService implements HubInstanceService {
 
     private final HubInstanceValidator validator;
-    private final AtomicLong idSeq = new AtomicLong(1000L);
-    private final Map<Long, HubInstance> rows = new HashMap<>();
-    private final Map<String, Long> codeIndex = new HashMap<>();
-    private final Map<String, Long> ctxIndex = new HashMap<>();
+    private final Map<String, HubInstance> rows = new HashMap<>();
+    private final Map<String, String> codeIndex = new HashMap<>();
+    private final Map<String, String> ctxIndex = new HashMap<>();
     private final Object lock = new Object();
     /** When non-null, {@link #create} throws this after recording state changes. */
     private RuntimeException insertFailure;
@@ -44,8 +45,8 @@ public class InMemoryHubInstanceService implements HubInstanceService {
     }
 
     @Override
-    public long reserveId() {
-        return idSeq.incrementAndGet();
+    public String reserveId() {
+        return UUID.randomUUID().toString();
     }
 
     @Override
@@ -77,13 +78,15 @@ public class InMemoryHubInstanceService implements HubInstanceService {
     public List<HubInstance> list() {
         synchronized (lock) {
             List<HubInstance> copy = new ArrayList<>(rows.values());
-            copy.sort((a, b) -> Long.compare(a.getId(), b.getId()));
+            copy.sort(Comparator.comparing(HubInstance::getCreateTime,
+                    Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(HubInstance::getId));
             return copy;
         }
     }
 
     @Override
-    public HubInstance get(long id) {
+    public HubInstance get(String id) {
         synchronized (lock) {
             HubInstance row = rows.get(id);
             if (row == null) {
@@ -98,8 +101,8 @@ public class InMemoryHubInstanceService implements HubInstanceService {
     public void create(HubInstance instance) {
         validateAndNormalizeForCreate(instance);
         synchronized (lock) {
-            if (instance.getId() <= 0) {
-                instance.setId(idSeq.incrementAndGet());
+            if (instance.getId() == null || instance.getId().isBlank()) {
+                instance.setId(reserveId());
             }
             if (rows.containsKey(instance.getId())) {
                 throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable(
@@ -116,6 +119,9 @@ public class InMemoryHubInstanceService implements HubInstanceService {
             if (insertFailure != null) {
                 throw insertFailure;
             }
+            if (instance.getCreateTime() == null) {
+                instance.setCreateTime(LocalDateTime.now());
+            }
             rows.put(instance.getId(), copy(instance));
             codeIndex.put(instance.getCode(), instance.getId());
             if (instance.getContextId() != null) {
@@ -125,7 +131,7 @@ public class InMemoryHubInstanceService implements HubInstanceService {
     }
 
     @Override
-    public HubInstance update(long id, HubInstanceUpdateDTO dto) {
+    public HubInstance update(String id, HubInstanceUpdateDTO dto) {
         synchronized (lock) {
             HubInstance existing = get(id);
             List<String> normalized = validator.validateEditableProperties(dto);
@@ -139,7 +145,7 @@ public class InMemoryHubInstanceService implements HubInstanceService {
     }
 
     @Override
-    public void updateState(long id, HubInstanceState newState, String errorMessage) {
+    public void updateState(String id, HubInstanceState newState, String errorMessage) {
         if (newState == null) {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("state is required");
         }
@@ -149,7 +155,7 @@ public class InMemoryHubInstanceService implements HubInstanceService {
                 throw HubErrorCodes.INSTANCE_NOT_FOUND.asThrowable("instance vanished: " + id);
             }
             existing.setState(newState);
-            existing.setStateChangedAt(java.time.LocalDateTime.now());
+            existing.setStateChangedAt(LocalDateTime.now());
             if (newState == HubInstanceState.ERROR) {
                 String trimmed = errorMessage == null ? null : errorMessage.trim();
                 existing.setLastErrorMessage(
@@ -161,7 +167,7 @@ public class InMemoryHubInstanceService implements HubInstanceService {
     }
 
     @Override
-    public void bindContextId(long id, String contextId) {
+    public void bindContextId(String id, String contextId) {
         if (contextId == null) {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("contextId is required");
         }
@@ -171,8 +177,8 @@ public class InMemoryHubInstanceService implements HubInstanceService {
             if (existing == null) {
                 throw HubErrorCodes.INSTANCE_NOT_FOUND.asThrowable("instance vanished: " + id);
             }
-            Long otherId = ctxIndex.get(normalized);
-            if (otherId != null && otherId != id) {
+            String otherId = ctxIndex.get(normalized);
+            if (otherId != null && !otherId.equals(id)) {
                 throw HubErrorCodes.CONTEXT_ID_CONFLICT.asThrowable(
                     "contextId already bound: " + normalized);
             }
@@ -185,7 +191,7 @@ public class InMemoryHubInstanceService implements HubInstanceService {
     }
 
     @Override
-    public void deleteById(long id) {
+    public void deleteById(String id) {
         synchronized (lock) {
             HubInstance existing = rows.remove(id);
             if (existing != null) {
@@ -204,10 +210,12 @@ public class InMemoryHubInstanceService implements HubInstanceService {
         target.setDisplayName(source.getDisplayName());
         target.setContextId(source.getContextId());
         target.setState(source.getState());
-        target.setWebsites(new ArrayList<>(source.getWebsites()));
+        target.setWebsites(source.getWebsites());
         target.setMaxPending(source.getMaxPending());
         target.setLastErrorMessage(source.getLastErrorMessage());
         target.setStateChangedAt(source.getStateChangedAt());
+        target.setCreateTime(source.getCreateTime());
+        target.setUpdateTime(source.getUpdateTime());
         return target;
     }
 

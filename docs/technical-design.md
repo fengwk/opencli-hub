@@ -366,7 +366,7 @@ Hub 不配置 SCG、客户端或反向代理 HTTP timeout。
 
 ```java
 public class HubInstance {
-    private long id;
+    private String id;
     private String code;
     private String displayName;
     private String contextId;
@@ -406,8 +406,8 @@ public enum HubInstanceState {
 
 ```java
 public class HubExecution {
-    private long id;
-    private Long instanceId;
+    private String id;
+    private String instanceId;
     private String instanceCode;
     private String commandKey;
     private String site;
@@ -443,7 +443,7 @@ public enum HubExecutionStatus {
 
 ```java
 public class HubCommandBlacklist {
-    private long id;
+    private String id;
     private String commandKey;
     private String reason;
 }
@@ -451,7 +451,7 @@ public class HubCommandBlacklist {
 
 ```java
 public class HubCommandOutputRule {
-    private long id;
+    private String id;
     private String commandKey;
     private String argumentName;
     private HubCommandOutputTargetType targetType;
@@ -479,11 +479,13 @@ public enum HubCommandOutputTargetType {
 
 不建立资源表、日志表、运行时进程表、VNC session 表和 Command Catalog 全量表。
 
+四张表的新主键均由 JDK `UUID.randomUUID()` 本地生成，数据库与运行时不依赖 Snowflake、`worker-id`、Redis 或其他 ID 服务。迁移前的正 BIGINT ID 原值转换为十进制字符串，不改名 Instance 目录或 execution resource group。`code` 保持唯一但可编辑的业务别名，不承担内部身份。
+
 ### 9.2 hub_instance
 
 ```sql
 create table hub_instance (
-    id bigint not null,
+    id varchar(36) not null,
     code varchar(64) not null,
     display_name varchar(128) not null,
     context_id varchar(128) null,
@@ -521,8 +523,8 @@ Profile 路径由 ID 计算：
 
 ```sql
 create table hub_execution (
-    id bigint not null,
-    instance_id bigint null,
+    id varchar(36) not null,
+    instance_id varchar(36) null,
     instance_code varchar(64) null,
     command_key varchar(160) not null,
     site varchar(80) not null,
@@ -557,7 +559,7 @@ H2 中将 `mediumtext` 替换为 `clob`。
 
 ```sql
 create table hub_command_blacklist (
-    id bigint not null,
+    id varchar(36) not null,
     command_key varchar(160) not null,
     reason varchar(512) null,
     gmt_create timestamp(3) not null,
@@ -572,7 +574,7 @@ create table hub_command_blacklist (
 
 ```sql
 create table hub_command_output_rule (
-    id bigint not null,
+    id varchar(36) not null,
     command_key varchar(160) not null,
     argument_name varchar(64) not null,
     target_type varchar(32) not null,
@@ -595,8 +597,9 @@ core/src/main/resources/
 └── data-mysql.sql
 ```
 
-- `schema-h2.sql`、`data-h2.sql` 由 `local-h2` profile 自动执行；
-- `schema-mysql.sql`、`data-mysql.sql` 由远程环境管理员手工执行；
+- `schema-h2.sql`、`data-h2.sql` 由 H2 profile 每次启动幂等执行，并自动把旧 BIGINT ID 转为 `VARCHAR(36)`；
+- 新 MySQL 数据库执行 `schema-mysql.sql`、`data-mysql.sql`；已有数据库停机后执行 `scripts/migrate-mysql-uuid-ids.sql`；
+- 迁移流程见 `docs/uuid-id-migration.md`；
 - Service、Repository 和 Mapper 不负责建表；
 - 删除当前 `Repository.init()`、`Mapper.createTableIfNotExists()` 链路。
 
@@ -620,11 +623,12 @@ public class CoreAutoConfiguration {
 public interface HubInstanceMapper extends BaseMapper {
     int insert(HubInstanceDO instanceDO);
     int updateById(HubInstanceDO instanceDO);
-    int deleteById(long id);
-    HubInstanceDO findById(long id);
+    int deleteById(String id);
+    HubInstanceDO findById(String id);
     HubInstanceDO findByCode(String code);
     HubInstanceDO findByContextId(String contextId);
-    List<HubInstanceDO> findAllOrderByIdAsc();
+    @Select("... order by gmt_create asc, id asc")
+    List<HubInstanceDO> findAllOrderByCreateTimeAscIdAsc();
 }
 ```
 
@@ -633,20 +637,22 @@ public interface HubInstanceMapper extends BaseMapper {
 public interface HubExecutionMapper extends BaseMapper {
     int insert(HubExecutionDO executionDO);
     int updateById(HubExecutionDO executionDO);
-    HubExecutionDO findById(long id);
+    HubExecutionDO findById(String id);
     long countAll();
-    List<HubExecutionDO> pageAllOrderByIdDesc(
+    @Select("... order by queued_at desc, id desc ...")
+    List<HubExecutionDO> pageAllOrderByQueuedAtDescIdDesc(
         @Param("offset") long offset,
         @Param("limit") int limit);
-    long countByInstanceId(long instanceId);
-    List<HubExecutionDO> pageByInstanceIdOrderByIdDesc(
-        @Param("instanceId") long instanceId,
+    long countByInstanceId(String instanceId);
+    @Select("... where instance_id = #{instanceId} order by queued_at desc, id desc ...")
+    List<HubExecutionDO> pageByInstanceIdOrderByQueuedAtDescIdDesc(
+        @Param("instanceId") String instanceId,
         @Param("offset") long offset,
         @Param("limit") int limit);
 }
 ```
 
-黑名单和输出规则使用同样的命名方式。常规 CRUD 不手写 SQL，也不在 `src/main/resources` 提交空 Mapper XML；当前 Auto Mapper 注解处理器在 Maven `compile` 阶段直接将完整 XML 生成到 `target/classes`。若源码资源中存在同路径空 XML，会因 `resources` 先于 `compile` 执行而遮蔽生成结果。
+黑名单和输出规则使用同样的命名方式。常规单字段 CRUD 由 Auto Mapper 生成；创建时间加 ID 的多字段稳定排序使用 MyBatis `@Select`，避免把 UUID 当作时间序列。不得在 `src/main/resources` 提交同路径空 Mapper XML；当前 Auto Mapper 注解处理器在 Maven `compile` 阶段直接将其余完整 XML 生成到 `target/classes`。若源码资源中存在同路径空 XML，会因 `resources` 先于 `compile` 执行而遮蔽生成结果。
 
 ### 10.3 Repository 约束
 
@@ -1028,10 +1034,11 @@ stop Chrome
 
 容器异常退出后，启动时扫描：
 
-- `.creating` 且数据库无记录：删除孤儿目录；
-- `.creating` 且数据库有记录：删除 marker，保留 Profile；
-- 目录名是纯数字且数据库无对应 Instance：视为 Hub 删除失败留下的孤儿目录并清理；
-- 非数字目录不自动删除，即使其中存在 `.creating` 也只告警并保留。
+- 目录名必须是小写规范 UUID，或能解析为正 `long` 的旧数字 ID；
+- 合法目录含 `.creating` 且数据库无记录：删除孤儿目录；
+- 合法目录含 `.creating` 且数据库有记录：删除 marker，保留 Profile；
+- 合法目录无数据库对应 Instance：视为 Hub 删除失败留下的孤儿目录并清理；
+- 其他名称（含超出旧 `long` 范围的纯数字）不自动删除，即使存在 `.creating` 也只告警并保留。
 
 ## 17. Instance 启动恢复
 
@@ -1040,7 +1047,7 @@ stop Chrome
 应用启动后，后台单线程顺序启动所有数据库 Instance；`startup-recovery-enabled` 生产默认开启，仅允许测试或显式诊断关闭：
 
 ```text
-load all instances order by id
+load all instances order by gmt_create asc, id asc
 -> 将全部记录更新为 STARTING，避免展示上一次运行留下的 RUNNING 假状态
 -> start A
 -> start B
@@ -1216,7 +1223,7 @@ state == RUNNING
 load = activeCount + pendingCount
 ```
 
-选择 load 最小者；相同时按 Instance ID 排序，保证确定性。
+选择 load 最小者；相同时按不透明字符串 ID 的字典序排序，仅用于稳定打破平局，不表达创建时间。
 
 ### 20.3 指定 Instance
 

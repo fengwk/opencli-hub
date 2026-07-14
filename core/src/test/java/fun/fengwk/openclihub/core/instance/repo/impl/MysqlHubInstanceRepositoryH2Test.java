@@ -45,7 +45,7 @@ class MysqlHubInstanceRepositoryH2Test {
     void shouldRoundTripAllPersistedFields() {
         // End-to-end: insert through the repository, read it back, assert every field
         // including the JSON-serialized websites survives the round trip.
-        long id = repository.generateId();
+        String id = repository.generateId();
         String code = uniqueCode("repo-a");
         HubInstance instance = new HubInstance();
         instance.setId(id);
@@ -73,32 +73,37 @@ class MysqlHubInstanceRepositoryH2Test {
     }
 
     @Test
-    void shouldReturnInstancesOrderedByIdAscending() {
-        // Inserts three rows out of order; listAll() must still return them by id asc.
-        long idA = repository.generateId();
-        long idB = repository.generateId();
-        long idC = repository.generateId();
-        repository.add(build(idC, uniqueCode("repo-c"), HubInstanceState.STOPPED));
-        repository.add(build(idA, uniqueCode("repo-a"), HubInstanceState.RUNNING));
-        repository.add(build(idB, uniqueCode("repo-b"), HubInstanceState.STARTING));
+    void shouldReturnInstancesOrderedByCreationTimeThenId() {
+        // Creation time is the primary order and id is the deterministic tie-break.
+        String idA = repository.generateId();
+        String idB = repository.generateId();
+        String idC = repository.generateId();
+        LocalDateTime firstTime = LocalDateTime.now().minusSeconds(2);
+        LocalDateTime tiedTime = firstTime.plusSeconds(1);
+        HubInstance first = build(idC, uniqueCode("repo-c"), HubInstanceState.STOPPED);
+        first.setCreateTime(firstTime);
+        HubInstance tiedA = build(idA, uniqueCode("repo-a"), HubInstanceState.RUNNING);
+        tiedA.setCreateTime(tiedTime);
+        HubInstance tiedB = build(idB, uniqueCode("repo-b"), HubInstanceState.STARTING);
+        tiedB.setCreateTime(tiedTime);
+        repository.add(tiedB);
+        repository.add(first);
+        repository.add(tiedA);
 
-        List<HubInstance> all = repository.listAll();
+        List<String> ids = repository.listAll().stream()
+            .filter(inst -> inst.getId().equals(idA) || inst.getId().equals(idB) || inst.getId().equals(idC))
+            .map(HubInstance::getId)
+            .toList();
 
-        // listAll() returns every persisted row ordered by id ascending.
-        assertThat(all).extracting(HubInstance::getId).isSorted();
-        // The three rows we just inserted must appear in id ascending order regardless
-        // of insertion order.
-        assertThat(all)
-            .filteredOn(inst -> inst.getId() == idA || inst.getId() == idB || inst.getId() == idC)
-            .extracting(HubInstance::getId)
-            .containsExactly(idA, idB, idC);
+        assertThat(ids.get(0)).isEqualTo(idC);
+        assertThat(ids.subList(1, 3)).isSorted();
     }
 
     @Test
     void shouldFindByCodeAndContextId() {
         // findByCode/findByContextId are the only lookup paths the service layer uses
         // for pre-checks; both must work and a null contextId must return null.
-        long id = repository.generateId();
+        String id = repository.generateId();
         String code = uniqueCode("find-by-code");
         repository.add(build(id, code, HubInstanceState.RUNNING));
 
@@ -112,7 +117,7 @@ class MysqlHubInstanceRepositoryH2Test {
         // Race path: a concurrent insert that bypasses the pre-check must still hit the
         // unique index and produce a DuplicateKeyException for the service to translate.
         String code = uniqueCode("dup-code");
-        long first = repository.generateId();
+        String first = repository.generateId();
         repository.add(build(first, code, HubInstanceState.RUNNING));
 
         // Pre-check catches it before we hit the constraint.
@@ -139,7 +144,7 @@ class MysqlHubInstanceRepositoryH2Test {
         // Empty website list is allowed at the storage layer (the service rejects it as
         // an argument error before persisting), so the JSON deserializer must round-trip
         // an empty array back into an empty list without throwing.
-        long id = repository.generateId();
+        String id = repository.generateId();
         HubInstance instance = new HubInstance();
         instance.setId(id);
         instance.setCode(uniqueCode("empty-websites"));
@@ -153,7 +158,7 @@ class MysqlHubInstanceRepositoryH2Test {
         assertThat(repository.findById(id).getWebsites()).isEmpty();
     }
 
-    private HubInstance build(long id, String code, HubInstanceState state) {
+    private HubInstance build(String id, String code, HubInstanceState state) {
         HubInstance instance = new HubInstance();
         instance.setId(id);
         instance.setCode(code);

@@ -14,7 +14,7 @@ import lombok.Data;
 public class HubCommandBlacklistDO {
 
     @Id
-    private Long id;
+    private String id;
     private String commandKey;
     private String reason;
     @FieldName("gmt_create")

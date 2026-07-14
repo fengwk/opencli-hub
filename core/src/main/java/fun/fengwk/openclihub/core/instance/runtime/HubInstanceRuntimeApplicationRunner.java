@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
  *   <li>{@link OrphanInstanceScanner#scan()} — reconcile on-disk orphan directories.</li>
  *   <li>{@link HubInstanceLifecycleService#normalizeAllStatesToStarting()} — drop any stale
  *       RUNNING so the UI doesn't see a fake running Instance.</li>
- *   <li>{@link HubInstanceLifecycleService#recoverAll(List)} — start each instance in id order
+ *   <li>{@link HubInstanceLifecycleService#recoverAll(List)} — start each instance in creation order
  *       on a single-thread executor; failures are isolated and do not block Spring ready.</li>
  * </ol>
  *
@@ -63,13 +63,13 @@ public class HubInstanceRuntimeApplicationRunner implements ApplicationRunner, D
             OrphanInstanceScanner.Result result = orphanScanner.scan();
             log.info("Hub startup: orphan scan complete, normalising instance states");
             lifecycleService.normalizeAllStatesToStarting();
-            List<HubInstance> instances = lifecycleService.listInstancesOrderedById();
+            List<HubInstance> instances = lifecycleService.listInstancesOrderedByCreationTime();
             log.info("Hub startup: starting recovery for {} instances", instances.size());
             lifecycleService.recoverAll(instances);
             log.info("Hub recovery complete: creatingOrphanDeleted={} creatingMarkerRemoved={} "
-                + "numericOrphanDeleted={} nonNumericProtected={}",
+                + "managedOrphanDeleted={} unsafeNameProtected={}",
                 result.creatingOrphanDeleted, result.creatingMarkerRemoved,
-                result.numericOrphanDeleted, result.nonNumericProtected);
+                result.managedOrphanDeleted, result.unsafeNameProtected);
         } catch (RuntimeException ex) {
             log.error("Hub recovery sweep failed: {}", ex.getMessage(), ex);
         }

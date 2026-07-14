@@ -51,8 +51,7 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
         processBuilder.directory(Path.of(properties.getOpencli().getWorkdir()).toFile());
         processBuilder.redirectErrorStream(false);
         if (instance != null) {
-            processBuilder.environment().put("OPENCLI_HUB_INSTANCE_ID",
-                Long.toString(instance.getId()));
+            processBuilder.environment().put("OPENCLI_HUB_INSTANCE_ID", instance.getId());
             processBuilder.environment().put("OPENCLI_HUB_INSTANCE_CODE",
                 instance.getCode() == null ? "" : instance.getCode());
         }

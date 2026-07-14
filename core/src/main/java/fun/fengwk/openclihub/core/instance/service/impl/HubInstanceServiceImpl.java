@@ -7,6 +7,7 @@ import fun.fengwk.openclihub.core.instance.service.validation.HubInstanceValidat
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
+import fun.fengwk.openclihub.share.util.HubIds;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -35,7 +36,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
     }
 
     @Override
-    public long reserveId() {
+    public String reserveId() {
         return repository.generateId();
     }
 
@@ -69,7 +70,8 @@ public class HubInstanceServiceImpl implements HubInstanceService {
     }
 
     @Override
-    public HubInstance get(long id) {
+    public HubInstance get(String id) {
+        requireSupportedId(id);
         HubInstance instance = repository.findById(id);
         if (instance == null) {
             throw HubErrorCodes.INSTANCE_NOT_FOUND.asThrowable("instance not found: " + id);
@@ -80,7 +82,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
     @Override
     public void create(HubInstance instance) {
         validateAndNormalizeForCreate(instance);
-        if (instance.getId() <= 0) {
+        if (instance.getId() == null || instance.getId().isBlank()) {
             instance.setId(repository.generateId());
         }
         if (instance.getStateChangedAt() == null) {
@@ -107,7 +109,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
     }
 
     @Override
-    public HubInstance update(long id, HubInstanceUpdateDTO dto) {
+    public HubInstance update(String id, HubInstanceUpdateDTO dto) {
         HubInstance existing = get(id);
         // validateEditableProperties validates every editable field and writes back
         // normalized values (trimmed displayName, validated maxPending) to the DTO.
@@ -120,7 +122,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
 
         // Pre-check code uniqueness excluding the row being updated.
         HubInstance byCode = repository.findByCode(existing.getCode());
-        if (byCode != null && byCode.getId() != existing.getId()) {
+        if (byCode != null && !byCode.getId().equals(existing.getId())) {
             throw HubErrorCodes.INSTANCE_CODE_CONFLICT.asThrowable(
                 "instance code already exists: " + existing.getCode());
         }
@@ -139,7 +141,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
     }
 
     @Override
-    public void updateState(long id, HubInstanceState newState, String errorMessage) {
+    public void updateState(String id, HubInstanceState newState, String errorMessage) {
         if (newState == null) {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("state is required");
         }
@@ -170,7 +172,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
     }
 
     @Override
-    public void bindContextId(long id, String contextId) {
+    public void bindContextId(String id, String contextId) {
         if (contextId == null) {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("contextId is required");
         }
@@ -178,7 +180,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
         String normalized = validator.validateContextId(contextId);
         HubInstance existing = get(id);
         HubInstance byCtx = repository.findByContextId(normalized);
-        if (byCtx != null && byCtx.getId() != existing.getId()) {
+        if (byCtx != null && !byCtx.getId().equals(existing.getId())) {
             throw HubErrorCodes.CONTEXT_ID_CONFLICT.asThrowable(
                 "contextId already bound: " + normalized);
         }
@@ -196,7 +198,8 @@ public class HubInstanceServiceImpl implements HubInstanceService {
     }
 
     @Override
-    public void deleteById(long id) {
+    public void deleteById(String id) {
+        requireSupportedId(id);
         HubInstance existing = repository.findById(id);
         if (existing == null) {
             // Treat as idempotent: a caller (lifecycle layer) may retry safely.
@@ -207,6 +210,12 @@ public class HubInstanceServiceImpl implements HubInstanceService {
         if (!deleted) {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable(
                 "instance delete affected 0 rows: " + id);
+        }
+    }
+
+    private static void requireSupportedId(String id) {
+        if (!HubIds.isSupported(id)) {
+            throw HubErrorCodes.INSTANCE_NOT_FOUND.asThrowable("instance not found: " + id);
         }
     }
 

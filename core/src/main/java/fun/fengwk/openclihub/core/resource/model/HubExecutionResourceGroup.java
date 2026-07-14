@@ -20,7 +20,7 @@ import java.time.LocalDate;
 @AllArgsConstructor
 public class HubExecutionResourceGroup {
 
-    private long executionId;
+    private String executionId;
     private LocalDate date;
     private String group;
     private Path realPath;

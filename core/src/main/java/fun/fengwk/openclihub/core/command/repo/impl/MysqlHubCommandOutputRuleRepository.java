@@ -1,6 +1,5 @@
 package fun.fengwk.openclihub.core.command.repo.impl;
 
-import fun.fengwk.convention4j.common.idgen.NamespaceIdGenerator;
 import fun.fengwk.openclihub.core.command.repo.HubCommandOutputRuleRepository;
 import fun.fengwk.openclihub.core.command.repo.impl.mapper.HubCommandOutputRuleMapper;
 import fun.fengwk.openclihub.core.command.repo.impl.model.HubCommandOutputRuleDO;
@@ -9,6 +8,7 @@ import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Repository;
 
@@ -23,12 +23,11 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class MysqlHubCommandOutputRuleRepository implements HubCommandOutputRuleRepository {
 
-    private final NamespaceIdGenerator<Long> idGenerator;
     private final HubCommandOutputRuleMapper mapper;
 
     @Override
-    public long generateId() {
-        return idGenerator.next(HubCommandOutputRule.class);
+    public String generateId() {
+        return UUID.randomUUID().toString();
     }
 
     @Override
@@ -42,7 +41,7 @@ public class MysqlHubCommandOutputRuleRepository implements HubCommandOutputRule
     }
 
     @Override
-    public boolean deleteById(long id) {
+    public boolean deleteById(String id) {
         return mapper.deleteById(id) == 1;
     }
 
@@ -52,7 +51,7 @@ public class MysqlHubCommandOutputRuleRepository implements HubCommandOutputRule
     }
 
     @Override
-    public HubCommandOutputRule findById(long id) {
+    public HubCommandOutputRule findById(String id) {
         return fromDO(mapper.findById(id));
     }
 

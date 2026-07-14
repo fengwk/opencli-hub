@@ -13,7 +13,7 @@ import lombok.Data;
 @Data
 public class HubInstanceVncStatusDTO {
 
-    private long instanceId;
+    private String instanceId;
     private boolean instanceAvailable;
     private boolean running;
     private boolean runtimeAvailable;

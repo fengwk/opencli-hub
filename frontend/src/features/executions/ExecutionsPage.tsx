@@ -5,6 +5,8 @@ import { Link } from 'react-router-dom'
 import { listExecutions } from '@/features/executions/executions-api'
 import { formatDateTime, formatMillis } from '@/features/executions/execution-format'
 import { Empty, ErrorState, Loading, StatusBadge } from '@/shared/components'
+import { parseBackendId } from '@/shared/api/backend-id'
+import type { BackendId } from '@/shared/api/contracts'
 
 const defaultPageSize = 20
 
@@ -12,20 +14,15 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '请求失败，请稍后重试。'
 }
 
-function parseInstanceId(value: string): number | undefined {
-  const normalized = value.trim()
-  if (!normalized) return undefined
-  if (!/^\d+$/.test(normalized)) return Number.NaN
-  const instanceId = Number(normalized)
-  return Number.isSafeInteger(instanceId) && instanceId > 0 ? instanceId : Number.NaN
+function parseInstanceId(value: string): BackendId | undefined {
+  return parseBackendId(value)
 }
 
 export function ExecutionsPage() {
   const [pageNumber, setPageNumber] = useState(1)
   const [pageSize, setPageSize] = useState(defaultPageSize)
   const [instanceInput, setInstanceInput] = useState('')
-  const [instanceId, setInstanceId] = useState<number | undefined>()
-  const [filterError, setFilterError] = useState<string | null>(null)
+  const [instanceId, setInstanceId] = useState<BackendId | undefined>()
   const executionsQuery = useQuery({
     queryKey: ['executions', pageNumber, pageSize, instanceId],
     queryFn: () => listExecutions({ pageNumber, pageSize, instanceId }),
@@ -36,14 +33,8 @@ export function ExecutionsPage() {
 
   function submitFilter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const nextInstanceId = parseInstanceId(instanceInput)
-    if (Number.isNaN(nextInstanceId)) {
-      setFilterError('Instance ID 必须是正整数。')
-      return
-    }
-    setFilterError(null)
     setPageNumber(1)
-    setInstanceId(nextInstanceId)
+    setInstanceId(parseInstanceId(instanceInput))
   }
 
   function changePageSize(nextPageSize: number) {
@@ -63,9 +54,9 @@ export function ExecutionsPage() {
         <label>
           Instance ID
           <input
-            aria-describedby={filterError ? 'execution-filter-error' : undefined}
-            inputMode="numeric"
             value={instanceInput}
+            autoComplete="off"
+            spellCheck={false}
             onChange={(event) => setInstanceInput(event.target.value)}
           />
         </label>
@@ -79,7 +70,6 @@ export function ExecutionsPage() {
         </label>
         <button type="submit" className="btn btn-primary">筛选</button>
       </form>
-      {filterError ? <p className="page-error" id="execution-filter-error" role="alert">{filterError}</p> : null}
 
       {executionsQuery.isPending ? <Loading label="正在加载执行历史…" /> : null}
       {executionsQuery.isError ? <ErrorState title="无法加载执行历史" description={errorMessage(executionsQuery.error)} onRetry={() => void executionsQuery.refetch()} /> : null}
@@ -106,7 +96,7 @@ export function ExecutionsPage() {
                     <td data-label="命令">{execution.commandKey ?? '—'}</td>
                     <td data-label="耗时">{formatMillis(execution.durationMillis)}</td>
                     <td data-label="时间">{formatDateTime(execution.finishedAt ?? execution.startedAt ?? execution.queuedAt)}</td>
-                    <td data-label="操作"><Link className="btn compact-button" to={`/executions/${execution.id}`}>查看详情 {execution.id}</Link></td>
+                    <td data-label="操作"><Link className="btn compact-button" to={`/executions/${encodeURIComponent(execution.id)}`}>查看详情 {execution.id}</Link></td>
                   </tr>
                 ))}
               </tbody>

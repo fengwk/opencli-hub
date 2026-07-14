@@ -1,3 +1,5 @@
+import type { BackendId } from '@/shared/api/contracts'
+
 export type CommandAccess = 'READ' | 'WRITE'
 export type SiteSessionMode = 'EPHEMERAL' | 'PERSISTENT'
 export type OutputTargetType = 'DIRECTORY' | 'FILE'
@@ -14,7 +16,7 @@ export interface CommandArgument {
 }
 
 export interface CommandOutputRule {
-  id: number
+  id: BackendId
   commandKey: string
   argumentName: string
   targetType: OutputTargetType

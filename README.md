@@ -37,8 +37,11 @@ env JAVA_HOME=$JAVA_HOME_17 \
 
 ## 数据库
 
-- 本地联调：H2，自动执行 `schema-h2.sql` 和 `data-h2.sql`；
+持久化主键由 JDK `UUID.randomUUID()` 本地生成，不依赖 Snowflake、`worker-id`、Redis 或其他 ID 服务。迁移前的正 BIGINT ID 继续作为十进制字符串使用，`code` 保持可编辑的唯一业务别名。
+
+- 本地联调：H2，自动执行 `schema-h2.sql` 和 `data-h2.sql`，并原地兼容旧 BIGINT ID；
 - 生产环境：MySQL，通用部署需预先执行 `schema-mysql.sql` 和 `data-mysql.sql`；仓库内 Compose 示例仅在新卷首启时由 MySQL 官方 entrypoint 自动执行；
+- 已有 MySQL 数据库必须在停机备份后执行 [`scripts/migrate-mysql-uuid-ids.sql`](scripts/migrate-mysql-uuid-ids.sql)，详见 [UUID ID 迁移](docs/uuid-id-migration.md)；
 - Service、Repository 和 Mapper 不负责运行时建表。
 
 MyBatis SQL 由 Auto Mapper 在 Maven `compile` 阶段生成到 `target/classes`，不要在源码资源目录提交同路径空 Mapper XML。
@@ -61,7 +64,7 @@ docker compose -f compose.h2.yml down
 
 `opencli-hub-h2-data` 保存 `/data/opencli-hub`（H2 文件数据库、日志、资源和实例目录），`opencli-hub-h2-home` 保存 `/var/lib/opencli`。`application-docker-h2.yml` 以幂等 H2 schema/data 脚本初始化新库；该 profile 仅适合单容器 H2。`OPENCLI_HUB_SMOKE_BUILD_MODE=local` 会先执行 `scripts/docker/build-local.sh`，再用 Compose 启动同一 `opencli-hub:local` 镜像，适合网络不稳定时的本地回归。Smoke 脚本默认使用隔离的 `opencli-hub-smoke-$UID` Compose project 和宿主端口 `18080`，退出时只删除自己的临时 volumes；可通过 `OPENCLI_HUB_SMOKE_PROJECT`、`OPENCLI_HUB_SMOKE_PORT` 覆盖。
 
-MySQL 部署使用固定 `mysql:8.4.5`，并在**新建** `opencli-hub-mysql-data` 卷的首次启动时由 MySQL 官方 entrypoint 执行版本化的 `schema-mysql.sql`、`data-mysql.sql`。该 Compose 文件 bind mount 仓库内 SQL，因此应从仓库根目录执行。Hub 的运行时 `spring.sql.init.mode` 仍为 `never`：不要依赖 Hub 对既有 MySQL 建表；两个密码环境变量均为必填，避免误用弱默认值。
+MySQL 部署使用固定 `mysql:8.4.5`，并在**新建** `opencli-hub-mysql-data` 卷的首次启动时由 MySQL 官方 entrypoint 执行版本化的 `schema-mysql.sql`、`data-mysql.sql`。该 Compose 文件 bind mount 仓库内 SQL，因此应从仓库根目录执行。Hub 的运行时 `spring.sql.init.mode` 仍为 `never`：不要依赖 Hub 对既有 MySQL 建表或迁移；已有 BIGINT schema 先按 [UUID ID 迁移](docs/uuid-id-migration.md) 操作。两个密码环境变量均为必填，避免误用弱默认值。
 
 ```bash
 export MYSQL_ROOT_PASSWORD='replace-with-a-secret'
@@ -82,8 +85,7 @@ docker compose -f compose.yml down
 | `OPENCLI_HUB_DATA_DIR` | `/data/opencli-hub` | 数据库、日志、资源和 Instance 根目录 |
 | `OPENCLI_HUB_MYSQL_PASSWORD` | MySQL Compose 必填 | Hub/MySQL 业务账号密码 |
 | `MYSQL_ROOT_PASSWORD` | MySQL Compose 必填 | MySQL 首启 root 密码及健康检查 |
-| `OPENCLI_HUB_WORKER_ID` | `0` | 单机 Snowflake worker ID；多 Hub 部署必须唯一 |
-| `OPENCLI_HUB_STARTUP_RECOVERY_ENABLED` | `true` | 启动后按 ID 顺序恢复数据库中的 Instance |
+| `OPENCLI_HUB_STARTUP_RECOVERY_ENABLED` | `true` | 启动后按创建时间和 ID 的稳定顺序恢复数据库中的 Instance |
 | `OPENCLI_HUB_DEFAULT_TIMEOUT_MILLIS` | `600000` | 同步执行默认端到端 deadline |
 | `OPENCLI_HUB_MAX_TIMEOUT_MILLIS` | `1800000` | 调用方可请求的最大 deadline |
 | `OPENCLI_HUB_SHUTDOWN_TIMEOUT_SECONDS` | `30` | entrypoint 等待 Hub/CRX 子进程退出的单进程上限 |
@@ -101,5 +103,6 @@ docker compose -f compose.yml down
 ## 文档
 
 - [技术设计](docs/technical-design.md)
+- [UUID ID 迁移](docs/uuid-id-migration.md)
 - [实施计划](docs/implementation-plan.md)
 - [文档索引](docs/README.md)

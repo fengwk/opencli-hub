@@ -1,3 +1,5 @@
+import type { BackendId } from '@/shared/api/contracts'
+
 export type HubInstanceState = 'STARTING' | 'RUNNING' | 'STOPPING' | 'STOPPED' | 'ERROR'
 
 export interface HubInstanceRuntime {
@@ -9,7 +11,7 @@ export interface HubInstanceRuntime {
 }
 
 export interface HubInstance {
-  id: number
+  id: BackendId
   code: string
   displayName: string
   contextId: string | null
@@ -31,7 +33,7 @@ export interface InstanceEditableProperties {
 }
 
 export interface HubInstanceVncStatus {
-  instanceId: number
+  instanceId: BackendId
   instanceAvailable: boolean
   running: boolean
   runtimeAvailable: boolean

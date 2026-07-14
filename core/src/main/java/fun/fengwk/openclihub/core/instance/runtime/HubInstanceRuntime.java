@@ -19,7 +19,7 @@ import lombok.Data;
 @Data
 public class HubInstanceRuntime {
 
-    private long instanceId;
+    private String instanceId;
     private String instanceCode;
 
     /** Allocated X11 display number (>= the configured base). */
