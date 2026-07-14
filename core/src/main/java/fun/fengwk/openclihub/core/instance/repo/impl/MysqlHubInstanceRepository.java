@@ -3,7 +3,6 @@ package fun.fengwk.openclihub.core.instance.repo.impl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import fun.fengwk.convention4j.common.idgen.NamespaceIdGenerator;
 import fun.fengwk.openclihub.core.instance.repo.HubInstanceRepository;
 import fun.fengwk.openclihub.core.instance.repo.impl.mapper.HubInstanceMapper;
 import fun.fengwk.openclihub.core.instance.repo.impl.model.HubInstanceDO;
@@ -12,6 +11,7 @@ import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Repository;
 
@@ -24,13 +24,12 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class MysqlHubInstanceRepository implements HubInstanceRepository {
 
-    private final NamespaceIdGenerator<Long> idGenerator;
     private final HubInstanceMapper mapper;
     private final ObjectMapper objectMapper;
 
     @Override
-    public long generateId() {
-        return idGenerator.next(HubInstance.class);
+    public String generateId() {
+        return UUID.randomUUID().toString();
     }
 
     @Override
@@ -44,12 +43,12 @@ public class MysqlHubInstanceRepository implements HubInstanceRepository {
     }
 
     @Override
-    public boolean deleteById(long id) {
+    public boolean deleteById(String id) {
         return mapper.deleteById(id) == 1;
     }
 
     @Override
-    public HubInstance findById(long id) {
+    public HubInstance findById(String id) {
         return fromDO(mapper.findById(id));
     }
 
@@ -65,7 +64,7 @@ public class MysqlHubInstanceRepository implements HubInstanceRepository {
 
     @Override
     public List<HubInstance> listAll() {
-        return mapper.findAllOrderByIdAsc().stream().map(this::fromDO).toList();
+        return mapper.findAllOrderByCreateTimeAscIdAsc().stream().map(this::fromDO).toList();
     }
 
     private HubInstanceDO toDO(HubInstance instance) {

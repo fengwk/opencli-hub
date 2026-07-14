@@ -3,6 +3,7 @@ package fun.fengwk.openclihub.core.resource.util;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.resource.HubResourceSource;
+import fun.fengwk.openclihub.share.util.HubIds;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -163,8 +164,8 @@ public final class HubResourcePaths {
     /**
      * Build the execution group identifier for the supplied execution id.
      */
-    public static String executionGroup(long executionId) {
-        if (executionId <= 0L) {
+    public static String executionGroup(String executionId) {
+        if (!HubIds.isSupported(executionId)) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
         return "execution-" + executionId;

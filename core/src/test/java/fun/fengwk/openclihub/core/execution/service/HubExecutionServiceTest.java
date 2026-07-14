@@ -3,11 +3,12 @@ package fun.fengwk.openclihub.core.execution.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -48,6 +49,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -91,7 +93,7 @@ class HubExecutionServiceTest {
         properties = new OpenCliHubProperties();
 
         instance = new HubInstance();
-        instance.setId(7L);
+        instance.setId("7");
         instance.setCode("primary");
         instance.setContextId("ctx-primary");
         instance.setState(HubInstanceState.RUNNING);
@@ -106,8 +108,8 @@ class HubExecutionServiceTest {
         when(outputRuleService.findByCommandKey(normalized.getCanonicalKey()))
             .thenReturn(Optional.empty());
         when(router.chooseInstance(eq("bilibili"), any())).thenReturn(instance);
-        when(resources.scanExisting(anyLong())).thenReturn(List.of());
-        when(resources.prepare(anyLong(), any(), any())).thenAnswer(invocation -> {
+        when(resources.scanExisting(anyString())).thenReturn(List.of());
+        when(resources.prepare(anyString(), any(), any())).thenAnswer(invocation -> {
             NormalizedOpenCliArgv argv = invocation.getArgument(1);
             return new HubExecutionResources.ResourceContext(
                 argv.getNormalizedArgv(), null, List.of());
@@ -131,6 +133,23 @@ class HubExecutionServiceTest {
     @AfterEach
     void tearDown() {
         dispatchRegistry.unregister(instance.getId());
+    }
+
+    @Test
+    void shouldRejectUnsupportedInstanceIdBeforeCommandValidation() {
+        assertThatThrownBy(() -> service.execute(request("not-an-id", 1_000L)))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+
+        verify(argvValidator, never()).validate(any());
+        assertThat(repository.addCount).isZero();
+    }
+
+    /** Malformed detail IDs return not-found without reaching persistence or resource paths. */
+    @Test
+    void shouldTreatUnsupportedDetailIdAsNotFoundWithoutRepositoryLookup() {
+        assertThat(service.getById("not-an-id")).isNull();
+
+        assertThat(repository.findCount).isZero();
     }
 
     @Test
@@ -172,7 +191,7 @@ class HubExecutionServiceTest {
         assertThat(result.getStatus()).isEqualTo(HubExecutionStatus.FAILED);
         assertThat(result.getErrorMessage())
             .contains(HubErrorCodes.OPENCLI_INVALID_JSON_OUTPUT.getCode());
-        assertThat(result.getId()).isPositive();
+        assertThat(result.getId()).matches("[0-9a-f-]{36}");
     }
 
     @Test
@@ -253,7 +272,7 @@ class HubExecutionServiceTest {
         HubResourceLease lease = leaseManager.acquire(tempDir.resolve("input.txt"), "execution-test");
         HubExecutionResources.ResourceContext context = new HubExecutionResources.ResourceContext(
             normalized.getNormalizedArgv(), null, List.of(lease));
-        doReturn(context).when(resources).prepare(anyLong(), any(), any());
+        doReturn(context).when(resources).prepare(anyString(), any(), any());
         executor.setBehavior(() -> FakeOpenCliExecutor.Behaviour.throwsOnStart(
             new IllegalStateException("spawn failed")));
 
@@ -273,14 +292,14 @@ class HubExecutionServiceTest {
             .thenReturn(Optional.of(rule));
 
         HubExecutionResourceGroup group = HubExecutionResourceGroup.builder()
-            .executionId(1L)
+            .executionId("1")
             .date(LocalDate.now())
             .group("execution-1")
             .realPath(tempDir.resolve("execution-1"))
             .build();
         HubExecutionResources.ResourceContext context = new HubExecutionResources.ResourceContext(
             normalized.getNormalizedArgv(), group, List.of());
-        doReturn(context).when(resources).prepare(anyLong(), any(), eq(rule));
+        doReturn(context).when(resources).prepare(anyString(), any(), eq(rule));
         HubResourceItemDTO item = new HubResourceItemDTO();
         item.setFileName("result.json");
         item.setSource(HubResourceSource.EXECUTION);
@@ -395,7 +414,7 @@ class HubExecutionServiceTest {
             .containsExactly(HubExecutionStatus.RUNNING, HubExecutionStatus.SUCCEEDED);
     }
 
-    private HubExecutionRequestDTO request(Long instanceId, long timeoutMillis) {
+    private HubExecutionRequestDTO request(String instanceId, long timeoutMillis) {
         HubExecutionRequestDTO request = new HubExecutionRequestDTO();
         request.setInstanceId(instanceId);
         request.setArgv(List.of("bilibili", "hot"));
@@ -418,21 +437,21 @@ class HubExecutionServiceTest {
 
     private static final class InMemoryExecutionRepository implements HubExecutionRepository {
 
-        private long nextId = 100L;
         private int addCount;
         private int updateCount;
+        private int findCount;
         private int failUpdateAt;
         private boolean failGenerate;
         private boolean failAdd;
-        private final Map<Long, HubExecution> executions = new LinkedHashMap<>();
+        private final Map<String, HubExecution> executions = new LinkedHashMap<>();
         private final List<HubExecutionStatus> updatedStatuses = new ArrayList<>();
 
         @Override
-        public long generateId() {
+        public String generateId() {
             if (failGenerate) {
                 throw new IllegalStateException("id generator unavailable");
             }
-            return nextId++;
+            return UUID.randomUUID().toString();
         }
 
         @Override
@@ -457,12 +476,13 @@ class HubExecutionServiceTest {
         }
 
         @Override
-        public HubExecution findById(long id) {
+        public HubExecution findById(String id) {
+            findCount++;
             return executions.get(id);
         }
 
         @Override
-        public Page<HubExecution> page(PageQuery pageQuery, Long instanceId) {
+        public Page<HubExecution> page(PageQuery pageQuery, String instanceId) {
             throw new UnsupportedOperationException();
         }
 

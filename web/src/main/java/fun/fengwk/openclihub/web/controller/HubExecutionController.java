@@ -38,12 +38,12 @@ public class HubExecutionController {
     public Result<Page<HubExecutionDTO>> page(
         @RequestParam(defaultValue = "1") int pageNumber,
         @RequestParam(defaultValue = "20") int pageSize,
-        @RequestParam(required = false) Long instanceId) {
+        @RequestParam(required = false) String instanceId) {
         return Results.ok(executionService.page(new PageQuery(pageNumber, pageSize), instanceId));
     }
 
     @GetMapping("/api/executions/{id}")
-    public Result<HubExecutionDTO> get(@PathVariable long id) {
+    public Result<HubExecutionDTO> get(@PathVariable String id) {
         HubExecutionDTO execution = executionService.getById(id);
         if (execution == null) {
             throw HubErrorCodes.EXECUTION_NOT_FOUND.asThrowable("execution not found: " + id);

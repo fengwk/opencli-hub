@@ -37,10 +37,10 @@ class ProcessBuilderOpenCliExecutorTest {
         properties.getOpencli().setWorkdir(tempDir.resolve("workdir").toString());
         properties.getExecution().setProcessStopGraceMillis(50L);
         Files.createDirectories(Path.of(properties.getOpencli().getWorkdir()));
-        Files.createDirectories(HubInstanceDirectoryLayout.logsDir(properties.getDataDir(), 9L));
+        Files.createDirectories(HubInstanceDirectoryLayout.logsDir(properties.getDataDir(), "9"));
 
         instance = new HubInstance();
-        instance.setId(9L);
+        instance.setId("9");
         instance.setCode("executor-test");
         objectMapper = new ObjectMapper();
     }

@@ -18,6 +18,8 @@ vi.mock('@/shared/api/client', () => ({
   },
 }))
 
+const instanceId = '82e5b937-74f1-47af-b85b-98c7a4ef76a3'
+
 const log: HubLogContent = {
   source: 'SYSTEM',
   instanceId: null,
@@ -54,15 +56,15 @@ describe('LogsPage', () => {
     expect(apiClient.get).toHaveBeenCalledWith('/logs/system', { params: { lines: 500 } })
   })
 
-  it('initializes Instance mode from the query parameter and sends the selected fixed source and line count', async () => {
-    // The URL shortcut and form submission together prove that only a positive ID and dropdown source reach the instance API.
+  it('initializes Instance mode from the query parameter and preserves the opaque ID', async () => {
+    // The URL shortcut and form submission prove that a UUID and fixed dropdown source reach the instance API unchanged.
     const user = userEvent.setup()
-    vi.mocked(apiClient.get).mockResolvedValue({ ...log, source: 'CHROME', instanceId: 17 })
+    vi.mocked(apiClient.get).mockResolvedValue({ ...log, source: 'CHROME', instanceId })
 
-    renderPage('/logs?instanceId=17')
+    renderPage(`/logs?instanceId=${instanceId}`)
 
     await screen.findByLabelText('日志内容')
-    expect(apiClient.get).toHaveBeenLastCalledWith('/instances/17/logs', {
+    expect(apiClient.get).toHaveBeenLastCalledWith(`/instances/${instanceId}/logs`, {
       params: { source: 'CHROME', lines: 500 },
     })
 
@@ -71,7 +73,7 @@ describe('LogsPage', () => {
     await user.type(screen.getByRole('textbox', { name: '行数' }), '1234')
     await user.click(screen.getByRole('button', { name: '加载日志' }))
 
-    await waitFor(() => expect(apiClient.get).toHaveBeenLastCalledWith('/instances/17/logs', {
+    await waitFor(() => expect(apiClient.get).toHaveBeenLastCalledWith(`/instances/${instanceId}/logs`, {
       params: { source: 'X11VNC', lines: 1234 },
     }))
   })
@@ -125,41 +127,39 @@ describe('LogsPage', () => {
   it('builds the raw download URL from the active, validated instance request', async () => {
     // The anchor URL proves downloads use the selected fixed source instead of accepting an arbitrary path or source.
     const user = userEvent.setup()
-    vi.mocked(apiClient.get).mockResolvedValue({ ...log, source: 'X11VNC', instanceId: 8 })
+    vi.mocked(apiClient.get).mockResolvedValue({ ...log, source: 'X11VNC', instanceId })
 
-    renderPage('/logs?instanceId=8')
+    renderPage(`/logs?instanceId=${instanceId}`)
     await screen.findByLabelText('日志内容')
     await user.selectOptions(screen.getByRole('combobox', { name: '进程来源' }), 'X11VNC')
     await user.click(screen.getByRole('button', { name: '加载日志' }))
-    await waitFor(() => expect(apiClient.get).toHaveBeenLastCalledWith('/instances/8/logs', {
+    await waitFor(() => expect(apiClient.get).toHaveBeenLastCalledWith(`/instances/${instanceId}/logs`, {
       params: { source: 'X11VNC', lines: 500 },
     }))
 
     expect(screen.getByRole('link', { name: '下载当前日志' })).toHaveAttribute(
       'href',
-      '/api/instances/8/logs/download?source=X11VNC',
+      `/api/instances/${instanceId}/logs/download?source=X11VNC`,
     )
   })
 
-  it('rejects invalid Instance IDs and line counts without issuing a request', async () => {
-    // UI validation and API validation together prevent malformed IDs, out-of-range lines, and arbitrary sources from forming paths.
+  it('rejects blank Instance IDs and invalid line counts without issuing a request', async () => {
+    // UI and API validation prevent blank IDs, out-of-range lines, and arbitrary sources from forming paths.
     const user = userEvent.setup()
     vi.mocked(apiClient.get).mockResolvedValue(log)
 
     renderPage()
     await screen.findByLabelText('日志内容')
     await user.selectOptions(screen.getByRole('combobox', { name: '日志模式' }), 'INSTANCE')
-    await user.type(screen.getByRole('textbox', { name: 'Instance ID' }), '0')
     await user.click(screen.getByRole('button', { name: '加载日志' }))
-    expect(screen.getByRole('alert')).toHaveTextContent('Instance ID 必须是正整数。')
+    expect(screen.getByRole('alert')).toHaveTextContent('Instance ID 不能为空。')
 
-    await user.clear(screen.getByRole('textbox', { name: 'Instance ID' }))
-    await user.type(screen.getByRole('textbox', { name: 'Instance ID' }), '9')
+    await user.type(screen.getByRole('textbox', { name: 'Instance ID' }), instanceId)
     await user.clear(screen.getByRole('textbox', { name: '行数' }))
     await user.type(screen.getByRole('textbox', { name: '行数' }), '5001')
     await user.click(screen.getByRole('button', { name: '加载日志' }))
     expect(screen.getByRole('alert')).toHaveTextContent('行数必须是 1 到 5000 之间的整数。')
     expect(apiClient.get).toHaveBeenCalledTimes(1)
-    expect(() => getInstanceLogs(9, 'UNSAFE' as InstanceLogSource, 500)).toThrow('不支持的日志来源。')
+    expect(() => getInstanceLogs(instanceId, 'UNSAFE' as InstanceLogSource, 500)).toThrow('不支持的日志来源。')
   })
 })

@@ -57,7 +57,7 @@ public class HubExecutionRouter {
      * Choose the {@link HubInstance} that will run the command. {@code explicitInstanceId}
      * may be {@code null} for automatic routing.
      */
-    public HubInstance chooseInstance(String site, Long explicitInstanceId) {
+    public HubInstance chooseInstance(String site, String explicitInstanceId) {
         if (site == null || site.isBlank()) {
             throw HubErrorCodes.INVALID_EXECUTION_REQUEST.asThrowable("site must not be blank");
         }
@@ -67,7 +67,7 @@ public class HubExecutionRouter {
         return chooseAutomatic(site);
     }
 
-    private HubInstance chooseExplicit(long explicitInstanceId, String site) {
+    private HubInstance chooseExplicit(String explicitInstanceId, String site) {
         HubInstance instance = instanceService.get(explicitInstanceId);
         if (instance.getState() != HubInstanceState.RUNNING) {
             throw HubErrorCodes.INSTANCE_NOT_RUNNING.asThrowable(
@@ -100,7 +100,7 @@ public class HubExecutionRouter {
             }
             int load = loadOf(instance);
             if (chosen == null || load < chosenLoad
-                || (load == chosenLoad && instance.getId() < chosen.getId())) {
+                || (load == chosenLoad && instance.getId().compareTo(chosen.getId()) < 0)) {
                 chosen = instance;
                 chosenLoad = load;
             }

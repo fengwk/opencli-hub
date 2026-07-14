@@ -18,8 +18,10 @@ const command: HubCommand = {
   blacklisted: false, blacklistReason: null, outputRule: null,
 }
 
+const instanceId = '2c6eefbd-a8cf-44fb-8016-14d6886c2557'
+
 const stoppedInstance: HubInstance = {
-  id: 7, code: 'alpha', displayName: 'Alpha browser', contextId: null, state: 'STOPPED',
+  id: instanceId, code: 'alpha', displayName: 'Alpha browser', contextId: null, state: 'STOPPED',
   websites: ['demo'], maxPending: 3, lastErrorMessage: 'last launch failed', stateChangedAt: null,
   runtime: { registered: false, displayNumber: null, vncPort: null, activeCount: 0, pendingCount: 0 },
   createTime: null, updateTime: null,
@@ -61,7 +63,7 @@ describe('InstancesPage', () => {
     expect(screen.getByText('等待注册')).toBeInTheDocument()
     expect(screen.getByText(/活跃 0 · 待处理 0\/3/)).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('最近错误：last launch failed')
-    expect(screen.getByRole('link', { name: '详情与控制台' })).toHaveAttribute('href', '/instances/7')
+    expect(screen.getByRole('link', { name: '详情与控制台' })).toHaveAttribute('href', `/instances/${instanceId}`)
   })
 
   it('surfaces a list transport error instead of leaving the page empty', async () => {
@@ -172,12 +174,12 @@ describe('InstancesPage', () => {
     renderPage()
     await screen.findByRole('heading', { name: 'Alpha browser' })
     await user.click(screen.getByRole('button', { name: '启动' }))
-    await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith('/instances/7/start'))
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith(`/instances/${instanceId}/start`))
 
     await user.click(screen.getByRole('button', { name: '删除' }))
     expect(apiClient.delete).not.toHaveBeenCalled()
     expect(screen.getByRole('dialog')).toHaveTextContent('Profile 和浏览器登录状态')
     await user.click(screen.getByRole('button', { name: '删除实例' }))
-    await waitFor(() => expect(apiClient.delete).toHaveBeenCalledWith('/instances/7'))
+    await waitFor(() => expect(apiClient.delete).toHaveBeenCalledWith(`/instances/${instanceId}`))
   })
 })

@@ -1,6 +1,7 @@
 package fun.fengwk.openclihub.web.controller;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -47,19 +48,24 @@ class HubExecutionControllerTest {
     @MockitoBean
     private HubExecutionService executionService;
 
-    /** Terminal command failure is still a successful HTTP call carrying the execution id. */
+    /** Terminal failure remains HTTP 200 while UUID Instance and Execution IDs stay lossless strings. */
     @Test
     void shouldReturnFailedTerminalExecutionWithHttp200() throws Exception {
+        String instanceId = "c39c0ecf-b905-4526-b9b7-0825a16acb14";
+        String executionId = "4996df0f-f999-4b54-99a0-5468ba70f12d";
         HubExecutionRequestDTO request = request();
-        HubExecutionDTO execution = execution(101L, HubExecutionStatus.FAILED);
+        request.setInstanceId(instanceId);
+        HubExecutionDTO execution = execution(executionId, HubExecutionStatus.FAILED);
         when(executionService.execute(any())).thenReturn(execution);
 
         mockMvc.perform(post("/api/opencli/execute")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsBytes(request)))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.id").value(101))
+            .andExpect(jsonPath("$.data.id").value(executionId))
             .andExpect(jsonPath("$.data.status").value("FAILED"));
+        verify(executionService).execute(argThat(
+            submitted -> instanceId.equals(submitted.getInstanceId())));
     }
 
     /** Bean validation rejects an empty argv before the execution service is called. */
@@ -120,8 +126,8 @@ class HubExecutionControllerTest {
     /** Page query parameters are translated into convention4j PageQuery exactly once. */
     @Test
     void shouldPageExecutions() throws Exception {
-        HubExecutionDTO execution = execution(102L, HubExecutionStatus.SUCCEEDED);
-        when(executionService.page(eq(new PageQuery(2, 5)), eq(11L)))
+        HubExecutionDTO execution = execution("102", HubExecutionStatus.SUCCEEDED);
+        when(executionService.page(eq(new PageQuery(2, 5)), eq("11")))
             .thenReturn(new DefaultPage<>(2, 5, List.of(execution), 6));
 
         mockMvc.perform(get("/api/executions")
@@ -130,26 +136,26 @@ class HubExecutionControllerTest {
                 .param("instanceId", "11"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.pageNumber").value(2))
-            .andExpect(jsonPath("$.data.results[0].id").value(102))
+            .andExpect(jsonPath("$.data.results[0].id").value("102"))
             .andExpect(jsonPath("$.data.totalCount").value(6));
     }
 
     /** Execution detail returns the persisted terminal DTO. */
     @Test
     void shouldReturnExecutionDetail() throws Exception {
-        when(executionService.getById(103L))
-            .thenReturn(execution(103L, HubExecutionStatus.SUCCEEDED));
+        when(executionService.getById("103"))
+            .thenReturn(execution("103", HubExecutionStatus.SUCCEEDED));
 
         mockMvc.perform(get("/api/executions/103"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.id").value(103))
+            .andExpect(jsonPath("$.data.id").value("103"))
             .andExpect(jsonPath("$.data.status").value("SUCCEEDED"));
     }
 
     /** Missing execution details use a dedicated stable 404 code. */
     @Test
     void shouldReturnExecutionNotFound() throws Exception {
-        when(executionService.getById(404L)).thenReturn(null);
+        when(executionService.getById("404")).thenReturn(null);
 
         mockMvc.perform(get("/api/executions/404"))
             .andExpect(status().isNotFound())
@@ -171,7 +177,7 @@ class HubExecutionControllerTest {
         return request;
     }
 
-    private static HubExecutionDTO execution(long id, HubExecutionStatus status) {
+    private static HubExecutionDTO execution(String id, HubExecutionStatus status) {
         HubExecutionDTO execution = new HubExecutionDTO();
         execution.setId(id);
         execution.setStatus(status);

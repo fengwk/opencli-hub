@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getExecution } from '@/features/executions/executions-api'
 import { formatDateTime, formatMillis, formatStdout } from '@/features/executions/execution-format'
+import { parseBackendId } from '@/shared/api/backend-id'
 import { buildResourceUrl } from '@/shared/api/resource-url'
 import { Empty, ErrorState, Loading, StatusBadge } from '@/shared/components'
 
@@ -21,17 +22,18 @@ function Metadata({ label, value }: { label: string, value: ReactNode }) {
 
 export function ExecutionDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const validId = Boolean(id && /^[1-9]\d*$/.test(id))
+  const executionId = parseBackendId(id ?? '')
+  const validId = executionId !== undefined
   const executionQuery = useQuery({
-    queryKey: ['execution', id],
-    queryFn: () => getExecution(id ?? ''),
+    queryKey: ['execution', executionId],
+    queryFn: () => getExecution(executionId!),
     enabled: validId,
   })
 
   if (!validId) {
     return (
       <div className="page">
-        <ErrorState title="无效的 Execution ID" description="Execution ID 必须是正整数。" />
+        <ErrorState title="无效的 Execution ID" description="Execution ID 不能为空。" />
       </div>
     )
   }

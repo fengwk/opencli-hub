@@ -48,7 +48,7 @@ public class HubLogController {
 
     @GetMapping("/api/instances/{id}/logs")
     public Result<HubLogContentDTO> tailInstance(
-        @PathVariable long id,
+        @PathVariable String id,
         @RequestParam(required = false) String source,
         @RequestParam(defaultValue = "500") int lines) {
         HubLogSource parsedSource = HubLogService.parseInstanceSource(source);
@@ -57,7 +57,7 @@ public class HubLogController {
 
     @GetMapping("/api/instances/{id}/logs/download")
     public ResponseEntity<StreamingResponseBody> downloadInstance(
-        @PathVariable long id,
+        @PathVariable String id,
         @RequestParam(required = false) String source) {
         try {
             return download(logService.openInstanceDownload(id, HubLogService.parseInstanceSource(source)));

@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
  *       path once the runtime has been registered,</li>
  *   <li>{@link #dispatch(HubInstance, Callable, long)} forwards a task with a deadline
  *       budget to the matching per-instance dispatcher,</li>
- *   <li>{@link #unregisterWhenIdle(long)} closes an idle dispatcher atomically against
+ *   <li>{@link #unregisterWhenIdle(String)} closes an idle dispatcher atomically against
  *       concurrent submissions.</li>
  * </ul>
  *
@@ -29,7 +29,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class HubDispatchRegistry {
 
-    private final Map<Long, HubInstanceDispatcher> dispatchers = new ConcurrentHashMap<>();
+    private final Map<String, HubInstanceDispatcher> dispatchers = new ConcurrentHashMap<>();
 
     public void register(HubInstance instance) {
         if (instance == null) {
@@ -59,7 +59,7 @@ public class HubDispatchRegistry {
         return dispatcher.submit(task, deadlineNanos);
     }
 
-    public HubInstanceRuntimeSnapshot getSnapshot(long instanceId) {
+    public HubInstanceRuntimeSnapshot getSnapshot(String instanceId) {
         HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
         if (dispatcher == null) {
             return HubInstanceRuntimeSnapshot.absent();
@@ -72,7 +72,7 @@ public class HubDispatchRegistry {
             dispatcher.pendingCount());
     }
 
-    public int getMaxPending(long instanceId) {
+    public int getMaxPending(String instanceId) {
         HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
         return dispatcher == null ? 0 : dispatcher.getMaxPending();
     }
@@ -82,7 +82,7 @@ public class HubDispatchRegistry {
      * the removal otherwise (caller's lifecycle lock already verified busy=false, this is
      * the belt-and-braces race guard for sub-millisecond scheduling).
      */
-    public boolean unregisterWhenIdle(long instanceId) {
+    public boolean unregisterWhenIdle(String instanceId) {
         HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
         if (dispatcher == null) {
             return true;
@@ -95,7 +95,7 @@ public class HubDispatchRegistry {
     }
 
     /** Force-remove the dispatcher for unexpected exit, startup rollback or teardown. */
-    public void unregister(long instanceId) {
+    public void unregister(String instanceId) {
         HubInstanceDispatcher dispatcher = dispatchers.remove(instanceId);
         if (dispatcher != null) {
             dispatcher.shutdownNow();
@@ -104,7 +104,7 @@ public class HubDispatchRegistry {
 
     @PreDestroy
     void shutdown() {
-        for (Long instanceId : List.copyOf(dispatchers.keySet())) {
+        for (String instanceId : List.copyOf(dispatchers.keySet())) {
             unregister(instanceId);
         }
     }

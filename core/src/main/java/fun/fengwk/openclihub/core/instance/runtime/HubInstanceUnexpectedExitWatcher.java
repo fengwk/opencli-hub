@@ -9,7 +9,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.ObjLongConsumer;
+import java.util.function.BiConsumer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.DisposableBean;
 
@@ -24,10 +24,10 @@ import org.springframework.beans.factory.DisposableBean;
 @Slf4j
 public class HubInstanceUnexpectedExitWatcher implements UnexpectedExitListener, DisposableBean {
 
-    private final ObjLongConsumer<String> exitConsumer;
+    private final BiConsumer<String, String> exitConsumer;
     private final ScheduledExecutorService scheduler;
-    private final ConcurrentHashMap<Long, ScheduledFuture<?>> watched = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, Long> generations = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ScheduledFuture<?>> watched = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> generations = new ConcurrentHashMap<>();
     private final AtomicLong generationSequence = new AtomicLong();
 
     /**
@@ -44,14 +44,14 @@ public class HubInstanceUnexpectedExitWatcher implements UnexpectedExitListener,
     }
 
     /** Test wiring: custom consumer + custom scheduler (often a no-op executor). */
-    public HubInstanceUnexpectedExitWatcher(ObjLongConsumer<String> exitConsumer,
+    public HubInstanceUnexpectedExitWatcher(BiConsumer<String, String> exitConsumer,
         ScheduledExecutorService scheduler) {
         this.exitConsumer = exitConsumer;
         this.scheduler = scheduler;
     }
 
     @Override
-    public void watch(long instanceId, HubInstanceRuntime runtime) {
+    public void watch(String instanceId, HubInstanceRuntime runtime) {
         if (runtime.getProcesses().isEmpty()) {
             return;
         }
@@ -78,7 +78,7 @@ public class HubInstanceUnexpectedExitWatcher implements UnexpectedExitListener,
     }
 
     @Override
-    public void unwatch(long instanceId) {
+    public void unwatch(String instanceId) {
         generations.remove(instanceId);
         ScheduledFuture<?> task = watched.remove(instanceId);
         if (task != null) {
@@ -86,7 +86,7 @@ public class HubInstanceUnexpectedExitWatcher implements UnexpectedExitListener,
         }
     }
 
-    private void deliver(long instanceId, long generation, String reason) {
+    private void deliver(String instanceId, long generation, String reason) {
         if (!generations.remove(instanceId, generation)) {
             return;
         }

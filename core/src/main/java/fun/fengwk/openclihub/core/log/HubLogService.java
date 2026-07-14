@@ -5,6 +5,7 @@ import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.log.HubLogContentDTO;
 import fun.fengwk.openclihub.share.model.log.HubLogSource;
+import fun.fengwk.openclihub.share.util.HubIds;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.RandomAccessFile;
@@ -71,7 +72,7 @@ public class HubLogService {
         return tail(resolveSystem(), lines);
     }
 
-    public HubLogContentDTO tailInstance(long instanceId, HubLogSource source, int lines) {
+    public HubLogContentDTO tailInstance(String instanceId, HubLogSource source, int lines) {
         return tail(resolveInstance(instanceId, source), lines);
     }
 
@@ -79,7 +80,7 @@ public class HubLogService {
         return openDownload(resolveSystem());
     }
 
-    public HubLogStream openInstanceDownload(long instanceId, HubLogSource source) {
+    public HubLogStream openInstanceDownload(String instanceId, HubLogSource source) {
         return openDownload(resolveInstance(instanceId, source));
     }
 
@@ -120,9 +121,12 @@ public class HubLogService {
         return new ResolvedLog(loggingDirectory.resolve(SYSTEM_LOG_FILE_NAME), HubLogSource.SYSTEM, null);
     }
 
-    private ResolvedLog resolveInstance(long instanceId, HubLogSource source) {
+    private ResolvedLog resolveInstance(String instanceId, HubLogSource source) {
         if (source == null || source == HubLogSource.SYSTEM) {
             throw HubErrorCodes.INSTANCE_LOG_SOURCE_INVALID.asThrowable();
+        }
+        if (!HubIds.isSupported(instanceId)) {
+            throw HubErrorCodes.LOG_FILE_NOT_FOUND.asThrowable();
         }
         Path path = switch (source) {
             case CHROME -> HubInstanceDirectoryLayout.chromeLog(properties.getDataDir(), instanceId);
@@ -192,7 +196,7 @@ public class HubLogService {
         }
     }
 
-    private record ResolvedLog(Path path, HubLogSource source, Long instanceId) {
+    private record ResolvedLog(Path path, HubLogSource source, String instanceId) {
     }
 
     private record Tail(String content, boolean truncated) {

@@ -47,7 +47,7 @@ public class HubInstanceController {
     }
 
     @GetMapping("/{id}")
-    public Result<HubInstanceDTO> get(@PathVariable long id) {
+    public Result<HubInstanceDTO> get(@PathVariable String id) {
         return Results.ok(toDTO(instanceService.get(id)));
     }
 
@@ -55,7 +55,7 @@ public class HubInstanceController {
      * Reports VNC availability without exposing the loopback TCP address.
      */
     @GetMapping("/{id}/vnc/status")
-    public Result<HubInstanceVncStatusDTO> vncStatus(@PathVariable long id) {
+    public Result<HubInstanceVncStatusDTO> vncStatus(@PathVariable String id) {
         HubInstance instance = instanceService.get(id);
         var snapshot = lifecycleService.getSnapshot(id);
         boolean runtimeAvailable = snapshot.isRegistered();
@@ -76,30 +76,30 @@ public class HubInstanceController {
 
     @PutMapping("/{id}")
     public Result<HubInstanceDTO> update(
-        @PathVariable long id,
+        @PathVariable String id,
         @Valid @RequestBody HubInstanceUpdateDTO request) {
         return Results.ok(toDTO(instanceService.update(id, request)));
     }
 
     @DeleteMapping("/{id}")
-    public Result<Void> delete(@PathVariable long id) {
+    public Result<Void> delete(@PathVariable String id) {
         lifecycleService.delete(id);
         return Results.ok();
     }
 
     @PostMapping("/{id}/start")
-    public Result<HubInstanceDTO> start(@PathVariable long id) {
+    public Result<HubInstanceDTO> start(@PathVariable String id) {
         return Results.ok(toDTO(lifecycleService.start(id)));
     }
 
     @PostMapping("/{id}/stop")
-    public Result<HubInstanceDTO> stop(@PathVariable long id) {
+    public Result<HubInstanceDTO> stop(@PathVariable String id) {
         lifecycleService.stop(id);
         return Results.ok(toDTO(instanceService.get(id)));
     }
 
     @PostMapping("/{id}/restart")
-    public Result<HubInstanceDTO> restart(@PathVariable long id) {
+    public Result<HubInstanceDTO> restart(@PathVariable String id) {
         lifecycleService.restart(id);
         return Results.ok(toDTO(instanceService.get(id)));
     }

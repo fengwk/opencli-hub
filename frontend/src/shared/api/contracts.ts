@@ -22,6 +22,9 @@ export interface PageResult<T> {
   results: T[]
 }
 
+/** Backend identifiers are opaque strings; callers must not parse or coerce them to numbers. */
+export type BackendId = string
+
 /**
  * Backend `LocalDateTime` values are serialized either as ISO strings or, under
  * some Jackson configurations, as numeric arrays. Features normalize as needed.

@@ -6,6 +6,7 @@ import fun.fengwk.openclihub.core.CoreTestApplication;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandOutputRule;
 import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
 import java.time.LocalDateTime;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -80,7 +81,7 @@ class HubCommandOutputRuleRepositoryTest {
     private static HubCommandOutputRule newRule(String commandKey, String arg,
                                                 HubCommandOutputTargetType type, String fileName) {
         HubCommandOutputRule rule = new HubCommandOutputRule();
-        rule.setId(9000L + (long) commandKey.hashCode());
+        rule.setId(UUID.randomUUID().toString());
         rule.setCommandKey(commandKey);
         rule.setArgumentName(arg);
         rule.setTargetType(type);

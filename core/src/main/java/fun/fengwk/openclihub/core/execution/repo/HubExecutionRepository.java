@@ -11,14 +11,14 @@ import fun.fengwk.openclihub.core.execution.service.model.HubExecution;
  */
 public interface HubExecutionRepository {
 
-    long generateId();
+    String generateId();
 
     boolean add(HubExecution execution);
 
     boolean update(HubExecution execution);
 
-    HubExecution findById(long id);
+    HubExecution findById(String id);
 
-    Page<HubExecution> page(PageQuery pageQuery, Long instanceId);
+    Page<HubExecution> page(PageQuery pageQuery, String instanceId);
 
 }

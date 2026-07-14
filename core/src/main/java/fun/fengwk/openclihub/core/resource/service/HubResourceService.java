@@ -413,10 +413,7 @@ public class HubResourceService {
      * Create an execution group directory under the supplied UTC date. Returns the model
      * describing the group location.
      */
-    public HubExecutionResourceGroup createExecutionGroup(long executionId, LocalDate date) {
-        if (executionId <= 0L) {
-            throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
-        }
+    public HubExecutionResourceGroup createExecutionGroup(String executionId, LocalDate date) {
         LocalDate targetDate = date == null ? LocalDate.now(ZoneOffset.UTC) : date;
         String group = HubResourcePaths.executionGroup(executionId);
         Path groupReal = HubResourcePaths.groupDir(root, targetDate, group);

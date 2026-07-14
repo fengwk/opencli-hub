@@ -1,5 +1,6 @@
 package fun.fengwk.openclihub.core.instance.runtime;
 
+import fun.fengwk.openclihub.share.util.HubIds;
 import java.nio.file.Path;
 
 /**
@@ -39,39 +40,47 @@ public final class HubInstanceDirectoryLayout {
         return Path.of(dataDir, "instances");
     }
 
-    public static Path instanceDir(String dataDir, long instanceId) {
-        return instancesRoot(dataDir).resolve(Long.toString(instanceId));
+    /** UUIDs and migrated positive-long ids are the only Hub-managed directory names. */
+    public static boolean isManagedInstanceId(String instanceId) {
+        return HubIds.isSupported(instanceId);
     }
 
-    public static Path chromeDir(String dataDir, long instanceId) {
+    public static Path instanceDir(String dataDir, String instanceId) {
+        if (!isManagedInstanceId(instanceId)) {
+            throw new IllegalArgumentException("Invalid instance id: " + instanceId);
+        }
+        return instancesRoot(dataDir).resolve(instanceId);
+    }
+
+    public static Path chromeDir(String dataDir, String instanceId) {
         return instanceDir(dataDir, instanceId).resolve(DIR_CHROME);
     }
 
-    public static Path logsDir(String dataDir, long instanceId) {
+    public static Path logsDir(String dataDir, String instanceId) {
         return instanceDir(dataDir, instanceId).resolve(DIR_LOGS);
     }
 
-    public static Path runtimeDir(String dataDir, long instanceId) {
+    public static Path runtimeDir(String dataDir, String instanceId) {
         return instanceDir(dataDir, instanceId).resolve(DIR_RUNTIME);
     }
 
-    public static Path creatingMarker(String dataDir, long instanceId) {
+    public static Path creatingMarker(String dataDir, String instanceId) {
         return instanceDir(dataDir, instanceId).resolve(MARKER_CREATING);
     }
 
-    public static Path xvfbLog(String dataDir, long instanceId) {
+    public static Path xvfbLog(String dataDir, String instanceId) {
         return logsDir(dataDir, instanceId).resolve(LOG_XVFB);
     }
 
-    public static Path openboxLog(String dataDir, long instanceId) {
+    public static Path openboxLog(String dataDir, String instanceId) {
         return logsDir(dataDir, instanceId).resolve(LOG_OPENBOX);
     }
 
-    public static Path x11vncLog(String dataDir, long instanceId) {
+    public static Path x11vncLog(String dataDir, String instanceId) {
         return logsDir(dataDir, instanceId).resolve(LOG_X11VNC);
     }
 
-    public static Path chromeLog(String dataDir, long instanceId) {
+    public static Path chromeLog(String dataDir, String instanceId) {
         return logsDir(dataDir, instanceId).resolve(LOG_CHROME);
     }
 

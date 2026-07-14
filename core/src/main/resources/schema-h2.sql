@@ -1,5 +1,5 @@
 create table if not exists hub_instance (
-    id bigint not null,
+    id varchar(36) not null,
     code varchar(64) not null,
     display_name varchar(128) not null,
     context_id varchar(128) null,
@@ -16,11 +16,12 @@ create table if not exists hub_instance (
     constraint uk_hub_instance_context_id unique (context_id)
 );
 
+alter table hub_instance alter column id varchar(36) not null;
 create index if not exists idx_hub_instance_state on hub_instance (state);
 
 create table if not exists hub_execution (
-    id bigint not null,
-    instance_id bigint null,
+    id varchar(36) not null,
+    instance_id varchar(36) null,
     instance_code varchar(64) null,
     command_key varchar(160) not null,
     site varchar(80) not null,
@@ -44,12 +45,14 @@ create table if not exists hub_execution (
     primary key (id)
 );
 
+alter table hub_execution alter column id varchar(36) not null;
+alter table hub_execution alter column instance_id varchar(36) null;
 create index if not exists idx_hub_execution_instance_id on hub_execution (instance_id);
 create index if not exists idx_hub_execution_status on hub_execution (status);
 create index if not exists idx_hub_execution_gmt_create on hub_execution (gmt_create);
 
 create table if not exists hub_command_blacklist (
-    id bigint not null,
+    id varchar(36) not null,
     command_key varchar(160) not null,
     reason varchar(512) null,
     gmt_create timestamp(3) not null,
@@ -59,8 +62,10 @@ create table if not exists hub_command_blacklist (
     constraint uk_hub_command_blacklist_command_key unique (command_key)
 );
 
+alter table hub_command_blacklist alter column id varchar(36) not null;
+
 create table if not exists hub_command_output_rule (
-    id bigint not null,
+    id varchar(36) not null,
     command_key varchar(160) not null,
     argument_name varchar(64) not null,
     target_type varchar(32) not null,
@@ -71,3 +76,5 @@ create table if not exists hub_command_output_rule (
     primary key (id),
     constraint uk_hub_command_output_rule_command_key unique (command_key)
 );
+
+alter table hub_command_output_rule alter column id varchar(36) not null;

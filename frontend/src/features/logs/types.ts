@@ -1,4 +1,4 @@
-import type { BackendDateTime } from '@/shared/api/contracts'
+import type { BackendDateTime, BackendId } from '@/shared/api/contracts'
 
 export const instanceLogSources = ['CHROME', 'XVFB', 'OPENBOX', 'X11VNC'] as const
 
@@ -8,7 +8,7 @@ export type LogLevel = 'ALL' | 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'
 /** Mirrors HubLogContentDTO returned from the system and instance log endpoints. */
 export interface HubLogContent {
   source: 'SYSTEM' | InstanceLogSource
-  instanceId: number | null
+  instanceId: BackendId | null
   content: string
   truncated: boolean
   fileSize: number
@@ -17,4 +17,4 @@ export interface HubLogContent {
 
 export type LogRequest =
   | { mode: 'SYSTEM'; lines: number }
-  | { mode: 'INSTANCE'; instanceId: number; source: InstanceLogSource; lines: number }
+  | { mode: 'INSTANCE'; instanceId: BackendId; source: InstanceLogSource; lines: number }

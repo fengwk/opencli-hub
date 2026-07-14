@@ -14,8 +14,8 @@ import lombok.Data;
 public class HubExecutionDO {
 
     @Id
-    private Long id;
-    private Long instanceId;
+    private String id;
+    private String instanceId;
     private String instanceCode;
     private String commandKey;
     private String site;

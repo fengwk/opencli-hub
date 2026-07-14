@@ -42,13 +42,13 @@ class HubCommandQueryServiceTest {
         when(catalog.listPublicCommands()).thenReturn(List.of(bilibili, chatgpt));
 
         HubCommandBlacklist blocked = new HubCommandBlacklist();
-        blocked.setId(1L);
+        blocked.setId("1");
         blocked.setCommandKey("bilibili/hot");
         blocked.setReason("blocked for QA");
         when(blacklistService.snapshot()).thenReturn(Map.of("bilibili/hot", blocked));
 
         HubCommandOutputRule rule = new HubCommandOutputRule();
-        rule.setId(2L);
+        rule.setId("2");
         rule.setCommandKey("chatgpt/image");
         rule.setArgumentName("op");
         rule.setTargetType(HubCommandOutputTargetType.DIRECTORY);

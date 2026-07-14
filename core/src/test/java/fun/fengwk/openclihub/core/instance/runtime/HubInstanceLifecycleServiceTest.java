@@ -121,7 +121,7 @@ class HubInstanceLifecycleServiceTest {
         HubInstance created = lifecycle.create(dto);
 
         // DB row exists with all fields populated.
-        assertThat(created.getId()).isPositive();
+        assertThat(created.getId()).matches("[0-9a-f-]{36}");
         assertThat(created.getCode()).isEqualTo("bilibili-a");
         assertThat(created.getState()).isEqualTo(HubInstanceState.RUNNING);
         assertThat(created.getContextId()).isEqualTo("ctx-success");
@@ -135,7 +135,7 @@ class HubInstanceLifecycleServiceTest {
         assertThat(watcher.watchedCount()).isEqualTo(1);
 
         // On-disk directory layout.
-        Path dir = dataDir.resolve("instances").resolve(Long.toString(created.getId()));
+        Path dir = dataDir.resolve("instances").resolve(created.getId());
         assertThat(Files.exists(dir.resolve("chrome"))).isTrue();
         assertThat(Files.exists(dir.resolve("logs"))).isTrue();
         assertThat(Files.exists(dir.resolve(".creating"))).isFalse();
@@ -295,10 +295,24 @@ class HubInstanceLifecycleServiceTest {
     //  START (existing)
     // ---------------------------------------------------------------------------------
 
+    /** Invalid route IDs must not allocate an unbounded lifecycle lock or start OS processes. */
+    @Test
+    void shouldRejectUnsupportedIdBeforeAllocatingLifecycleState() {
+        assertThatThrownBy(() -> lifecycle.start("not-an-id"))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_NOT_FOUND));
+
+        for (HubInstanceRuntime.HubInstanceProcessKind kind
+            : HubInstanceRuntime.HubInstanceProcessKind.values()) {
+            assertThat(launcher.launchCount(kind)).isZero();
+        }
+    }
+
     @Test
     void shouldStartExistingWithExpectedContextId() throws IOException {
         // Seed DB row directly so we can start without going through create().
-        long id = seedPersistedInstance("bilibili-existing", "ctx-existing");
+        String id = seedPersistedInstance("bilibili-existing", "ctx-existing");
         // Pre-snapshot the daemon with the expected id already present (fetch #1).
         OpenCliProfileSnapshot ps = new OpenCliProfileSnapshot();
         ps.setContextId("ctx-existing");
@@ -316,7 +330,7 @@ class HubInstanceLifecycleServiceTest {
     @Test
     void shouldStartExistingWithZeroNewContext() {
         // daemon never reports any new id and instance has no expected -> timeout.
-        long id = seedPersistedInstance("bilibili-zero", null);
+        String id = seedPersistedInstance("bilibili-zero", null);
         assertThatThrownBy(() -> lifecycle.start(id))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .extracting("code")
@@ -328,7 +342,7 @@ class HubInstanceLifecycleServiceTest {
     @Test
     void shouldAutoRebindWhenExpectedMissingAndUniqueNew() {
         // expected = "ctx-expected" but daemon only ever shows "ctx-unique".
-        long id = seedPersistedInstance("bilibili-rebind", "ctx-expected");
+        String id = seedPersistedInstance("bilibili-rebind", "ctx-expected");
         daemon.addConnectedContextAfterFetch("ctx-unique", 2);
 
         HubInstance started = lifecycle.start(id);
@@ -338,8 +352,8 @@ class HubInstanceLifecycleServiceTest {
 
     @Test
     void shouldRefuseRebindWhenContextAlreadyBound() {
-        long ownerId = seedPersistedInstance("bilibili-owner", "ctx-collision");
-        long id = seedPersistedInstance("bilibili-conflict", "ctx-expected");
+        String ownerId = seedPersistedInstance("bilibili-owner", "ctx-collision");
+        String id = seedPersistedInstance("bilibili-conflict", "ctx-expected");
         // The collision appears only after the before-snapshot, modelling a newly connected
         // Profile whose contextId is already persisted on another instance.
         daemon.addConnectedContextAfterFetch("ctx-collision", 2);
@@ -360,7 +374,7 @@ class HubInstanceLifecycleServiceTest {
 
     @Test
     void shouldStopRunningInstanceAndKeepDirectory() throws IOException {
-        long id = seedPersistedInstance("bilibili-stop", "ctx-stop");
+        String id = seedPersistedInstance("bilibili-stop", "ctx-stop");
         daemon.addConnectedContextAfterFetch("ctx-stop", 2);
         lifecycle.start(id);
 
@@ -369,17 +383,17 @@ class HubInstanceLifecycleServiceTest {
         assertThat(instanceService.get(id).getState()).isEqualTo(HubInstanceState.STOPPED);
         assertThat(registry.get(id)).isNull();
         assertThat(watcher.unwatchedCount()).isEqualTo(1);
-        Path dir = dataDir.resolve("instances").resolve(Long.toString(id));
+        Path dir = dataDir.resolve("instances").resolve(id);
         // Profile preserved on stop.
         assertThat(Files.exists(dir.resolve("chrome"))).isTrue();
     }
 
     @Test
     void shouldRestartInstanceAndPreserveProfile() throws IOException {
-        long id = seedPersistedInstance("bilibili-restart", "ctx-restart");
+        String id = seedPersistedInstance("bilibili-restart", "ctx-restart");
         daemon.addConnectedContextAfterFetch("ctx-restart", 2);
         lifecycle.start(id);
-        Path chromeDir = dataDir.resolve("instances").resolve(Long.toString(id)).resolve("chrome");
+        Path chromeDir = dataDir.resolve("instances").resolve(id).resolve("chrome");
         Files.writeString(chromeDir.resolve("marker.txt"), "kept-across-restart");
 
         lifecycle.restart(id);
@@ -394,7 +408,7 @@ class HubInstanceLifecycleServiceTest {
         // busy requires a registered dispatcher with non-zero load. We use a separate
         // dispatcher that we can submit a blocking task to; the main thread then asks the
         // lifecycle service to delete and must be told BUSY.
-        long id = seedPersistedInstance("bilibili-busy", "ctx-busy");
+        String id = seedPersistedInstance("bilibili-busy", "ctx-busy");
         HubDispatchRegistry dispatcher = new HubDispatchRegistry();
         HubInstance inst = instanceService.get(id);
         dispatcher.register(inst);
@@ -431,11 +445,11 @@ class HubInstanceLifecycleServiceTest {
 
     @Test
     void shouldDeleteInstanceAndDirectorySafely() throws IOException {
-        long id = seedPersistedInstance("bilibili-delete", "ctx-delete");
+        String id = seedPersistedInstance("bilibili-delete", "ctx-delete");
         daemon.addConnectedContextAfterFetch("ctx-delete", 2);
         lifecycle.start(id);
 
-        Path dir = dataDir.resolve("instances").resolve(Long.toString(id));
+        Path dir = dataDir.resolve("instances").resolve(id);
         // Create a symlink inside the instance dir; delete must not follow it.
         Path target = dataDir.resolve("external.txt");
         Files.writeString(target, "external");
@@ -461,16 +475,16 @@ class HubInstanceLifecycleServiceTest {
 
     @Test
     void shouldNormalizeAllToStartingAndRecoverInOrder() {
-        // Seed three rows in non-id order to verify the recovery runs id-sorted.
-        long a = seedPersistedInstance("bilibili-a", null);
-        long b = seedPersistedInstance("bilibili-b", null);
-        long c = seedPersistedInstance("bilibili-c", null);
+        // Seed three rows to verify recovery follows creation order.
+        String a = seedPersistedInstance("bilibili-a", null);
+        String b = seedPersistedInstance("bilibili-b", null);
+        String c = seedPersistedInstance("bilibili-c", null);
         // Make them all RUNNING so we can confirm normalize changes them.
         instanceService.updateState(a, HubInstanceState.RUNNING, null);
         instanceService.updateState(b, HubInstanceState.RUNNING, null);
         instanceService.updateState(c, HubInstanceState.RUNNING, null);
 
-        List<Long> orderSeen = new ArrayList<>();
+        List<String> orderSeen = new ArrayList<>();
         lifecycle.normalizeAllStatesToStarting();
         for (HubInstance inst : instanceService.list()) {
             orderSeen.add(inst.getId());
@@ -500,13 +514,13 @@ class HubInstanceLifecycleServiceTest {
         // start observes a connected context; subsequent starts see no new ids and time out.
         daemon.setFirstWinsStrategy("ctx-a");
 
-        long a = seedPersistedInstance("bilibili-a", null);
-        long b = seedPersistedInstance("bilibili-b", null);
-        long c = seedPersistedInstance("bilibili-c", null);
+        String a = seedPersistedInstance("bilibili-a", null);
+        String b = seedPersistedInstance("bilibili-b", null);
+        String c = seedPersistedInstance("bilibili-c", null);
 
         lifecycle.recoverAll(instanceService.list());
 
-        // Recovery is id-ordered: the first instance wins the one context, then both later
+        // Recovery is creation-time ordered: the first instance wins the one context, then both later
         // failures are isolated instead of aborting the recovery loop.
         assertThat(instanceService.get(a).getState()).isEqualTo(HubInstanceState.RUNNING);
         assertThat(instanceService.get(b).getState()).isEqualTo(HubInstanceState.ERROR);
@@ -522,7 +536,7 @@ class HubInstanceLifecycleServiceTest {
 
     @Test
     void shouldReportUnexpectedExitAndMarkError() {
-        long id = seedPersistedInstance("bilibili-exit", "ctx-exit");
+        String id = seedPersistedInstance("bilibili-exit", "ctx-exit");
         daemon.addConnectedContextAfterFetch("ctx-exit", 2);
         lifecycle.start(id);
         HubInstanceRuntime runtime = registry.get(id);
@@ -557,8 +571,8 @@ class HubInstanceLifecycleServiceTest {
 
     @Test
     void shouldKeepProfileAndDropMarkerWhenDbRowExists() throws IOException {
-        long id = seedPersistedInstance("bilibili-create-marker", "ctx-create-marker");
-        Path instanceRoot = dataDir.resolve("instances").resolve(Long.toString(id));
+        String id = seedPersistedInstance("bilibili-create-marker", "ctx-create-marker");
+        Path instanceRoot = dataDir.resolve("instances").resolve(id);
         // The orphan scanner depends on the .creating marker being on disk; create it here
         // because seedPersistedInstance writes only the DB row.
         Files.createDirectories(instanceRoot);
@@ -584,7 +598,7 @@ class HubInstanceLifecycleServiceTest {
         OrphanInstanceScanner scanner = new OrphanInstanceScanner(properties, instanceService);
         OrphanInstanceScanner.Result result = scanner.scan();
 
-        assertThat(result.numericOrphanDeleted).isEqualTo(1);
+        assertThat(result.managedOrphanDeleted).isEqualTo(1);
         assertThat(Files.exists(instanceRoot)).isFalse();
     }
 
@@ -597,20 +611,20 @@ class HubInstanceLifecycleServiceTest {
         OrphanInstanceScanner scanner = new OrphanInstanceScanner(properties, instanceService);
         OrphanInstanceScanner.Result result = scanner.scan();
 
-        assertThat(result.nonNumericProtected).isEqualTo(1);
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
         // Even a marker cannot authorize deleting a non-numeric administrator directory.
         assertThat(Files.exists(orphan.resolve(".creating"))).isTrue();
     }
 
     @Test
-    void shouldProtectOutOfRangeNumericDirectory() throws IOException {
+    void shouldProtectNumericDirectoryOutsideLegacyLongRange() throws IOException {
         Path orphan = dataDir.resolve("instances").resolve("999999999999999999999999999999");
         Files.createDirectories(orphan);
 
         OrphanInstanceScanner.Result result =
             new OrphanInstanceScanner(properties, instanceService).scan();
 
-        assertThat(result.nonNumericProtected).isEqualTo(1);
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
         assertThat(Files.exists(orphan)).isTrue();
     }
 
@@ -658,7 +672,7 @@ class HubInstanceLifecycleServiceTest {
         return dto;
     }
 
-    private long seedPersistedInstance(String code, String contextId) {
+    private String seedPersistedInstance(String code, String contextId) {
         HubInstance inst = new HubInstance();
         inst.setCode(code);
         inst.setDisplayName(code + " display");

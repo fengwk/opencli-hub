@@ -14,7 +14,7 @@ import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -129,7 +129,7 @@ class HubCommandOutputRuleServiceTest {
     @Test
     void shouldUpdateExistingRuleInsteadOfInserting() {
         HubCommandOutputRule existing = new HubCommandOutputRule();
-        existing.setId(2002L);
+        existing.setId("2002");
         existing.setCommandKey("chatgpt/image");
         existing.setArgumentName("op");
         existing.setTargetType(HubCommandOutputTargetType.DIRECTORY);
@@ -150,7 +150,7 @@ class HubCommandOutputRuleServiceTest {
     void shouldKeepCachedRuleUnchangedWhenUpdateFails() {
         // A failed database update must not leak the attempted values into the live cache.
         HubCommandOutputRule existing = new HubCommandOutputRule();
-        existing.setId(2002L);
+        existing.setId("2002");
         existing.setCommandKey("chatgpt/image");
         existing.setArgumentName("op");
         existing.setTargetType(HubCommandOutputTargetType.DIRECTORY);
@@ -170,7 +170,7 @@ class HubCommandOutputRuleServiceTest {
     @Test
     void shouldDeleteExistingRuleAndClearCache() {
         HubCommandOutputRule existing = new HubCommandOutputRule();
-        existing.setId(2002L);
+        existing.setId("2002");
         existing.setCommandKey("chatgpt/image");
         existing.setArgumentName("op");
         existing.setTargetType(HubCommandOutputTargetType.DIRECTORY);
@@ -190,7 +190,7 @@ class HubCommandOutputRuleServiceTest {
         // constraint on command_key). listAll() runs twice: once for the initial
         // cache load, once for the post-mutation refresh().
         HubCommandOutputRule existing = new HubCommandOutputRule();
-        existing.setId(2002L);
+        existing.setId("2002");
         existing.setCommandKey("chatgpt/image");
         existing.setArgumentName("op");
         existing.setTargetType(HubCommandOutputTargetType.DIRECTORY);
@@ -201,7 +201,7 @@ class HubCommandOutputRuleServiceTest {
             HubCommandOutputTargetType.FILE, "result.png");
 
         assertThat(repository.listAllCallCount).isEqualTo(2);
-        assertThat(updated.getId()).isEqualTo(2002L);
+        assertThat(updated.getId()).isEqualTo("2002");
         assertThat(updated.getTargetType()).isEqualTo(HubCommandOutputTargetType.FILE);
         assertThat(updated.getFileName()).isEqualTo("result.png");
     }
@@ -209,7 +209,7 @@ class HubCommandOutputRuleServiceTest {
     @Test
     void shouldLoadOnceAndDeleteExistingRuleOnColdCache() {
         HubCommandOutputRule existing = new HubCommandOutputRule();
-        existing.setId(2002L);
+        existing.setId("2002");
         existing.setCommandKey("chatgpt/image");
         existing.setArgumentName("op");
         existing.setTargetType(HubCommandOutputTargetType.DIRECTORY);
@@ -273,7 +273,6 @@ class HubCommandOutputRuleServiceTest {
     private static final class InMemoryOutputRuleRepository implements HubCommandOutputRuleRepository {
 
         final java.util.LinkedHashMap<String, HubCommandOutputRule> byKey = new java.util.LinkedHashMap<>();
-        final AtomicLong idGen = new AtomicLong(2000L);
         int listAllCallCount = 0;
         boolean failUpdates;
 
@@ -282,8 +281,8 @@ class HubCommandOutputRuleServiceTest {
         }
 
         @Override
-        public long generateId() {
-            return idGen.incrementAndGet();
+        public String generateId() {
+            return UUID.randomUUID().toString();
         }
 
         @Override
@@ -308,8 +307,8 @@ class HubCommandOutputRuleServiceTest {
         }
 
         @Override
-        public boolean deleteById(long id) {
-            return byKey.entrySet().removeIf(e -> e.getValue().getId() == id);
+        public boolean deleteById(String id) {
+            return byKey.entrySet().removeIf(e -> e.getValue().getId().equals(id));
         }
 
         @Override
@@ -318,8 +317,8 @@ class HubCommandOutputRuleServiceTest {
         }
 
         @Override
-        public HubCommandOutputRule findById(long id) {
-            return byKey.values().stream().filter(r -> r.getId() == id).findFirst().orElse(null);
+        public HubCommandOutputRule findById(String id) {
+            return byKey.values().stream().filter(r -> r.getId().equals(id)).findFirst().orElse(null);
         }
 
         @Override

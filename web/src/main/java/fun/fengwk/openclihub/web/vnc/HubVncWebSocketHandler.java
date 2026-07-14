@@ -47,7 +47,7 @@ import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 @Component
 public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
 
-    private static final Pattern ENDPOINT_PATH = Pattern.compile("^/api/instances/(\\d+)/vnc$");
+    private static final Pattern ENDPOINT_PATH = Pattern.compile("^/api/instances/([^/]+)/vnc$");
     private static final String LOOPBACK_HOST = "127.0.0.1";
     private static final int MAX_SESSIONS = 32;
     private static final int MAX_BINARY_FRAME_BYTES = 1024 * 1024;
@@ -197,7 +197,7 @@ public class HubVncWebSocketHandler extends BinaryWebSocketHandler {
             throw HubErrorCodes.INSTANCE_VNC_UNAVAILABLE.asThrowable("Invalid VNC endpoint path");
         }
 
-        long instanceId = Long.parseLong(matcher.group(1));
+        String instanceId = matcher.group(1);
         HubInstance instance = instanceService.get(instanceId);
         if (!instance.isRunning()) {
             throw HubErrorCodes.INSTANCE_NOT_RUNNING.asThrowable("Instance is not running");

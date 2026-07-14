@@ -6,7 +6,8 @@ import { getLogDownloadUrl, getLogs, maximumLogLines } from '@/features/logs/log
 import { instanceLogSources } from '@/features/logs/types'
 import type { HubLogContent, InstanceLogSource, LogLevel, LogRequest } from '@/features/logs/types'
 import { Empty, ErrorState, Loading, StatusBadge } from '@/shared/components'
-import type { BackendDateTime } from '@/shared/api/contracts'
+import { parseBackendId } from '@/shared/api/backend-id'
+import type { BackendDateTime, BackendId } from '@/shared/api/contracts'
 
 const defaultLineCount = 500
 const logLevels: LogLevel[] = ['ALL', 'TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR']
@@ -17,10 +18,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '请求失败，请稍后重试。'
 }
 
-function parsePositiveInstanceId(value: string): number | undefined {
-  if (!/^[1-9]\d*$/.test(value.trim())) return undefined
-  const instanceId = Number(value)
-  return Number.isSafeInteger(instanceId) ? instanceId : undefined
+function parseInstanceId(value: string): BackendId | undefined {
+  return parseBackendId(value)
 }
 
 function parseLineCount(value: string): number | undefined {
@@ -62,7 +61,7 @@ function requestFor(mode: LogMode, instanceInput: string, source: InstanceLogSou
   if (lines === undefined) return undefined
   if (mode === 'SYSTEM') return { mode, lines }
 
-  const instanceId = parsePositiveInstanceId(instanceInput)
+  const instanceId = parseInstanceId(instanceInput)
   return instanceId === undefined ? undefined : { mode, instanceId, source, lines }
 }
 
@@ -80,9 +79,9 @@ function LogMetadata({ log }: { log: HubLogContent }) {
 
 export function LogsPage() {
   const [searchParams] = useSearchParams()
-  const initialInstanceId = parsePositiveInstanceId(searchParams.get('instanceId') ?? '')
+  const initialInstanceId = parseInstanceId(searchParams.get('instanceId') ?? '')
   const initialMode: LogMode = initialInstanceId === undefined ? 'SYSTEM' : 'INSTANCE'
-  const initialInstanceInput = initialInstanceId === undefined ? '' : String(initialInstanceId)
+  const initialInstanceInput = initialInstanceId ?? ''
   const initialSource: InstanceLogSource = 'CHROME'
   const initialRequest = requestFor(initialMode, initialInstanceInput, initialSource, String(defaultLineCount))
 
@@ -116,7 +115,7 @@ export function LogsPage() {
       setConfigurationError(
         parseLineCount(linesInput) === undefined
           ? `行数必须是 ${1} 到 ${maximumLogLines} 之间的整数。`
-          : 'Instance ID 必须是正整数。',
+          : 'Instance ID 不能为空。',
       )
       return
     }
@@ -161,9 +160,9 @@ export function LogsPage() {
               Instance ID
               <input
                 aria-describedby={configurationError ? 'logs-configuration-error' : undefined}
-                inputMode="numeric"
-                min={1}
                 value={instanceInput}
+                autoComplete="off"
+                spellCheck={false}
                 onChange={(event) => {
                   setInstanceInput(event.target.value)
                   setConfigurationError(null)

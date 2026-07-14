@@ -14,6 +14,6 @@ public interface HubInstanceLifecycleServiceConsumer {
      * Marks the instance as ERROR and removes its runtime + dispatcher bindings. Called by
      * the {@link UnexpectedExitListener} chain.
      */
-    void markUnexpectedExit(long instanceId, String reason);
+    void markUnexpectedExit(String instanceId, String reason);
 
 }

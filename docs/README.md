@@ -12,6 +12,13 @@
   - 每日资源中心、VNC、日志和前端
   - MySQL/H2、MyBatis Auto Mapper、API、错误码和测试
 
+## 运维迁移
+
+- [UUID ID 迁移](uuid-id-migration.md)
+  - JDK UUID 与旧 BIGINT ID 兼容规则
+  - H2 自动迁移和 MySQL 停机手工迁移
+  - Profile、Execution 与资源保留边界
+
 ## 实施计划
 
 - [实施任务拆分](implementation-plan.md)

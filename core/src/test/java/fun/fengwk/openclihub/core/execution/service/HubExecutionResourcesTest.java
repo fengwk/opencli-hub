@@ -66,7 +66,7 @@ class HubExecutionResourcesTest {
         String virtual = upload.toString();
         NormalizedOpenCliArgv normalized = argv(List.of("bilibili", "submit", virtual));
 
-        try (HubExecutionResources.ResourceContext c = resources.prepare(7001L, normalized, null)) {
+        try (HubExecutionResources.ResourceContext c = resources.prepare("7001", normalized, null)) {
             assertThat(c.getSubstitutedArgv()).hasSize(3);
             // argv token[2] (formerly the virtual path) was resolved to its real path
             // under resourceRoot.
@@ -94,7 +94,7 @@ class HubExecutionResourcesTest {
             upload.toString(),
             "/resources/2099-01-01/upload-x/missing.pdf"));
 
-        assertThatThrownBy(() -> resources.prepare(7002L, broken, null))
+        assertThatThrownBy(() -> resources.prepare("7002", broken, null))
             .isInstanceOf(ThrowableConventionErrorCode.class);
         assertThat(leaseManager.heldPathCount())
             .as("a later preparation failure must release earlier input leases")
@@ -110,7 +110,7 @@ class HubExecutionResourcesTest {
         HubCommandOutputRule rule = rule("bilibili/hot", "output",
             HubCommandOutputTargetType.FILE, "report.json");
         NormalizedOpenCliArgv normalized = argv(List.of("bilibili", "hot"));
-        try (HubExecutionResources.ResourceContext c = resources.prepare(8001L, normalized, rule)) {
+        try (HubExecutionResources.ResourceContext c = resources.prepare("8001", normalized, rule)) {
             assertThat(c.getGroup()).isNotNull();
             Path expected = c.getGroup().getRealPath().resolve("report.json");
             // Simulate OpenCLI dropping an output file.
@@ -130,14 +130,14 @@ class HubExecutionResourcesTest {
             HubCommandOutputTargetType.FILE, "history.json");
         NormalizedOpenCliArgv normalized = argv(List.of("bilibili", "hot"));
         try (HubExecutionResources.ResourceContext context =
-                 resources.prepare(8006L, normalized, rule)) {
+                 resources.prepare("8006", normalized, rule)) {
             Files.writeString(context.getGroup().getRealPath().resolve("history.json"), "{}");
         }
 
-        assertThat(resources.scanExisting(8006L))
+        assertThat(resources.scanExisting("8006"))
             .extracting(HubResourceItemDTO::getFileName)
             .containsExactly("history.json");
-        assertThat(resources.scanExisting(8999L)).isEmpty();
+        assertThat(resources.scanExisting("8999")).isEmpty();
     }
 
     /**
@@ -147,7 +147,7 @@ class HubExecutionResourcesTest {
     @Test
     void shouldNotCreateGroupWhenNoOutputRule() {
         NormalizedOpenCliArgv normalized = argv(List.of("chatgpt", "ask"));
-        try (HubExecutionResources.ResourceContext c = resources.prepare(8002L, normalized, null)) {
+        try (HubExecutionResources.ResourceContext c = resources.prepare("8002", normalized, null)) {
             assertThat(c.getGroup()).isNull();
             assertThat(resources.scan(c.getGroup())).isEmpty();
         }
@@ -164,7 +164,7 @@ class HubExecutionResourcesTest {
         NormalizedOpenCliArgv normalized = argv(List.of("bilibili", "hot"));
         Path realGroupPath;
         java.time.LocalDate groupDate;
-        try (HubExecutionResources.ResourceContext c = resources.prepare(8003L, normalized, rule)) {
+        try (HubExecutionResources.ResourceContext c = resources.prepare("8003", normalized, rule)) {
             assertThat(c.getGroup()).isNotNull();
             realGroupPath = c.getGroup().getRealPath();
             groupDate = c.getGroup().getDate();
@@ -173,7 +173,7 @@ class HubExecutionResourcesTest {
         // After close, ask the service to remove the group using the same path.
         fun.fengwk.openclihub.core.resource.model.HubExecutionResourceGroup ref =
             fun.fengwk.openclihub.core.resource.model.HubExecutionResourceGroup.builder()
-                .executionId(8003L).date(groupDate).group("execution-8003")
+                .executionId("8003").date(groupDate).group("execution-8003")
                 .realPath(realGroupPath).build();
         resources.removeGroupIfEmpty(ref);
         assertThat(Files.exists(realGroupPath))
@@ -190,7 +190,7 @@ class HubExecutionResourcesTest {
         HubCommandOutputRule rule = rule("bilibili/hot", "output",
             HubCommandOutputTargetType.FILE, "real.txt");
         NormalizedOpenCliArgv normalized = argv(List.of("bilibili", "hot"));
-        try (HubExecutionResources.ResourceContext c = resources.prepare(8004L, normalized, rule)) {
+        try (HubExecutionResources.ResourceContext c = resources.prepare("8004", normalized, rule)) {
             Path realFile = c.getGroup().getRealPath().resolve("real.txt");
             Files.writeString(realFile, "I am real");
             // Create a sibling file + a symlink inside the group pointing at it.
@@ -213,7 +213,7 @@ class HubExecutionResourcesTest {
         NormalizedOpenCliArgv normalized = argv(
             List.of("bilibili", "submit",
                 "/resources/2099-01-01/upload-missing/missing.pdf"));
-        assertThatThrownBy(() -> resources.prepare(8005L, normalized, null))
+        assertThatThrownBy(() -> resources.prepare("8005", normalized, null))
             .isInstanceOf(ThrowableConventionErrorCode.class);
     }
 

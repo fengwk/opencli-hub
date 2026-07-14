@@ -48,7 +48,7 @@ class HubLogControllerTest {
     @Test
     void shouldTailSystemAndInstanceLogs() throws Exception {
         when(logService.tailSystem(HubLogService.DEFAULT_TAIL_LINES)).thenReturn(logContent(HubLogSource.SYSTEM));
-        when(logService.tailInstance(19L, HubLogSource.CHROME, 2)).thenReturn(logContent(HubLogSource.CHROME));
+        when(logService.tailInstance("19", HubLogSource.CHROME, 2)).thenReturn(logContent(HubLogSource.CHROME));
 
         mockMvc.perform(get("/api/logs/system"))
             .andExpect(status().isOk())
@@ -58,7 +58,7 @@ class HubLogControllerTest {
             .andExpect(jsonPath("$.data.source").value("CHROME"));
 
         verify(logService).tailSystem(HubLogService.DEFAULT_TAIL_LINES);
-        verify(logService).tailInstance(19L, HubLogSource.CHROME, 2);
+        verify(logService).tailInstance("19", HubLogSource.CHROME, 2);
     }
 
     /** Invalid paths-as-sources and invalid line bounds fail before a core file operation. */
@@ -80,7 +80,7 @@ class HubLogControllerTest {
         AtomicBoolean systemClosed = new AtomicBoolean();
         AtomicBoolean instanceClosed = new AtomicBoolean();
         when(logService.openSystemDownload()).thenReturn(stream("opencli-hub-all.log", "system\n", systemClosed));
-        when(logService.openInstanceDownload(19L, HubLogSource.X11VNC))
+        when(logService.openInstanceDownload("19", HubLogSource.X11VNC))
             .thenReturn(stream("x11vnc.log", "vnc\n", instanceClosed));
 
         MvcResult system = mockMvc.perform(get("/api/logs/system/download"))
@@ -108,7 +108,7 @@ class HubLogControllerTest {
     @Test
     void shouldMapMissingLogFiles() throws Exception {
         when(logService.tailSystem(1)).thenThrow(HubErrorCodes.LOG_FILE_NOT_FOUND.asThrowable("missing"));
-        when(logService.openInstanceDownload(19L, HubLogSource.OPENBOX))
+        when(logService.openInstanceDownload("19", HubLogSource.OPENBOX))
             .thenThrow(HubErrorCodes.LOG_FILE_NOT_FOUND.asThrowable("missing"));
 
         mockMvc.perform(get("/api/logs/system").param("lines", "1"))

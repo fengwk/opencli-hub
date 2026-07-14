@@ -2,6 +2,7 @@ package fun.fengwk.openclihub.share.model.execution;
 
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import java.util.List;
 import lombok.Data;
 
@@ -13,8 +14,8 @@ import lombok.Data;
 @Data
 public class HubExecutionRequestDTO {
 
-    @Positive
-    private Long instanceId;
+    @Size(min = 1, max = 36)
+    private String instanceId;
 
     @NotEmpty
     private List<String> argv;

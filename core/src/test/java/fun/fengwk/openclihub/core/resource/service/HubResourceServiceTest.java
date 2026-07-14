@@ -279,7 +279,10 @@ class HubResourceServiceTest {
             .isInstanceOf(ThrowableConventionErrorCode.class);
         assertThatThrownBy(() -> resourceService.deleteGroup("2026-07-12", "not-a-group"))
             .isInstanceOf(ThrowableConventionErrorCode.class);
-        assertThatThrownBy(() -> resourceService.createExecutionGroup(-1L, LocalDate.now()))
+        assertThatThrownBy(() -> resourceService.createExecutionGroup("../escape", LocalDate.now()))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        assertThatThrownBy(() -> resourceService.createExecutionGroup(
+            "999999999999999999999999999999", LocalDate.now()))
             .isInstanceOf(ThrowableConventionErrorCode.class);
     }
 
@@ -344,7 +347,7 @@ class HubResourceServiceTest {
      */
     @Test
     void shouldScanExecutionTreeIgnoringSymlinks() throws IOException {
-        long executionId = Math.abs(UUID.randomUUID().getLeastSignificantBits() % 1_000_000L) + 1L;
+        String executionId = UUID.randomUUID().toString();
         LocalDate date = LocalDate.now(ZoneOffset.UTC);
         ExecutionGroupHolder group = ExecutionGroupHolder.create(resourceService, executionId, date);
         Path execDir = group.realPath;
@@ -421,7 +424,7 @@ class HubResourceServiceTest {
             .date(date.toString())
             .items(List.of(uploadItem("u1.txt", "abc"), uploadItem("u2.txt", "abcd")))
             .build());
-        long execId = 42L;
+        String execId = "42";
         ExecutionGroupHolder execGroup = ExecutionGroupHolder.create(resourceService, execId, date);
         Files.writeString(execGroup.realPath.resolve("output.json"), "[]");
         HubResourceDateSummaryDTO summary = resourceService.summarizeDate(date.toString());
@@ -438,7 +441,7 @@ class HubResourceServiceTest {
      */
     @Test
     void shouldRemoveExecutionGroupOnlyIfEmpty() {
-        long execId = 99L;
+        String execId = "99";
         LocalDate date = LocalDate.now(ZoneOffset.UTC);
         ExecutionGroupHolder group = ExecutionGroupHolder.create(resourceService, execId, date);
         assertThat(resourceService.removeExecutionGroupIfEmpty(group.model)).isTrue();
@@ -548,7 +551,7 @@ class HubResourceServiceTest {
             this.model = model;
         }
 
-        static ExecutionGroupHolder create(HubResourceService service, long execId, LocalDate date) {
+        static ExecutionGroupHolder create(HubResourceService service, String execId, LocalDate date) {
             fun.fengwk.openclihub.core.resource.model.HubExecutionResourceGroup model =
                 service.createExecutionGroup(execId, date);
             return new ExecutionGroupHolder(model.getRealPath(), model);
