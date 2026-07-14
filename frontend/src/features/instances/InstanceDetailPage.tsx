@@ -13,6 +13,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '请求失败，请稍后重试。'
 }
 
+function proxySummary(proxyMode: 'INHERIT' | 'DIRECT' | 'CUSTOM', proxyServer: string | null): string {
+  if (proxyMode === 'INHERIT') return '继承全局'
+  if (proxyMode === 'DIRECT') return '直连'
+  return proxyServer ? `自定义 · ${proxyServer}` : '自定义'
+}
+
 export function InstanceDetailPage() {
   const { id } = useParams<{ id: string }>()
   const instanceId = parseBackendId(id ?? '')
@@ -104,6 +110,8 @@ export function InstanceDetailPage() {
     displayName: instance.displayName,
     websites: instance.websites ?? [],
     maxPending: instance.maxPending,
+    proxyMode: instance.proxyMode,
+    proxyServer: instance.proxyServer,
   }
 
   return (
@@ -157,6 +165,7 @@ export function InstanceDetailPage() {
               <div><dt>Context ID</dt><dd className="mono-value" title={instance.contextId ?? undefined}>{instance.contextId || '未分配'}</dd></div>
               <div><dt>显示器</dt><dd>{runtime?.registered ? `:${runtime.displayNumber ?? '—'}` : '运行时未注册'}</dd></div>
               <div><dt>执行队列</dt><dd>活跃 {runtime?.activeCount ?? 0} / 待处理 {runtime?.pendingCount ?? 0}（上限 {instance.maxPending}）</dd></div>
+              <div><dt>代理</dt><dd title={instance.proxyServer ?? undefined}>{proxySummary(instance.proxyMode, instance.proxyServer)}</dd></div>
             </dl>
             {instance.lastErrorMessage ? <p className="inline-error instance-error" role="alert">最近错误：{instance.lastErrorMessage}</p> : null}
             <div className="instance-sidebar-actions">

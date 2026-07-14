@@ -22,7 +22,7 @@ const instanceId = '2c6eefbd-a8cf-44fb-8016-14d6886c2557'
 
 const stoppedInstance: HubInstance = {
   id: instanceId, code: 'alpha', displayName: 'Alpha browser', contextId: null, state: 'STOPPED',
-  websites: ['demo'], maxPending: 3, lastErrorMessage: 'last launch failed', stateChangedAt: null,
+  websites: ['demo'], maxPending: 3, proxyMode: 'INHERIT', proxyServer: null, lastErrorMessage: 'last launch failed', stateChangedAt: null,
   runtime: { registered: false, displayNumber: null, vncPort: null, activeCount: 0, pendingCount: 0 },
   createTime: null, updateTime: null,
 }
@@ -99,6 +99,7 @@ describe('InstancesPage', () => {
 
     expect(apiClient.post).toHaveBeenCalledWith('/instances', {
       code: 'new-browser', displayName: 'New browser', websites: ['demo'], maxPending: 4,
+      proxyMode: 'INHERIT', proxyServer: null,
     })
     expect(screen.getByRole('button', { name: '正在保存…' })).toBeDisabled()
 
@@ -137,6 +138,13 @@ describe('InstancesPage', () => {
     await user.type(pendingInput, '51')
     await user.click(submit)
     expect(within(dialog).getByRole('alert')).toHaveTextContent('1 到 50')
+
+    await user.clear(pendingInput)
+    await user.type(pendingInput, '4')
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: '代理模式' }), 'CUSTOM')
+    await user.type(within(dialog).getByRole('textbox', { name: '代理服务器' }), 'http://proxy.example.com')
+    await user.click(submit)
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('host:port')
     expect(apiClient.post).not.toHaveBeenCalled()
   })
 

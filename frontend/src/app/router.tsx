@@ -7,6 +7,7 @@ import { InstancesPage } from '@/features/instances/InstancesPage'
 import { LogsPage } from '@/features/logs/LogsPage'
 import { NotFoundPage } from '@/features/not-found/NotFoundPage'
 import { ResourcesPage } from '@/features/resources/ResourcesPage'
+import { SettingsPage } from '@/features/settings/SettingsPage'
 
 export function AppRouter() {
   return (
@@ -18,6 +19,7 @@ export function AppRouter() {
       <Route path="/executions/:id" element={<ExecutionDetailPage />} />
       <Route path="/commands" element={<CommandsPage />} />
       <Route path="/resources" element={<ResourcesPage />} />
+      <Route path="/settings" element={<SettingsPage />} />
       <Route path="/logs" element={<LogsPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
