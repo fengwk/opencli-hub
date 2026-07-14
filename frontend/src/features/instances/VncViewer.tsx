@@ -12,6 +12,9 @@ const connectionStateLabels: Record<VncConnectionState, string> = {
   failed: '连接失败',
 }
 
+// noVNC measures the target while constructing its internal 100%-height screen.
+const vncViewportStyle = { height: '55vh' }
+
 /** noVNC-backed viewer for the Hub's same-origin WebSocket bridge. */
 export function VncViewer({ instanceId, available }: { instanceId: BackendId; available: boolean }) {
   const targetRef = useRef<HTMLDivElement>(null)
@@ -112,7 +115,12 @@ export function VncViewer({ instanceId, available }: { instanceId: BackendId; av
         <button type="button" className="btn btn-primary" disabled={!available || connectionState === 'connecting' || connectionState === 'connected'} onClick={connect}>连接 VNC</button>
         <button type="button" className="btn" disabled={connectionState === 'disconnected'} onClick={disconnect}>断开 VNC</button>
       </div>
-      <div ref={targetRef} className="vnc-canvas" aria-label="VNC 远程桌面" />
+      <div
+        ref={targetRef}
+        className="vnc-canvas"
+        style={vncViewportStyle}
+        aria-label="VNC 远程桌面"
+      />
     </section>
   )
 }
