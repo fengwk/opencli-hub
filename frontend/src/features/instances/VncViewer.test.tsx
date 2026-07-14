@@ -43,10 +43,10 @@ describe('VncViewer', () => {
     expect(rfbMock.instances[0].url).toBe(`ws://${window.location.host}/api/instances/42/vnc`)
 
     act(() => rfbMock.instances[0].emit('connect'))
-    expect(screen.getByRole('status')).toHaveTextContent('connected')
+    expect(screen.getByRole('status')).toHaveTextContent('已连接')
     await user.click(screen.getByRole('button', { name: '断开 VNC' }))
     expect(rfbMock.instances[0].disconnect).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('status')).toHaveTextContent('disconnected')
+    expect(screen.getByRole('status')).toHaveTextContent('未连接')
   })
 
   it('cleans up the noVNC client when instance ID changes or the viewer unmounts', async () => {
@@ -69,7 +69,7 @@ describe('VncViewer', () => {
   it('cleans up and reports failed noVNC connections', async () => {
     // An unclean disconnect before connect is the server/WebSocket failure path and must not leave an RFB instance alive.
     const user = userEvent.setup()
-    render(<VncViewer instanceId={42} available />)
+    const view = render(<VncViewer instanceId={42} available />)
     await user.click(screen.getByRole('button', { name: '连接 VNC' }))
     await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
 
@@ -77,6 +77,10 @@ describe('VncViewer', () => {
 
     expect(rfbMock.instances[0].disconnect).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('alert')).toHaveTextContent('VNC 连接失败或意外断开')
-    expect(screen.getByRole('status')).toHaveTextContent('failed')
+    expect(screen.getByRole('status')).toHaveTextContent('连接失败')
+
+    view.rerender(<VncViewer instanceId={42} available={false} />)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('未连接')
   })
 })

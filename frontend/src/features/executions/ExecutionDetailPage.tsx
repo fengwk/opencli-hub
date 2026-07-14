@@ -59,13 +59,14 @@ export function ExecutionDetailPage() {
     <div className="page">
       <header className="page-header execution-detail-header">
         <div>
-          <h1 className="page-title">Execution #{execution.id}</h1>
+          <p className="eyebrow">EXECUTION DETAIL</p>
+          <h1 className="page-title">执行记录 #{execution.id}</h1>
           <p className="page-subtitle">{execution.commandKey ?? '未记录命令'}</p>
         </div>
         <StatusBadge status={execution.status} />
       </header>
 
-      <Link className="btn compact-button" to="/executions">返回 Executions</Link>
+      <Link className="btn compact-button" to="/executions">返回执行记录</Link>
 
       {execution.reuseInstance ? (
         <aside className="execution-guidance" role="note">

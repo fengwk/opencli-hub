@@ -12,7 +12,7 @@ export function NotFoundPage() {
         description="请求的页面未找到。"
         action={
           <Link className="btn btn-primary" to="/instances">
-            返回 Instances
+            返回实例管理
           </Link>
         }
       />

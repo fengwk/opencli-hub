@@ -96,6 +96,37 @@ describe('ConfirmDialog', () => {
     expect(onCancel).toHaveBeenCalledOnce()
   })
 
+  it('contains focus and restores it to the trigger after closing', async () => {
+    // Focus containment prevents keyboard interaction with content hidden by the modal backdrop.
+    const user = userEvent.setup()
+
+    function Harness() {
+      const [open, setOpen] = useState(false)
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>打开确认框</button>
+          <ConfirmDialog open={open} title="确认" onConfirm={() => setOpen(false)} onCancel={() => setOpen(false)} />
+        </>
+      )
+    }
+
+    render(<Harness />)
+    const trigger = screen.getByRole('button', { name: '打开确认框' })
+    await user.click(trigger)
+    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus()
+    expect(document.body.style.overflow).toBe('hidden')
+
+    await user.tab()
+    expect(screen.getByRole('button', { name: '确认' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: '取消' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.body.style.overflow).toBe('')
+    expect(trigger).toHaveFocus()
+  })
+
   it('cancels when Escape is pressed and disables actions while busy', async () => {
     const user = userEvent.setup()
 

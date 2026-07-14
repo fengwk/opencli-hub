@@ -142,11 +142,12 @@ export function LogsPage() {
   return (
     <div className="page">
       <header className="page-header">
-        <h1 className="page-title">Logs</h1>
+        <p className="eyebrow">OBSERVABILITY</p>
+        <h1 className="page-title">日志中心</h1>
         <p className="page-subtitle">查看系统和 Instance 进程日志；过滤只在浏览器中执行，不会改变服务端读取范围。</p>
       </header>
 
-      <form className="filter-bar logs-controls" aria-label="日志读取设置" noValidate onSubmit={submitConfiguration}>
+      <form className="filter-bar" aria-label="日志读取设置" noValidate onSubmit={submitConfiguration}>
         <label>
           日志模式
           <select value={mode} onChange={(event) => changeMode(event.target.value === 'INSTANCE' ? 'INSTANCE' : 'SYSTEM')}>

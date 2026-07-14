@@ -4,6 +4,13 @@ import { buildVncWebSocketUrl } from '@/features/instances/vnc-url'
 
 type VncConnectionState = 'disconnected' | 'connecting' | 'connected' | 'failed'
 
+const connectionStateLabels: Record<VncConnectionState, string> = {
+  disconnected: '未连接',
+  connecting: '连接中',
+  connected: '已连接',
+  failed: '连接失败',
+}
+
 /** noVNC-backed viewer for the Hub's same-origin WebSocket bridge. */
 export function VncViewer({ instanceId, available }: { instanceId: number; available: boolean }) {
   const targetRef = useRef<HTMLDivElement>(null)
@@ -28,6 +35,7 @@ export function VncViewer({ instanceId, available }: { instanceId: number; avail
   useEffect(() => {
     if (!available) {
       dispose()
+      setConnectionError(null)
       setConnectionState('disconnected')
     }
   }, [available, dispose])
@@ -89,13 +97,13 @@ export function VncViewer({ instanceId, available }: { instanceId: number; avail
   }
 
   return (
-    <section className="vnc-viewer" aria-labelledby="vnc-viewer-title">
-      <div className="section-heading-row">
+    <section className="vnc-viewer" aria-label="VNC 控制台">
+      <div className="section-heading-row vnc-toolbar">
         <div>
-          <h2 id="vnc-viewer-title">VNC 控制台</h2>
-          <p className="muted">通过当前 Hub 地址建立浏览器 VNC 连接。</p>
+          <p className="eyebrow">LIVE SESSION</p>
+          <p className="muted">通过当前 Hub 地址安全建立浏览器 VNC 连接。</p>
         </div>
-        <p className="vnc-status" role="status">连接状态：{connectionState}</p>
+        <p className="vnc-status" role="status">连接状态：{connectionStateLabels[connectionState]}</p>
       </div>
       {connectionError ? <p className="inline-error" role="alert">{connectionError}</p> : null}
       {!available ? <p className="muted">VNC 当前不可用。请先启动实例并等待运行时注册。</p> : null}

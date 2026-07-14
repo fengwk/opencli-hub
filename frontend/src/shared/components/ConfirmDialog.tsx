@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import type { StatusTone } from '@/shared/components/status-tone'
 
@@ -14,12 +14,7 @@ export interface ConfirmDialogProps {
   onCancel: () => void
 }
 
-/**
- * Lightweight confirmation dialog built on the native `<dialog>` element used
- * in its non-modal (`open` attribute) form, which keeps it renderable and
- * assertable under jsdom while still exposing dialog semantics to assistive
- * technology. Escape cancels; the backdrop click cancels.
- */
+/** Accessible confirmation surface with contained focus and explicit cancellation. */
 export function ConfirmDialog({
   open,
   title,
@@ -31,13 +26,52 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  useEffect(() => {
-    if (!open) {
-      return
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  const titleId = useId()
+  const descriptionId = useId()
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    cancelRef.current?.focus()
+    return () => {
+      document.body.style.overflow = previousOverflow
+      if (returnFocus?.isConnected) returnFocus.focus()
     }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !busy) {
         onCancel()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const dialog = dialogRef.current
+      if (!dialog) return
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'))
+      if (focusable.length === 0) {
+        event.preventDefault()
+        dialog.focus()
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (!dialog.contains(document.activeElement)) {
+        event.preventDefault()
+        const target = event.shiftKey ? last : first
+        target.focus()
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
       }
     }
     document.addEventListener('keydown', handleKeyDown)
@@ -50,11 +84,20 @@ export function ConfirmDialog({
 
   return (
     <div className="dialog-backdrop" onClick={busy ? undefined : onCancel}>
-      <dialog open className="dialog" onClick={(event) => event.stopPropagation()}>
-        <h2 className="dialog-title">{title}</h2>
-        {description ? <div className="dialog-body">{description}</div> : null}
+      <dialog
+        ref={dialogRef}
+        open
+        className="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={description ? descriptionId : undefined}
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 id={titleId} className="dialog-title">{title}</h2>
+        {description ? <div id={descriptionId} className="dialog-body">{description}</div> : null}
         <div className="dialog-actions">
-          <button type="button" className="btn" disabled={busy} onClick={onCancel}>
+          <button ref={cancelRef} type="button" className="btn" disabled={busy} onClick={onCancel}>
             {cancelLabel}
           </button>
           <button

@@ -40,6 +40,16 @@ const command: HubCommand = {
   outputRule: null,
 }
 
+const secondCommand: HubCommand = {
+  ...command,
+  commandKey: 'github/issues',
+  site: 'github',
+  name: 'issues',
+  aliases: null,
+  description: 'Browse repository issues',
+  siteSession: 'PERSISTENT',
+}
+
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -52,8 +62,9 @@ function renderPage() {
 afterEach(() => vi.clearAllMocks())
 
 describe('CommandsPage', () => {
-  it('shows loading then command metadata and argument details from the catalog', async () => {
-    // A delayed catalog response proves both the loading state and rendered command contract.
+  it('keeps command policy details unmounted until the compact card is expanded', async () => {
+    // A delayed catalog response proves the default card remains compact before explicitly mounting details and policy controls.
+    const user = userEvent.setup()
     let resolveCatalog: ((value: HubCommand[]) => void) | undefined
     vi.mocked(apiClient.get).mockImplementationOnce(() => new Promise((resolve) => {
       resolveCatalog = resolve
@@ -64,8 +75,31 @@ describe('CommandsPage', () => {
 
     resolveCatalog?.([command])
     expect(await screen.findByRole('heading', { name: 'demo/search' })).toBeInTheDocument()
-    expect(screen.getByText('--output')).toBeInTheDocument()
     expect(screen.getByText('Search the demo site')).toBeInTheDocument()
+    const expand = screen.getByRole('button', { name: '查看详情与策略' })
+    expect(expand).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('--output')).not.toBeInTheDocument()
+
+    await user.click(expand)
+    expect(screen.getByRole('button', { name: '收起详情与策略' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('--output')).toBeInTheDocument()
+  })
+
+  it('keeps the full website catalogue while filtering commands locally', async () => {
+    // Loading once preserves every website option and avoids a second request when operators switch filters.
+    const user = userEvent.setup()
+    vi.mocked(apiClient.get).mockResolvedValue([command, secondCommand])
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'demo/search' })
+    expect(screen.getByRole('heading', { name: 'github/issues' })).toBeInTheDocument()
+
+    await user.selectOptions(screen.getByRole('combobox', { name: '网站' }), 'demo')
+
+    expect(screen.getByRole('heading', { name: 'demo/search' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'github/issues' })).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'github' })).toBeInTheDocument()
+    expect(apiClient.get).toHaveBeenCalledTimes(1)
   })
 
   it('surfaces catalog load errors with a retry action', async () => {
@@ -85,6 +119,7 @@ describe('CommandsPage', () => {
 
     renderPage()
     await screen.findByRole('heading', { name: 'demo/search' })
+    await user.click(screen.getByRole('button', { name: '查看详情与策略' }))
     await user.click(screen.getByRole('button', { name: '编辑输出规则' }))
     await user.selectOptions(screen.getByRole('combobox', { name: '输出目标' }), 'FILE')
     await user.type(screen.getByRole('textbox', { name: /文件名/ }), 'nested/result.json')
@@ -92,6 +127,22 @@ describe('CommandsPage', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent('文件名只能包含')
     expect(apiClient.put).not.toHaveBeenCalled()
+  })
+
+  it('keeps the output-rule editor open when the policy request fails', async () => {
+    // Preserving the editor prevents an API failure from discarding the operator's pending configuration.
+    const user = userEvent.setup()
+    vi.mocked(apiClient.get).mockResolvedValue([command])
+    vi.mocked(apiClient.put).mockRejectedValue(new Error('policy unavailable'))
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'demo/search' })
+    await user.click(screen.getByRole('button', { name: '查看详情与策略' }))
+    await user.click(screen.getByRole('button', { name: '编辑输出规则' }))
+    await user.click(screen.getByRole('button', { name: '保存输出规则' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('policy unavailable')
+    expect(screen.getByRole('button', { name: '保存输出规则' })).toBeInTheDocument()
   })
 
   it('sends the optional blacklist reason and saves a validated FILE output rule', async () => {
@@ -102,6 +153,7 @@ describe('CommandsPage', () => {
 
     renderPage()
     await screen.findByRole('heading', { name: 'demo/search' })
+    await user.click(screen.getByRole('button', { name: '查看详情与策略' }))
 
     await user.type(screen.getByRole('textbox', { name: /黑名单原因/ }), 'maintenance')
     await user.click(screen.getByRole('button', { name: '加入黑名单' }))

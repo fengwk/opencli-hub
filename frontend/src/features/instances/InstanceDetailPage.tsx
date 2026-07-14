@@ -106,59 +106,72 @@ export function InstanceDetailPage() {
 
   return (
     <div className="page">
-      <header className="page-header instance-detail-header">
+      <header className="page-header instance-detail-header detail-hero">
         <div>
-          <p className="page-subtitle"><Link to="/instances">Instances</Link> / {instance.code}</p>
+          <p className="eyebrow"><Link to="/instances">实例管理</Link> <span aria-hidden="true">/</span> INSTANCE · {instance.code}</p>
           <h1 className="page-title">{instance.displayName}</h1>
+          <p className="page-subtitle">浏览器运行状态、认证上下文与远程控制台。</p>
         </div>
         <StatusBadge status={instance.state} />
       </header>
       {actionError ? <p className="page-error" role="alert">{actionError}</p> : null}
 
-      <section className="instance-section" aria-labelledby="instance-summary-title">
-        <div className="section-heading-row">
-          <h2 id="instance-summary-title">实例状态</h2>
-          <div className="instance-actions">
-            <InstanceLifecycleActions instance={instance} busy={actionPending} onAction={(action) => void runAction(action)} />
-            <button type="button" className="btn" disabled={actionPending} onClick={() => setEditing((value) => !value)}>{editing ? '取消编辑' : '编辑'}</button>
-            <button type="button" className="btn btn-danger" disabled={actionPending || !canDelete} onClick={() => setConfirmDelete(true)}>删除</button>
-          </div>
+      <div className="instance-detail-layout">
+        <div className="instance-detail-main">
+          <section className="instance-section instance-console-section" aria-labelledby="vnc-status-title">
+            <div className="section-heading-row">
+              <div>
+                <p className="eyebrow">REMOTE DESKTOP</p>
+                <h2 id="vnc-status-title">浏览器控制台</h2>
+              </div>
+              <button type="button" className="btn" disabled={vncStatusQuery.isFetching} onClick={() => void vncStatusQuery.refetch()}>刷新 VNC 状态</button>
+            </div>
+            {vncStatusQuery.isPending ? <p className="muted" role="status">正在加载 VNC 状态…</p> : null}
+            {vncStatusQuery.isError ? <p className="inline-error" role="alert">{errorMessage(vncStatusQuery.error)}</p> : null}
+            {vncStatusQuery.isSuccess ? (
+              <dl className="metadata-grid vnc-health-grid">
+                <div><dt>实例存在</dt><dd>{vncStatusQuery.data.instanceAvailable ? '是' : '否'}</dd></div>
+                <div><dt>正在运行</dt><dd>{vncStatusQuery.data.running ? '是' : '否'}</dd></div>
+                <div><dt>运行时可用</dt><dd>{vncStatusQuery.data.runtimeAvailable ? '是' : '否'}</dd></div>
+                <div><dt>VNC 可用</dt><dd>{vncStatusQuery.data.vncAvailable ? '是' : '否'}</dd></div>
+              </dl>
+            ) : null}
+            <VncViewer key={instanceId} instanceId={instanceId} available={vncStatusQuery.data?.vncAvailable === true} />
+          </section>
         </div>
-        <dl className="metadata-grid">
-          <div><dt>实例代码</dt><dd>{instance.code}</dd></div>
-          <div><dt>网站</dt><dd>{instance.websites?.join(', ') || '未配置'}</dd></div>
-          <div><dt>Context ID</dt><dd>{instance.contextId || '未分配'}</dd></div>
-          <div><dt>显示器</dt><dd>{runtime?.registered ? `:${runtime.displayNumber ?? '—'}` : '运行时未注册'}</dd></div>
-          <div><dt>执行队列</dt><dd>活跃 {runtime?.activeCount ?? 0} / 待处理 {runtime?.pendingCount ?? 0}（上限 {instance.maxPending}）</dd></div>
-        </dl>
-        {instance.lastErrorMessage ? <p className="inline-error" role="alert">最近错误：{instance.lastErrorMessage}</p> : null}
-        <Link className="btn" to={`/logs?instanceId=${encodeURIComponent(String(instance.id))}`}>查看日志</Link>
-      </section>
 
-      {editing ? (
-        <section className="instance-section" aria-labelledby="edit-instance-title">
-          <h2 id="edit-instance-title">编辑实例</h2>
-          <InstanceForm initialValues={initialValues} submitLabel="保存更改" busy={actionPending} onSubmit={save} onCancel={() => setEditing(false)} />
-        </section>
-      ) : null}
+        <aside className="instance-detail-sidebar">
+          <section className="instance-section" aria-labelledby="instance-summary-title">
+            <div className="section-heading-row">
+              <div>
+                <p className="eyebrow">RUNTIME</p>
+                <h2 id="instance-summary-title">实例状态</h2>
+              </div>
+              <button type="button" className="btn" disabled={actionPending} onClick={() => setEditing((value) => !value)}>{editing ? '取消编辑' : '编辑'}</button>
+            </div>
+            <dl className="metadata-grid instance-summary-grid">
+              <div><dt>实例代码</dt><dd>{instance.code}</dd></div>
+              <div><dt>网站</dt><dd>{instance.websites?.join(', ') || '未配置'}</dd></div>
+              <div><dt>Context ID</dt><dd className="mono-value" title={instance.contextId ?? undefined}>{instance.contextId || '未分配'}</dd></div>
+              <div><dt>显示器</dt><dd>{runtime?.registered ? `:${runtime.displayNumber ?? '—'}` : '运行时未注册'}</dd></div>
+              <div><dt>执行队列</dt><dd>活跃 {runtime?.activeCount ?? 0} / 待处理 {runtime?.pendingCount ?? 0}（上限 {instance.maxPending}）</dd></div>
+            </dl>
+            {instance.lastErrorMessage ? <p className="inline-error instance-error" role="alert">最近错误：{instance.lastErrorMessage}</p> : null}
+            <div className="instance-sidebar-actions">
+              <InstanceLifecycleActions instance={instance} busy={actionPending} onAction={(action) => void runAction(action)} />
+              <Link className="btn" to={`/logs?instanceId=${encodeURIComponent(String(instance.id))}`}>查看日志</Link>
+              <button type="button" className="btn btn-danger" disabled={actionPending || !canDelete} onClick={() => setConfirmDelete(true)}>删除实例</button>
+            </div>
+          </section>
 
-      <section className="instance-section" aria-labelledby="vnc-status-title">
-        <div className="section-heading-row">
-          <h2 id="vnc-status-title">VNC 状态</h2>
-          <button type="button" className="btn" disabled={vncStatusQuery.isFetching} onClick={() => void vncStatusQuery.refetch()}>刷新 VNC 状态</button>
-        </div>
-        {vncStatusQuery.isPending ? <p className="muted" role="status">正在加载 VNC 状态…</p> : null}
-        {vncStatusQuery.isError ? <p className="inline-error" role="alert">{errorMessage(vncStatusQuery.error)}</p> : null}
-        {vncStatusQuery.isSuccess ? (
-          <dl className="metadata-grid">
-            <div><dt>实例存在</dt><dd>{vncStatusQuery.data.instanceAvailable ? '是' : '否'}</dd></div>
-            <div><dt>正在运行</dt><dd>{vncStatusQuery.data.running ? '是' : '否'}</dd></div>
-            <div><dt>运行时可用</dt><dd>{vncStatusQuery.data.runtimeAvailable ? '是' : '否'}</dd></div>
-            <div><dt>VNC 可用</dt><dd>{vncStatusQuery.data.vncAvailable ? '是' : '否'}</dd></div>
-          </dl>
-        ) : null}
-        <VncViewer key={instanceId} instanceId={instanceId} available={vncStatusQuery.data?.vncAvailable === true} />
-      </section>
+          {editing ? (
+            <section className="instance-section" aria-labelledby="edit-instance-title">
+              <h2 id="edit-instance-title">编辑实例</h2>
+              <InstanceForm initialValues={initialValues} submitLabel="保存更改" busy={actionPending} onSubmit={save} onCancel={() => setEditing(false)} />
+            </section>
+          ) : null}
+        </aside>
+      </div>
 
       <ConfirmDialog
         open={confirmDelete}

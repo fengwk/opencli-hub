@@ -83,7 +83,7 @@ describe('ResourcesPage', () => {
 
     renderPage()
 
-    expect(await screen.findByText('暂无可浏览资源')).toBeInTheDocument()
+    expect(await screen.findByText('暂无资源')).toBeInTheDocument()
     expect(screen.queryByText('正在加载当天资源…')).not.toBeInTheDocument()
     expect(apiClient.get).toHaveBeenCalledTimes(1)
   })
@@ -121,6 +121,7 @@ describe('ResourcesPage', () => {
     expect(url).toBe('/resources/uploads?date=2026-07-13')
     expect(body).toBeInstanceOf(FormData)
     expect((body as FormData).getAll('files')).toEqual([first, second])
+    await waitFor(() => expect((fileInput as HTMLInputElement).files).toHaveLength(0))
   })
 
   it('uses encoded helper URLs for image preview and download', async () => {
@@ -135,11 +136,17 @@ describe('ResourcesPage', () => {
       'href',
       '/api/resources/2026-07-13/upload-100/nested/photo%20one.png',
     )
-    await user.click(screen.getByRole('button', { name: '预览' }))
+    const previewButton = screen.getByRole('button', { name: '预览' })
+    await user.click(previewButton)
     expect(screen.getByRole('img', { name: 'photo one.png' })).toHaveAttribute(
       'src',
       '/api/resources/2026-07-13/upload-100/nested/photo%20one.png?inline=true',
     )
+    expect(screen.getByRole('button', { name: '关闭' })).toHaveFocus()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('img', { name: 'photo one.png' })).not.toBeInTheDocument()
+    expect(previewButton).toHaveFocus()
   })
 
   it('requires confirmation before deleting a file, group, or date', async () => {
