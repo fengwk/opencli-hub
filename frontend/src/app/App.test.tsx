@@ -20,13 +20,13 @@ describe('App shell and routing', () => {
 
   it('redirects the root route to /instances', () => {
     renderApp('/')
-    // The Instances placeholder page heading proves the redirect landed.
-    expect(screen.getByRole('heading', { name: 'Instances' })).toBeInTheDocument()
+    // The instances management heading proves the redirect landed.
+    expect(screen.getByRole('heading', { name: '实例管理' })).toBeInTheDocument()
   })
 
   it('renders all primary navigation entries', () => {
     renderApp('/')
-    for (const label of ['Instances', 'Executions', 'Commands', 'Resources', 'Logs']) {
+    for (const label of ['实例管理', '执行记录', '命令目录', '资源中心', '日志中心']) {
       expect(screen.getByRole('link', { name: label })).toBeInTheDocument()
     }
   })
@@ -35,21 +35,36 @@ describe('App shell and routing', () => {
     const user = userEvent.setup()
     renderApp('/')
 
-    await user.click(screen.getByRole('link', { name: 'Executions' }))
+    await user.click(screen.getByRole('link', { name: '执行记录' }))
 
-    // Heading updates to prove the Executions route mounted.
-    expect(screen.getByRole('heading', { name: 'Executions' })).toBeInTheDocument()
+    // Heading updates to prove the executions route mounted.
+    expect(screen.getByRole('heading', { name: '执行记录' })).toBeInTheDocument()
+  })
+
+  it('toggles and dismisses the mobile navigation with the keyboard', async () => {
+    // The menu remains operable when CSS exposes it at the mobile breakpoint.
+    const user = userEvent.setup()
+    renderApp('/')
+    const toggle = screen.getByRole('button', { name: '打开导航' })
+
+    await user.click(toggle)
+    expect(screen.getByRole('button', { name: '关闭导航' })).toHaveAttribute('aria-expanded', 'true')
+
+    await user.keyboard('{Escape}')
+    const closedToggle = screen.getByRole('button', { name: '打开导航' })
+    expect(closedToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(closedToggle).toHaveFocus()
   })
 
   it('renders the Commands management page route', () => {
     renderApp('/commands')
     // The page heading proves the route mounts the implemented feature page.
-    expect(screen.getByRole('heading', { name: 'Commands' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '命令目录' })).toBeInTheDocument()
   })
 
   it('renders the 404 page for unknown routes', () => {
     renderApp('/does-not-exist')
     expect(screen.getByRole('heading', { name: '404' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '返回 Instances' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '返回实例管理' })).toBeInTheDocument()
   })
 })

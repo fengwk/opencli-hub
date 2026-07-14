@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ResourcePreview } from '@/features/resources/ResourcePreview'
@@ -53,6 +53,7 @@ export function ResourcesPage() {
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionPending, setActionPending] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const datesQuery = useQuery({ queryKey: ['resource-dates'], queryFn: listResourceDates })
   const resourcesQuery = useQuery({
@@ -108,6 +109,7 @@ export function ResourcesPage() {
     try {
       const result = await uploadResources(uploadDate, files)
       setFiles([])
+      if (fileInputRef.current) fileInputRef.current.value = ''
       selectDate(result.date)
       await refreshResources()
     } catch (error) {
@@ -144,18 +146,19 @@ export function ResourcesPage() {
   return (
     <div className="page">
       <header className="page-header">
-        <h1 className="page-title">Resources</h1>
+        <p className="eyebrow">RESOURCE ARCHIVE</p>
+        <h1 className="page-title">资源中心</h1>
         <p className="page-subtitle">按 UTC 日期浏览上传和命令执行产生的资源。</p>
       </header>
 
       <form className="upload-form" onSubmit={(event) => void submitUpload(event)}>
         <label>
           上传日期（可选）
-          <input type="date" value={uploadDate} onChange={(event) => setUploadDate(event.target.value)} />
+          <input type="date" value={uploadDate} disabled={actionPending} onChange={(event) => setUploadDate(event.target.value)} />
         </label>
         <label>
           选择文件
-          <input type="file" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []))} />
+          <input ref={fileInputRef} type="file" multiple disabled={actionPending} onChange={(event) => setFiles(Array.from(event.target.files ?? []))} />
         </label>
         <button type="submit" className="btn btn-primary" disabled={actionPending}>上传文件</button>
       </form>
@@ -163,11 +166,11 @@ export function ResourcesPage() {
       {actionError ? <p className="page-error" role="alert">{actionError}</p> : null}
       {datesQuery.isPending ? <Loading label="正在加载资源日期…" /> : null}
       {datesQuery.isError ? <ErrorState title="无法加载资源日期" description={errorMessage(datesQuery.error)} onRetry={() => void datesQuery.refetch()} /> : null}
-      {datesQuery.isSuccess ? (
+      {datesQuery.isSuccess && datesQuery.data.length === 0 ? <Empty title="暂无资源" description="上传文件或执行产生资源后，会在这里按日期归档。" /> : null}
+      {datesQuery.isSuccess && datesQuery.data.length > 0 ? (
         <section className="resource-layout">
           <aside className="date-list" aria-label="资源日期">
             <h2>日期</h2>
-            {datesQuery.data.length === 0 ? <Empty title="暂无资源日期" description="上传文件后会在这里显示按日汇总。" /> : null}
             {datesQuery.data.map((summary) => (
               <div className={`date-summary ${summary.date === selectedDate ? 'selected' : ''}`} key={summary.date}>
                 <button type="button" className="date-select" aria-pressed={summary.date === selectedDate} onClick={() => selectDate(summary.date)}>

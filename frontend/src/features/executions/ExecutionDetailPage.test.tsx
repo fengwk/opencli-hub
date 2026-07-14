@@ -79,7 +79,7 @@ describe('ExecutionDetailPage', () => {
 
     renderDetail()
 
-    expect(await screen.findByRole('heading', { name: 'Execution #7' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '执行记录 #7' })).toBeInTheDocument()
     expect(outputBlocks().map((block) => block.textContent)).toContain('{\n  "answer": 42,\n  "items": [\n    "one"\n  ]\n}')
     expect(screen.getByRole('note')).toHaveTextContent('复用实例（persistent affinity）')
     expect(screen.getByRole('link', { name: '预览 result file.json' })).toHaveAttribute(
@@ -107,7 +107,7 @@ describe('ExecutionDetailPage', () => {
 
     renderDetail()
 
-    await screen.findByRole('heading', { name: 'Execution #7' })
+    await screen.findByRole('heading', { name: '执行记录 #7' })
     expect(outputBlocks().map((block) => block.textContent)).toEqual(expect.arrayContaining([
       'not json\nstill useful',
       'permission denied',

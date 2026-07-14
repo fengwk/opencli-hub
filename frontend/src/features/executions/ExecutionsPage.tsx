@@ -54,7 +54,8 @@ export function ExecutionsPage() {
   return (
     <div className="page">
       <header className="page-header">
-        <h1 className="page-title">Executions</h1>
+        <p className="eyebrow">EXECUTION HISTORY</p>
+        <h1 className="page-title">执行记录</h1>
         <p className="page-subtitle">查看 OpenCLI 命令的执行历史、状态和耗时。</p>
       </header>
 
@@ -100,12 +101,12 @@ export function ExecutionsPage() {
               <tbody>
                 {executionsQuery.data.results.map((execution) => (
                   <tr key={execution.id}>
-                    <td><StatusBadge status={execution.status} /></td>
-                    <td>{execution.instanceCode ?? '未分配'}{execution.instanceId !== null ? ` (#${execution.instanceId})` : ''}</td>
-                    <td>{execution.commandKey ?? '—'}</td>
-                    <td>{formatMillis(execution.durationMillis)}</td>
-                    <td>{formatDateTime(execution.finishedAt ?? execution.startedAt ?? execution.queuedAt)}</td>
-                    <td><Link className="btn compact-button" to={`/executions/${execution.id}`}>查看详情 {execution.id}</Link></td>
+                    <td data-label="状态"><StatusBadge status={execution.status} /></td>
+                    <td data-label="Instance">{execution.instanceCode ?? '未分配'}{execution.instanceId !== null ? ` (#${execution.instanceId})` : ''}</td>
+                    <td data-label="命令">{execution.commandKey ?? '—'}</td>
+                    <td data-label="耗时">{formatMillis(execution.durationMillis)}</td>
+                    <td data-label="时间">{formatDateTime(execution.finishedAt ?? execution.startedAt ?? execution.queuedAt)}</td>
+                    <td data-label="操作"><Link className="btn compact-button" to={`/executions/${execution.id}`}>查看详情 {execution.id}</Link></td>
                   </tr>
                 ))}
               </tbody>

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BrowserRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -58,10 +58,10 @@ describe('InstancesPage', () => {
 
     resolveInstances?.([stoppedInstance])
     expect(await screen.findByRole('heading', { name: 'Alpha browser' })).toBeInTheDocument()
-    expect(screen.getByText('未注册')).toBeInTheDocument()
-    expect(screen.getByText(/活跃 0 \/ 待处理 0/)).toBeInTheDocument()
+    expect(screen.getByText('等待注册')).toBeInTheDocument()
+    expect(screen.getByText(/活跃 0 · 待处理 0\/3/)).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('最近错误：last launch failed')
-    expect(screen.getByRole('link', { name: '查看详情' })).toHaveAttribute('href', '/instances/7')
+    expect(screen.getByRole('link', { name: '详情与控制台' })).toHaveAttribute('href', '/instances/7')
   })
 
   it('surfaces a list transport error instead of leaving the page empty', async () => {
@@ -76,21 +76,24 @@ describe('InstancesPage', () => {
     expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
   })
 
-  it('sends the create DTO and keeps the form visibly pending until synchronous creation finishes', async () => {
-    // The unresolved POST verifies the create button cannot be submitted twice while M6 creates the runtime synchronously.
+  it('opens creation on demand, sends the DTO, and closes the panel after creation completes', async () => {
+    // The closed-first panel keeps the fleet view compact; the unresolved POST proves its submit cannot be repeated.
     const user = userEvent.setup()
     let resolveCreate: ((value: HubInstance) => void) | undefined
     mockCatalogAndInstances([])
     vi.mocked(apiClient.post).mockImplementation(() => new Promise((resolve) => { resolveCreate = resolve }) as never)
 
     renderPage()
+    expect(screen.queryByRole('dialog', { name: '创建浏览器实例' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '创建实例' }))
+    expect(screen.getByRole('dialog', { name: '创建浏览器实例' })).toBeInTheDocument()
     await screen.findByRole('checkbox', { name: 'demo' })
     await user.type(screen.getByRole('textbox', { name: '实例代码' }), 'new-browser')
     await user.type(screen.getByRole('textbox', { name: '显示名称' }), 'New browser')
     await user.clear(screen.getByRole('spinbutton', { name: '最大待处理数' }))
     await user.type(screen.getByRole('spinbutton', { name: '最大待处理数' }), '4')
     await user.click(screen.getByRole('checkbox', { name: 'demo' }))
-    await user.click(screen.getByRole('button', { name: '创建实例' }))
+    await user.click(within(screen.getByRole('dialog', { name: '创建浏览器实例' })).getByRole('button', { name: '创建实例' }))
 
     expect(apiClient.post).toHaveBeenCalledWith('/instances', {
       code: 'new-browser', displayName: 'New browser', websites: ['demo'], maxPending: 4,
@@ -98,7 +101,65 @@ describe('InstancesPage', () => {
     expect(screen.getByRole('button', { name: '正在保存…' })).toBeDisabled()
 
     resolveCreate?.(stoppedInstance)
-    await waitFor(() => expect(screen.getByRole('button', { name: '创建实例' })).toBeEnabled())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '创建浏览器实例' })).not.toBeInTheDocument())
+  })
+
+  it('validates instance fields against the backend contract before creating', async () => {
+    // Client bounds mirror HubInstanceValidator so invalid codes, empty sites, and queue limits never reach the API.
+    const user = userEvent.setup()
+    mockCatalogAndInstances([])
+
+    renderPage()
+    await user.click(screen.getByRole('button', { name: '创建实例' }))
+    const dialog = screen.getByRole('dialog', { name: '创建浏览器实例' })
+    const codeInput = within(dialog).getByRole('textbox', { name: '实例代码' })
+    const displayNameInput = within(dialog).getByRole('textbox', { name: '显示名称' })
+    const pendingInput = within(dialog).getByRole('spinbutton', { name: '最大待处理数' })
+    const website = await within(dialog).findByRole('checkbox', { name: 'demo' })
+    const submit = within(dialog).getByRole('button', { name: '创建实例' })
+
+    await user.type(codeInput, 'Invalid_Code')
+    await user.type(displayNameInput, 'Browser')
+    await user.click(website)
+    await user.click(submit)
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('实例代码须为')
+
+    await user.clear(codeInput)
+    await user.type(codeInput, 'valid-code')
+    await user.click(website)
+    await user.click(submit)
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('至少选择一个')
+
+    await user.click(website)
+    await user.clear(pendingInput)
+    await user.type(pendingInput, '51')
+    await user.click(submit)
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('1 到 50')
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
+
+  it('contains keyboard focus in the creation drawer and restores it when Escape closes the drawer', async () => {
+    // Modal focus and scroll containment keep keyboard users out of the obscured fleet page.
+    const user = userEvent.setup()
+    mockCatalogAndInstances([])
+
+    renderPage()
+    const trigger = screen.getByRole('button', { name: '创建实例' })
+    await user.click(trigger)
+
+    const codeInput = await screen.findByRole('textbox', { name: '实例代码' })
+    expect(codeInput).toHaveFocus()
+    expect(document.body.style.overflow).toBe('hidden')
+
+    screen.getByRole('button', { name: '取消' }).focus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: '关闭创建实例面板' })).toHaveFocus()
+
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog', { name: '创建浏览器实例' })).not.toBeInTheDocument()
+    expect(document.body.style.overflow).toBe('')
+    expect(trigger).toHaveFocus()
   })
 
   it('calls the exact lifecycle route and requires confirmation before deleting', async () => {
