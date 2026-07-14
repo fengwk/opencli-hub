@@ -7,6 +7,7 @@ import fun.fengwk.openclihub.core.instance.runtime.HubInstanceRuntimeSnapshot;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceRuntimeDTO;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
+import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -73,6 +74,8 @@ class HubInstanceConverterTest {
         assertThat(json).contains("\"code\":\"instance-01\"");
         assertThat(json).contains("\"state\":\"RUNNING\"");
         assertThat(json).contains("\"bilibili\"");
+        assertThat(json).contains("\"proxyMode\":\"CUSTOM\"");
+        assertThat(json).contains("\"proxyServer\":\"http://proxy.example:8080\"");
     }
 
     @Test
@@ -90,6 +93,8 @@ class HubInstanceConverterTest {
         inst.setState(HubInstanceState.RUNNING);
         inst.setWebsites(List.of("bilibili"));
         inst.setMaxPending(5);
+        inst.setProxyMode(HubProxyMode.CUSTOM);
+        inst.setProxyServer("http://proxy.example:8080");
         inst.setLastErrorMessage(null);
         inst.setStateChangedAt(LocalDateTime.of(2026, 7, 12, 12, 0, 0));
         inst.setCreateTime(LocalDateTime.of(2026, 7, 12, 11, 0, 0));

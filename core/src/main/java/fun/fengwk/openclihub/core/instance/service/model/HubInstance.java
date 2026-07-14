@@ -1,6 +1,7 @@
 package fun.fengwk.openclihub.core.instance.service.model;
 
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
+import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -22,6 +23,8 @@ public class HubInstance {
     private HubInstanceState state;
     private List<String> websites = List.of();
     private int maxPending;
+    private HubProxyMode proxyMode = HubProxyMode.INHERIT;
+    private String proxyServer;
     private String lastErrorMessage;
     private LocalDateTime stateChangedAt;
     private LocalDateTime createTime;

@@ -21,6 +21,8 @@ public class HubInstanceDO {
     private String state;
     private String websitesJson;
     private Integer maxPending;
+    private String proxyMode;
+    private String proxyServer;
     private String lastErrorMessage;
     private LocalDateTime stateChangedAt;
     @FieldName("gmt_create")

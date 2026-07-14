@@ -8,6 +8,7 @@ import fun.fengwk.openclihub.core.instance.repo.impl.mapper.HubInstanceMapper;
 import fun.fengwk.openclihub.core.instance.repo.impl.model.HubInstanceDO;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
+import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -77,6 +78,8 @@ public class MysqlHubInstanceRepository implements HubInstanceRepository {
         target.setState(instance.getState() == null ? null : instance.getState().name());
         target.setWebsitesJson(writeJson(instance.getWebsites()));
         target.setMaxPending(instance.getMaxPending());
+        target.setProxyMode(instance.getProxyMode() == null ? null : instance.getProxyMode().name());
+        target.setProxyServer(instance.getProxyServer());
         target.setLastErrorMessage(instance.getLastErrorMessage());
         target.setStateChangedAt(instance.getStateChangedAt());
         target.setCreateTime(instance.getCreateTime() == null ? now : instance.getCreateTime());
@@ -97,6 +100,9 @@ public class MysqlHubInstanceRepository implements HubInstanceRepository {
         target.setState(source.getState() == null ? null : HubInstanceState.valueOf(source.getState()));
         target.setWebsites(readStringList(source.getWebsitesJson()));
         target.setMaxPending(source.getMaxPending() == null ? 0 : source.getMaxPending());
+        target.setProxyMode(source.getProxyMode() == null
+            ? HubProxyMode.INHERIT : HubProxyMode.valueOf(source.getProxyMode()));
+        target.setProxyServer(source.getProxyServer());
         target.setLastErrorMessage(source.getLastErrorMessage());
         target.setStateChangedAt(source.getStateChangedAt());
         target.setCreateTime(source.getCreateTime());

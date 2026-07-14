@@ -10,6 +10,7 @@ import fun.fengwk.openclihub.core.instance.service.validation.CatalogWebsiteLook
 import fun.fengwk.openclihub.core.instance.service.validation.HubInstanceValidator;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
+import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
@@ -55,6 +56,8 @@ class MysqlHubInstanceRepositoryH2Test {
         instance.setState(HubInstanceState.RUNNING);
         instance.setWebsites(List.of("bilibili", "chatgpt"));
         instance.setMaxPending(5);
+        instance.setProxyMode(HubProxyMode.CUSTOM);
+        instance.setProxyServer("http://proxy.example:8080");
         LocalDateTime now = LocalDateTime.now();
         instance.setStateChangedAt(now);
         instance.setCreateTime(now);
@@ -70,6 +73,8 @@ class MysqlHubInstanceRepositoryH2Test {
         assertThat(loaded.getState()).isEqualTo(HubInstanceState.RUNNING);
         assertThat(loaded.getWebsites()).containsExactly("bilibili", "chatgpt");
         assertThat(loaded.getMaxPending()).isEqualTo(5);
+        assertThat(loaded.getProxyMode()).isEqualTo(HubProxyMode.CUSTOM);
+        assertThat(loaded.getProxyServer()).isEqualTo("http://proxy.example:8080");
     }
 
     @Test

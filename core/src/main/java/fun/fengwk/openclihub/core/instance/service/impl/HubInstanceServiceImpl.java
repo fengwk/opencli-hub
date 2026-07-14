@@ -49,6 +49,10 @@ public class HubInstanceServiceImpl implements HubInstanceService {
         instance.setDisplayName(validator.validateDisplayName(instance.getDisplayName()));
         instance.setMaxPending(validator.validateMaxPending(instance.getMaxPending()));
         instance.setWebsites(validator.validateWebsites(instance.getWebsites()));
+        var proxy = validator.normalizeInstanceProxy(
+            instance.getProxyMode(), instance.getProxyServer());
+        instance.setProxyMode(proxy.proxyMode());
+        instance.setProxyServer(proxy.proxyServer());
         instance.setContextId(validator.validateContextId(instance.getContextId()));
         if (instance.getState() == null) {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("state is required");
@@ -119,6 +123,8 @@ public class HubInstanceServiceImpl implements HubInstanceService {
         existing.setDisplayName(dto.getDisplayName());
         existing.setWebsites(normalizedWebsites);
         existing.setMaxPending(dto.getMaxPending());
+        existing.setProxyMode(dto.getProxyMode());
+        existing.setProxyServer(dto.getProxyServer());
 
         // Pre-check code uniqueness excluding the row being updated.
         HubInstance byCode = repository.findByCode(existing.getCode());

@@ -10,9 +10,11 @@ import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.core.opencli.daemon.FakeOpenCliDaemonClient;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliProfileSnapshot;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
+import fun.fengwk.openclihub.core.settings.service.FakeHubSystemSettingsService;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceCreateDTO;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
+import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,6 +41,7 @@ class HubInstanceLifecycleServiceTest {
     private HubInstanceAllocationService allocationService;
     private FakeUnexpectedExitListener watcher;
     private OpenCliHubProperties properties;
+    private FakeHubSystemSettingsService settingsService;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -59,8 +62,9 @@ class HubInstanceLifecycleServiceTest {
         allocationService = new HubInstanceAllocationService(properties);
         watcher = new FakeUnexpectedExitListener();
         registry = new HubInstanceRuntimeRegistry(launcher, allocationService, watcher);
+        settingsService = new FakeHubSystemSettingsService();
         lifecycle = new HubInstanceLifecycleService(
-            instanceService, registry, launcher, daemon, properties,
+            instanceService, registry, launcher, daemon, properties, settingsService,
             new ProfileSingletonCleaner(), new HubDispatchRegistry());
     }
 
@@ -150,6 +154,76 @@ class HubInstanceLifecycleServiceTest {
         assertThat(snapshot.getVncPort()).isEqualTo(runtime.getVncPort());
         assertThat(snapshot.getActiveCount()).isZero();
         assertThat(snapshot.getPendingCount()).isZero();
+
+        String chromeCommand = lastChromeCommand();
+        assertThat(chromeCommand).contains("--disable-gpu", "--no-proxy-server");
+        assertThat(chromeCommand).doesNotContain("--disable-software-rasterizer");
+    }
+
+    @Test
+    void shouldApplyGlobalCustomProxyToInheritedInstance() {
+        settingsService.set(HubProxyMode.CUSTOM, " HTTP://Proxy.Example:8080 ");
+        String id = seedPersistedInstance("bilibili-global-proxy", "ctx-global-proxy");
+        daemon.addConnectedContextAfterFetch("ctx-global-proxy", 2);
+
+        lifecycle.start(id);
+
+        assertThat(lastChromeCommand())
+            .contains("--disable-gpu")
+            .contains("--proxy-server=http://proxy.example:8080")
+            .contains("--proxy-bypass-list=localhost;127.0.0.1;[::1]")
+            .doesNotContain("--no-proxy-server", "--disable-software-rasterizer");
+    }
+
+    @Test
+    void shouldLetInstanceDirectOverrideGlobalCustomProxy() {
+        settingsService.set(HubProxyMode.CUSTOM, "http://proxy.example:8080");
+        String id = seedPersistedInstance(
+            "bilibili-direct-proxy", "ctx-direct-proxy", HubProxyMode.DIRECT, null);
+        daemon.addConnectedContextAfterFetch("ctx-direct-proxy", 2);
+
+        lifecycle.start(id);
+
+        assertThat(lastChromeCommand())
+            .contains("--disable-gpu", "--no-proxy-server")
+            .doesNotContain("--proxy-server=", "--disable-software-rasterizer");
+    }
+
+    @Test
+    void shouldLetInstanceCustomProxyOverrideGlobalDirect() {
+        String id = seedPersistedInstance(
+            "bilibili-custom-proxy", "ctx-custom-proxy",
+            HubProxyMode.CUSTOM, "socks5://Proxy.Example:1080");
+        daemon.addConnectedContextAfterFetch("ctx-custom-proxy", 2);
+
+        lifecycle.start(id);
+
+        assertThat(lastChromeCommand())
+            .contains("--disable-gpu", "--proxy-server=socks5://proxy.example:1080")
+            .contains("--proxy-bypass-list=localhost;127.0.0.1;[::1]")
+            .doesNotContain("--no-proxy-server", "--disable-software-rasterizer");
+    }
+
+    @Test
+    void shouldApplyChangedGlobalProxyOnlyWhenInstanceIsManuallyRestarted() {
+        String id = seedPersistedInstance("bilibili-restart-proxy", "ctx-restart-proxy");
+        daemon.addConnectedContextAfterFetch("ctx-restart-proxy", 2);
+        lifecycle.start(id);
+        assertThat(lastChromeCommand()).contains("--no-proxy-server");
+        int chromeLaunches = launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME);
+
+        settingsService.set(HubProxyMode.CUSTOM, "https://proxy.example:8443");
+
+        // Updating persisted settings has no lifecycle callback, so the running Chrome remains.
+        assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
+            .isEqualTo(chromeLaunches);
+        assertThat(lastChromeCommand()).contains("--no-proxy-server");
+
+        lifecycle.restart(id);
+
+        assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
+            .isEqualTo(chromeLaunches + 1);
+        assertThat(lastChromeCommand()).contains("--proxy-server=https://proxy.example:8443");
     }
 
     @Test
@@ -429,7 +503,7 @@ class HubInstanceLifecycleServiceTest {
             assertThat(taskStarted.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             sleepQuietly(50);
             HubInstanceLifecycleService busyLifecycle = new HubInstanceLifecycleService(
-                instanceService, registry, launcher, daemon, properties,
+                instanceService, registry, launcher, daemon, properties, settingsService,
                 new ProfileSingletonCleaner(), dispatcher);
             assertThatThrownBy(() -> busyLifecycle.delete(id))
                 .isInstanceOf(ThrowableConventionErrorCode.class)
@@ -673,15 +747,27 @@ class HubInstanceLifecycleServiceTest {
     }
 
     private String seedPersistedInstance(String code, String contextId) {
+        return seedPersistedInstance(code, contextId, HubProxyMode.INHERIT, null);
+    }
+
+    private String seedPersistedInstance(String code, String contextId,
+        HubProxyMode proxyMode, String proxyServer) {
         HubInstance inst = new HubInstance();
         inst.setCode(code);
         inst.setDisplayName(code + " display");
         inst.setWebsites(List.of("bilibili"));
         inst.setMaxPending(5);
+        inst.setProxyMode(proxyMode);
+        inst.setProxyServer(proxyServer);
         inst.setState(HubInstanceState.STOPPED);
         inst.setContextId(contextId);
         instanceService.create(inst);
         return inst.getId();
+    }
+
+    private String lastChromeCommand() {
+        return launcher.lastHandle(HubInstanceRuntime.HubInstanceProcessKind.CHROME)
+            .info().commandLine().orElseThrow();
     }
 
     private OpenCliHubProperties newProps() {

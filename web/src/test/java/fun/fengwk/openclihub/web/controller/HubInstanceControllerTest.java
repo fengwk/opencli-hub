@@ -1,6 +1,7 @@
 package fun.fengwk.openclihub.web.controller;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
@@ -24,6 +25,7 @@ import fun.fengwk.openclihub.share.model.instance.HubInstanceCreateDTO;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceDTO;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
+import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -71,6 +73,8 @@ class HubInstanceControllerTest {
         dto.setId("11");
         dto.setCode("primary");
         dto.setState(HubInstanceState.RUNNING);
+        dto.setProxyMode(HubProxyMode.CUSTOM);
+        dto.setProxyServer("http://proxy.example:8080");
         HubInstanceRuntimeSnapshot snapshot = new HubInstanceRuntimeSnapshot(
             true, 99, 5900, 0, 0);
         when(lifecycleService.getSnapshot("11")).thenReturn(snapshot);
@@ -88,7 +92,9 @@ class HubInstanceControllerTest {
             .andExpect(jsonPath("$.data[0].id").value("11"));
         mockMvc.perform(get("/api/instances/11"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.code").value("primary"));
+            .andExpect(jsonPath("$.data.code").value("primary"))
+            .andExpect(jsonPath("$.data.proxyMode").value("CUSTOM"))
+            .andExpect(jsonPath("$.data.proxyServer").value("http://proxy.example:8080"));
     }
 
     /** Create is synchronous and reports HTTP 201 only after lifecycle success. */
@@ -99,6 +105,8 @@ class HubInstanceControllerTest {
         request.setDisplayName("Primary");
         request.setWebsites(List.of("bilibili"));
         request.setMaxPending(5);
+        request.setProxyMode(HubProxyMode.CUSTOM);
+        request.setProxyServer("http://proxy.example:8080");
         when(lifecycleService.create(any())).thenReturn(instance);
 
         mockMvc.perform(post("/api/instances")
@@ -106,6 +114,9 @@ class HubInstanceControllerTest {
                 .content(objectMapper.writeValueAsBytes(request)))
             .andExpect(status().isCreated())
             .andExpect(jsonPath("$.data.id").value("11"));
+        verify(lifecycleService).create(argThat(value ->
+            value.getProxyMode() == HubProxyMode.CUSTOM
+                && "http://proxy.example:8080".equals(value.getProxyServer())));
     }
 
     /** VNC status must expose availability flags without leaking the loopback VNC port. */
@@ -151,6 +162,7 @@ class HubInstanceControllerTest {
         request.setDisplayName("Primary");
         request.setWebsites(List.of("bilibili"));
         request.setMaxPending(5);
+        request.setProxyMode(HubProxyMode.DIRECT);
         when(instanceService.update(any(String.class), any())).thenReturn(instance);
         when(lifecycleService.start("11")).thenReturn(instance);
         when(instanceService.get("11")).thenReturn(instance);

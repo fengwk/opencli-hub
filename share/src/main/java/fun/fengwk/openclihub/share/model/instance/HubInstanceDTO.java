@@ -1,5 +1,6 @@
 package fun.fengwk.openclihub.share.model.instance;
 
+import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.Data;
@@ -19,6 +20,8 @@ public class HubInstanceDTO {
     private HubInstanceState state;
     private List<String> websites;
     private int maxPending;
+    private HubProxyMode proxyMode;
+    private String proxyServer;
     private String lastErrorMessage;
     private LocalDateTime stateChangedAt;
     private HubInstanceRuntimeDTO runtime;
