@@ -9,9 +9,14 @@ import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonClient;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonException;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonStatus;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
+import fun.fengwk.openclihub.core.proxy.HubProxyValidator;
+import fun.fengwk.openclihub.core.proxy.HubProxyValidator.ProxyConfiguration;
+import fun.fengwk.openclihub.core.settings.service.HubSystemSettingsService;
+import fun.fengwk.openclihub.core.settings.service.model.HubSystemSettings;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceCreateDTO;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
+import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -58,6 +63,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     private final InstanceProcessLauncher launcher;
     private final OpenCliDaemonClient daemonClient;
     private final OpenCliHubProperties properties;
+    private final HubSystemSettingsService settingsService;
     private final ProfileSingletonCleaner singletonCleaner;
     private final HubDispatchRegistry dispatchRegistry;
     private final ReentrantLock creationLock = new ReentrantLock();
@@ -68,6 +74,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         InstanceProcessLauncher launcher,
         OpenCliDaemonClient daemonClient,
         OpenCliHubProperties properties,
+        HubSystemSettingsService settingsService,
         ProfileSingletonCleaner singletonCleaner,
         HubDispatchRegistry dispatchRegistry) {
         this.instanceService = instanceService;
@@ -75,6 +82,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         this.launcher = launcher;
         this.daemonClient = daemonClient;
         this.properties = properties;
+        this.settingsService = settingsService;
         this.singletonCleaner = singletonCleaner;
         this.dispatchRegistry = dispatchRegistry;
     }
@@ -96,6 +104,8 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         preset.setCode(dto.getCode());
         preset.setDisplayName(dto.getDisplayName());
         preset.setWebsites(dto.getWebsites());
+        preset.setProxyMode(dto.getProxyMode());
+        preset.setProxyServer(dto.getProxyServer());
         preset.setMaxPending(dto.getMaxPending() == null
             ? properties.getExecution().getDefaultMaxPending()
             : dto.getMaxPending());
@@ -466,7 +476,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             waitForVncReady(allocation.vncPort, x11vnc.process);
 
             InstanceProcessLauncher.LaunchedProcess chrome = launcher.launchChrome(
-                chromeArgs(dataDir, id), displayEnv, chromeLog);
+                chromeArgs(dataDir, descriptor), displayEnv, chromeLog);
             recordHandle(runtime, HubInstanceProcessKind.CHROME, chrome);
             runtime.setStartedAtMillis(System.currentTimeMillis());
             return runtime;
@@ -497,8 +507,9 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         }
     }
 
-    private List<String> chromeArgs(String dataDir, String instanceId) {
-        Path chromeDir = HubInstanceDirectoryLayout.chromeDir(dataDir, instanceId);
+    private List<String> chromeArgs(String dataDir, HubInstance instance) {
+        Path chromeDir = HubInstanceDirectoryLayout.chromeDir(dataDir, instance.getId());
+        ProxyConfiguration proxy = resolveProxy(instance);
         List<String> args = new ArrayList<>();
         args.add("--user-data-dir=" + chromeDir.toString());
         args.add("--enable-unsafe-extension-debugging");
@@ -506,14 +517,31 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         args.add("--no-default-browser-check");
         args.add("--disable-sync");
         args.add("--disable-popup-blocking");
+        args.add("--disable-gpu");
         args.add("--window-size=" + properties.getBrowser().getScreenWidth()
             + "," + properties.getBrowser().getScreenHeight());
+        if (proxy.proxyMode() == HubProxyMode.CUSTOM) {
+            args.add("--proxy-server=" + proxy.proxyServer());
+            args.add("--proxy-bypass-list=localhost;127.0.0.1;[::1]");
+        } else {
+            args.add("--no-proxy-server");
+        }
         // NOTE: deliberately NOT passing --load-extension, --disable-extensions-except,
         // --disable-features=DisableLoadExtensionCommandLineSwitch (rejected by Chrome 150),
         // --disable-background-networking or --disable-component-update (would suppress the
-        // managed extension install). Extension is force-installed via
-        // /etc/opt/chrome/policies/managed; see docs/poc-chrome-extension.md §3 and §10.
+        // managed extension install), --disable-software-rasterizer (software rendering is
+        // required on servers without a GPU). Extension is force-installed via managed policy.
         return args;
+    }
+
+    private ProxyConfiguration resolveProxy(HubInstance instance) {
+        ProxyConfiguration configured = HubProxyValidator.normalizeInstance(
+            instance.getProxyMode(), instance.getProxyServer());
+        if (configured.proxyMode() != HubProxyMode.INHERIT) {
+            return configured;
+        }
+        HubSystemSettings global = settingsService.get();
+        return HubProxyValidator.normalizeGlobal(global.getProxyMode(), global.getProxyServer());
     }
 
     private void waitForXvfbReady(int displayNumber, ProcessHandle handle) {

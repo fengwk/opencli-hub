@@ -58,6 +58,10 @@ public class InMemoryHubInstanceService implements HubInstanceService {
         instance.setDisplayName(validator.validateDisplayName(instance.getDisplayName()));
         instance.setMaxPending(validator.validateMaxPending(instance.getMaxPending()));
         instance.setWebsites(validator.validateWebsites(instance.getWebsites()));
+        var proxy = validator.normalizeInstanceProxy(
+            instance.getProxyMode(), instance.getProxyServer());
+        instance.setProxyMode(proxy.proxyMode());
+        instance.setProxyServer(proxy.proxyServer());
         instance.setContextId(validator.validateContextId(instance.getContextId()));
         if (instance.getState() == null) {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("state is required");
@@ -139,6 +143,8 @@ public class InMemoryHubInstanceService implements HubInstanceService {
             existing.setDisplayName(dto.getDisplayName());
             existing.setWebsites(normalized);
             existing.setMaxPending(dto.getMaxPending());
+            existing.setProxyMode(dto.getProxyMode());
+            existing.setProxyServer(dto.getProxyServer());
             rows.put(id, copy(existing));
             return copy(existing);
         }
@@ -212,6 +218,8 @@ public class InMemoryHubInstanceService implements HubInstanceService {
         target.setState(source.getState());
         target.setWebsites(source.getWebsites());
         target.setMaxPending(source.getMaxPending());
+        target.setProxyMode(source.getProxyMode());
+        target.setProxyServer(source.getProxyServer());
         target.setLastErrorMessage(source.getLastErrorMessage());
         target.setStateChangedAt(source.getStateChangedAt());
         target.setCreateTime(source.getCreateTime());

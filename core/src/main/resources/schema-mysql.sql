@@ -6,6 +6,8 @@ create table if not exists hub_instance (
     state varchar(32) not null,
     websites_json text not null,
     max_pending int not null,
+    proxy_mode varchar(16) not null default 'INHERIT',
+    proxy_server varchar(512) null,
     last_error_message text null,
     state_changed_at timestamp(3) not null,
     gmt_create timestamp(3) not null,
@@ -16,6 +18,16 @@ create table if not exists hub_instance (
     unique key uk_hub_instance_context_id (context_id),
     key idx_hub_instance_state (state)
 ) engine=InnoDB default charset=utf8mb4 comment='OpenCLI browser instance';
+
+create table if not exists hub_system_settings (
+    id int not null,
+    proxy_mode varchar(16) not null,
+    proxy_server varchar(512) null,
+    gmt_create timestamp(3) not null,
+    gmt_modified timestamp(3) not null,
+    version bigint not null default 0,
+    primary key (id)
+) engine=InnoDB default charset=utf8mb4 comment='Hub-wide browser settings singleton';
 
 create table if not exists hub_execution (
     id varchar(36) not null,

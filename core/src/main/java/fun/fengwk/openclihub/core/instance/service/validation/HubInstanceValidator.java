@@ -2,8 +2,11 @@ package fun.fengwk.openclihub.core.instance.service.validation;
 
 import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandCatalog;
+import fun.fengwk.openclihub.core.proxy.HubProxyValidator;
+import fun.fengwk.openclihub.core.proxy.HubProxyValidator.ProxyConfiguration;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceEditablePropertiesDTO;
+import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -20,6 +23,7 @@ import org.springframework.stereotype.Component;
  *   <li>{@code websites} must be non-empty, trimmed, deduplicated and each item must belong
  *       to the catalog website set.</li>
  *   <li>{@code maxPending} must be positive and within a reasonable upper bound.</li>
+ *   <li>Proxy fields must form a supported Instance policy and safe browser proxy URI.</li>
  * </ul>
  *
  * <p>The {@link OpenCliCommandCatalog} is queried through {@link CatalogWebsiteSource} so the
@@ -68,8 +72,20 @@ public class HubInstanceValidator {
         dto.setCode(validateCode(dto.getCode()));
         dto.setDisplayName(validateDisplayName(dto.getDisplayName()));
         dto.setMaxPending(validateMaxPending(dto.getMaxPending()));
+        ProxyConfiguration proxy = HubProxyValidator.normalizeInstance(
+            dto.getProxyMode(), dto.getProxyServer());
+        dto.setProxyMode(proxy.proxyMode());
+        dto.setProxyServer(proxy.proxyServer());
         List<String> websites = validateWebsites(dto.getWebsites());
         return websites;
+    }
+
+    /**
+     * Normalizes an instance proxy policy. Missing proxyMode is retained as legacy INHERIT.
+     */
+    public ProxyConfiguration normalizeInstanceProxy(
+        HubProxyMode proxyMode, String proxyServer) {
+        return HubProxyValidator.normalizeInstance(proxyMode, proxyServer);
     }
 
     /**

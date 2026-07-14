@@ -18,6 +18,10 @@
   - JDK UUID 与旧 BIGINT ID 兼容规则
   - H2 自动迁移和 MySQL 停机手工迁移
   - Profile、Execution 与资源保留边界
+- [浏览器代理设置](browser-proxy-settings.md)
+  - 全局默认与 Instance 覆盖语义
+  - Docker 代理可达性与 Runtime Chrome 参数
+  - H2 自动迁移和 MySQL 停机手工迁移
 
 ## 实施计划
 

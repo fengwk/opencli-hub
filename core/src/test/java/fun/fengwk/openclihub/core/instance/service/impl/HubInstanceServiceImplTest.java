@@ -20,6 +20,7 @@ import fun.fengwk.openclihub.core.instance.service.validation.HubInstanceValidat
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
+import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -102,6 +103,8 @@ class HubInstanceServiceImplTest {
         HubInstance saved = captor.getValue();
         assertThat(saved.getId()).matches("[0-9a-f-]{36}");
         assertThat(saved.getWebsites()).containsExactly("bilibili");
+        assertThat(saved.getProxyMode()).isEqualTo(HubProxyMode.INHERIT);
+        assertThat(saved.getProxyServer()).isNull();
         assertThat(saved.getStateChangedAt()).isNotNull();
     }
 
@@ -186,12 +189,38 @@ class HubInstanceServiceImplTest {
         dto.setDisplayName("Renamed");
         dto.setWebsites(List.of("chatgpt"));
         dto.setMaxPending(10);
+        dto.setProxyMode(HubProxyMode.CUSTOM);
+        dto.setProxyServer(" HTTP://Proxy.Example:8080 ");
 
         HubInstance result = service.update("1", dto);
 
         assertThat(result.getWebsites()).containsExactly("chatgpt");
         assertThat(result.getDisplayName()).isEqualTo("Renamed");
         assertThat(result.getMaxPending()).isEqualTo(10);
+        assertThat(result.getProxyMode()).isEqualTo(HubProxyMode.CUSTOM);
+        assertThat(result.getProxyServer()).isEqualTo("http://proxy.example:8080");
+    }
+
+    @Test
+    void shouldTreatLegacyUpdateWithoutProxyModeAsInherit() {
+        // Older clients do not send proxyMode; retaining the request contract must reset the
+        // instance to INHERIT and discard an obsolete custom server.
+        HubInstance existing = newInstance("1", "kept-code");
+        existing.setProxyMode(HubProxyMode.CUSTOM);
+        existing.setProxyServer("http://old.example:8080");
+        doReturn(existing).when(repository).findById("1");
+        doReturn(existing).when(repository).findByCode("kept-code");
+        doReturn(true).when(repository).update(any());
+        HubInstanceUpdateDTO dto = new HubInstanceUpdateDTO();
+        dto.setCode("kept-code");
+        dto.setDisplayName("Renamed");
+        dto.setWebsites(List.of("bilibili"));
+        dto.setMaxPending(5);
+
+        HubInstance updated = service.update("1", dto);
+
+        assertThat(updated.getProxyMode()).isEqualTo(HubProxyMode.INHERIT);
+        assertThat(updated.getProxyServer()).isNull();
     }
 
     @Test

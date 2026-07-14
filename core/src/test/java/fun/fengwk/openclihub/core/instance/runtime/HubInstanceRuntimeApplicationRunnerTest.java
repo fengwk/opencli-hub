@@ -6,6 +6,7 @@ import fun.fengwk.openclihub.core.execution.runtime.HubDispatchRegistry;
 import fun.fengwk.openclihub.core.instance.runtime.test.InMemoryHubInstanceService;
 import fun.fengwk.openclihub.core.opencli.daemon.FakeOpenCliDaemonClient;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
+import fun.fengwk.openclihub.core.settings.service.FakeHubSystemSettingsService;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -57,7 +58,8 @@ class HubInstanceRuntimeApplicationRunnerTest {
             new FakeUnexpectedExitListener());
         lifecycle = new HubInstanceLifecycleService(
             instanceService, registry, launcher, daemon, properties,
-            new ProfileSingletonCleaner(), new HubDispatchRegistry());
+            new FakeHubSystemSettingsService(), new ProfileSingletonCleaner(),
+            new HubDispatchRegistry());
         scanner = new OrphanInstanceScanner(properties, instanceService);
         runner = new HubInstanceRuntimeApplicationRunner(lifecycle, scanner, properties);
     }
