@@ -1,6 +1,7 @@
 import type { BackendId } from '@/shared/api/contracts'
 
 export type HubInstanceState = 'STARTING' | 'RUNNING' | 'STOPPING' | 'STOPPED' | 'ERROR'
+export type InstanceProxyMode = 'INHERIT' | 'DIRECT' | 'CUSTOM'
 
 export interface HubInstanceRuntime {
   registered: boolean
@@ -18,6 +19,8 @@ export interface HubInstance {
   state: HubInstanceState
   websites: string[] | null
   maxPending: number
+  proxyMode: InstanceProxyMode
+  proxyServer: string | null
   lastErrorMessage: string | null
   stateChangedAt: string | number[] | null
   runtime: HubInstanceRuntime | null
@@ -30,6 +33,8 @@ export interface InstanceEditableProperties {
   displayName: string
   websites: string[]
   maxPending: number
+  proxyMode: InstanceProxyMode
+  proxyServer: string | null
 }
 
 export interface HubInstanceVncStatus {

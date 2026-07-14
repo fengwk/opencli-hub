@@ -26,7 +26,7 @@ describe('App shell and routing', () => {
 
   it('renders all primary navigation entries', () => {
     renderApp('/')
-    for (const label of ['实例管理', '执行记录', '命令目录', '资源中心', '日志中心']) {
+    for (const label of ['实例管理', '执行记录', '命令目录', '资源中心', '系统设置', '日志中心']) {
       expect(screen.getByRole('link', { name: label })).toBeInTheDocument()
     }
   })
@@ -60,6 +60,12 @@ describe('App shell and routing', () => {
     renderApp('/commands')
     // The page heading proves the route mounts the implemented feature page.
     expect(screen.getByRole('heading', { name: '命令目录' })).toBeInTheDocument()
+  })
+
+  it('renders the system settings route', () => {
+    renderApp('/settings')
+    // The settings heading proves the top-level route resolves before its query completes.
+    expect(screen.getByRole('heading', { name: '系统设置' })).toBeInTheDocument()
   })
 
   it('renders the 404 page for unknown routes', () => {

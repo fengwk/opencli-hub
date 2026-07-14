@@ -14,7 +14,7 @@ vi.mock('@/shared/api/client', () => ({
 const instanceId = '343020517415976960'
 const instance: HubInstance = {
   id: instanceId, code: 'beta', displayName: 'Beta browser', contextId: 'ctx-42', state: 'RUNNING',
-  websites: ['demo'], maxPending: 2, lastErrorMessage: null, stateChangedAt: null,
+  websites: ['demo'], maxPending: 2, proxyMode: 'CUSTOM', proxyServer: 'socks5://proxy.example.com:1080', lastErrorMessage: null, stateChangedAt: null,
   runtime: { registered: true, displayNumber: 13, vncPort: 5901, activeCount: 0, pendingCount: 0 },
   createTime: null, updateTime: null,
 }
@@ -47,10 +47,23 @@ describe('InstanceDetailPage', () => {
     expect(await screen.findByRole('heading', { name: 'Beta browser' })).toBeInTheDocument()
     expect(screen.getByText('ctx-42')).toBeInTheDocument()
     expect(screen.getByText('VNC 可用')).toBeInTheDocument()
+    expect(screen.getByText('自定义 · socks5://proxy.example.com:1080')).toBeInTheDocument()
     expect(screen.getAllByText('是')).toHaveLength(4)
     expect(screen.getByRole('link', { name: '查看日志' })).toHaveAttribute('href', `/logs?instanceId=${instanceId}`)
     expect(apiClient.get).toHaveBeenCalledWith(`/instances/${instanceId}`)
     expect(apiClient.get).toHaveBeenCalledWith(`/instances/${instanceId}/vnc/status`)
+  })
+
+  it('defaults legacy instances without proxy fields to inherit the global setting', async () => {
+    // Older Hub responses omit the fields entirely; rendering must retain the safe inherited behavior.
+    const legacyInstance = { ...instance, proxyMode: undefined, proxyServer: undefined } as unknown as HubInstance
+    vi.mocked(apiClient.get).mockImplementation((url: string) => Promise.resolve(
+      url === `/instances/${instanceId}/vnc/status` ? vncStatus : legacyInstance,
+    ) as never)
+
+    renderPage()
+
+    expect(await screen.findByText('继承全局')).toBeInTheDocument()
   })
 
   it('saves edits through the exact update route and refreshes the instance', async () => {
@@ -75,6 +88,7 @@ describe('InstanceDetailPage', () => {
 
     await waitFor(() => expect(apiClient.put).toHaveBeenCalledWith(`/instances/${instanceId}`, {
       code: 'beta', displayName: 'Updated browser', websites: ['demo'], maxPending: 2,
+      proxyMode: 'CUSTOM', proxyServer: 'socks5://proxy.example.com:1080',
     }))
   })
 })
