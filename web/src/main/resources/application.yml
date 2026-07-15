@@ -12,6 +12,10 @@ spring:
   sql:
     init:
       mode: never
+  servlet:
+    multipart:
+      max-file-size: ${OPENCLI_HUB_RESOURCE_MAX_FILE_SIZE:104857600}B
+      max-request-size: ${OPENCLI_HUB_RESOURCE_MAX_REQUEST_SIZE:524288000}B
 
 mybatis:
   mapper-locations: classpath*:**/*Mapper.xml
@@ -76,5 +80,5 @@ opencli:
       default-max-pending: 5
     resource:
       root-dir: ${OPENCLI_HUB_RESOURCE_DIR:${OPENCLI_HUB_DATA_DIR:/data/opencli-hub}/resources}
-      max-file-size: 104857600
-      max-request-size: 524288000
+      max-file-size: ${OPENCLI_HUB_RESOURCE_MAX_FILE_SIZE:104857600}
+      max-request-size: ${OPENCLI_HUB_RESOURCE_MAX_REQUEST_SIZE:524288000}

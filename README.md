@@ -90,10 +90,12 @@ docker compose -f compose.yml down
 | `OPENCLI_HUB_STARTUP_RECOVERY_ENABLED` | `true` | 启动后按创建时间和 ID 的稳定顺序恢复数据库中的 Instance |
 | `OPENCLI_HUB_DEFAULT_TIMEOUT_MILLIS` | `600000` | 同步执行默认端到端 deadline |
 | `OPENCLI_HUB_MAX_TIMEOUT_MILLIS` | `1800000` | 调用方可请求的最大 deadline |
+| `OPENCLI_HUB_RESOURCE_MAX_FILE_SIZE` | `104857600`（100 MiB） | 单文件上传上限（字节），同时绑定 core 校验与 Spring multipart |
+| `OPENCLI_HUB_RESOURCE_MAX_REQUEST_SIZE` | `524288000`（500 MiB） | 单次上传请求上限（字节），同时绑定 core 校验与 Spring multipart |
 | `OPENCLI_HUB_SHUTDOWN_TIMEOUT_SECONDS` | `30` | entrypoint 等待 Hub/CRX 子进程退出的单进程上限 |
 | `JAVA_OPTS` | 空 | 以空白分隔的 JVM 参数，不用于 Spring `--` 参数 |
 
-其他路径、DISPLAY/VNC 范围和资源限制可按 `web/src/main/resources/application.yml` 中的占位符覆盖。
+其他路径和 DISPLAY/VNC 范围可按 `web/src/main/resources/application.yml` 中的占位符覆盖。资源上传限制环境变量只接受字节数值，配置会为 Spring multipart 自动追加 `B` 单位。
 
 ### SCG/反向代理要求
 

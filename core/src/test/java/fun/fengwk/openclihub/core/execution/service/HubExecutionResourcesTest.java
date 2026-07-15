@@ -82,8 +82,7 @@ class HubExecutionResourcesTest {
     /**
      * Input leases must be released even when the execution throws. The try-with-
      * resources pattern used by the service guarantees the close() side runs even
-     * after an exception; the manager's over-release tolerance prevents double-close
-     * issues.
+     * after an exception; each lease remains idempotent if cleanup reaches it twice.
      */
     @Test
     void shouldReleaseLeasesOnException() throws IOException {

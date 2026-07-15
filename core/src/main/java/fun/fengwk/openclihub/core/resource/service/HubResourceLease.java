@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -24,7 +25,7 @@ public final class HubResourceLease implements AutoCloseable {
     private final HubResourceLeaseManager manager;
     private final AtomicInteger referenceCount;
     private final String reason;
-    private boolean closed;
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     HubResourceLease(HubResourceLeaseManager manager, Path realPath, String reason, AtomicInteger referenceCount) {
         this.manager = Objects.requireNonNull(manager, "manager");
@@ -49,10 +50,9 @@ public final class HubResourceLease implements AutoCloseable {
 
     @Override
     public void close() {
-        if (closed) {
+        if (!closed.compareAndSet(false, true)) {
             return;
         }
-        closed = true;
         manager.release(this, referenceCount);
         if (log.isDebugEnabled()) {
             log.debug("Released lease {} reason={}", realPath, reason);

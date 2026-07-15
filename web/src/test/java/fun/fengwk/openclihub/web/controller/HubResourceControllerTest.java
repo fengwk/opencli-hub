@@ -25,6 +25,7 @@ import fun.fengwk.openclihub.share.model.resource.HubResourceDateSummaryDTO;
 import fun.fengwk.openclihub.share.model.resource.HubResourceItemDTO;
 import fun.fengwk.openclihub.share.model.resource.HubResourceSource;
 import java.io.ByteArrayInputStream;
+import java.net.URI;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
@@ -134,6 +135,23 @@ class HubResourceControllerTest {
             .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION,
                 org.hamcrest.Matchers.startsWith("inline;")));
         assertThat(leaseClosed).isTrue();
+    }
+
+    /** Encoded special-name segments are decoded once before the core virtual path is rebuilt. */
+    @Test
+    void shouldPassDecodedSpecialResourcePathToCore() throws Exception {
+        String virtualPath = "/resources/2026-07-13/upload-1/子 目录/报告 #1?.txt";
+        when(resourceService.openForRead(virtualPath)).thenReturn(stream(new AtomicBoolean()));
+        URI encoded = URI.create("/api/resources/2026-07-13/upload-1/"
+            + "%E5%AD%90%20%E7%9B%AE%E5%BD%95/"
+            + "%E6%8A%A5%E5%91%8A%20%231%3F.txt");
+
+        MvcResult started = mockMvc.perform(get(encoded))
+            .andExpect(request().asyncStarted())
+            .andReturn();
+        mockMvc.perform(asyncDispatch(started)).andExpect(status().isOk());
+
+        verify(resourceService).openForRead(virtualPath);
     }
 
     /** Download defaults to attachment disposition while preserving the original name. */

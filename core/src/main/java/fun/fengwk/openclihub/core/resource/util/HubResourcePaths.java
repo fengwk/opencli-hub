@@ -6,14 +6,16 @@ import fun.fengwk.openclihub.share.model.resource.HubResourceSource;
 import fun.fengwk.openclihub.share.util.HubIds;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.LocalDate;
-import java.util.Objects;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -34,12 +36,9 @@ public final class HubResourcePaths {
     /** UTC ISO-8601 calendar date used for daily directories. */
     public static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE;
 
-    /** Reject empty segments or path separators anywhere in an upload file name. */
-    private static final Pattern UPLOAD_FILE_NAME_INVALID = Pattern.compile("[\\\\/\\u0000]");
-
     private static final Pattern GROUP_PATTERN = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._\\-]{0,127}");
 
-    private static final Pattern RELATIVE_SEGMENT_PATTERN = Pattern.compile("[A-Za-z0-9._\\-]+");
+    private static final char[] HEX = "0123456789ABCDEF".toCharArray();
 
     private HubResourcePaths() {
     }
@@ -80,19 +79,18 @@ public final class HubResourcePaths {
      * {@code root} without ever traversing a symbolic link.
      */
     public static ResolvedResource resolve(Path root, String virtualPath) {
-        validateRoot(root);
+        Path rootAbs = requireAbsolute(root);
         if (virtualPath == null) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
-        String normalized = virtualPath.replace('\\', '/');
-        if (!normalized.startsWith(VIRTUAL_PREFIX)) {
+        if (!virtualPath.startsWith(VIRTUAL_PREFIX)) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
-        String tail = normalized.substring(VIRTUAL_PREFIX.length());
+        String tail = virtualPath.substring(VIRTUAL_PREFIX.length());
         if (tail.isEmpty() || tail.endsWith("/")) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
-        String[] parts = tail.split("/");
+        String[] parts = tail.split("/", -1);
         if (parts.length < 3) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
@@ -101,11 +99,12 @@ public final class HubResourcePaths {
         for (int i = 2; i < parts.length; i++) {
             validateRelativeSegment(parts[i]);
         }
-        Path real = root.resolve(date.format(DATE_FORMAT)).resolve(group);
+        Path real = rootAbs.resolve(date.format(DATE_FORMAT)).resolve(group);
         for (int i = 2; i < parts.length; i++) {
             real = real.resolve(parts[i]);
         }
-        return new ResolvedResource(root, date, group, real, joinRelative(parts, 2));
+        ensureNoSymlinkUnchecked(rootAbs, real);
+        return new ResolvedResource(rootAbs, date, group, real, joinRelative(parts, 2));
     }
 
     /**
@@ -113,21 +112,18 @@ public final class HubResourcePaths {
      * relative path for convenient listing.
      */
     public static ResolvedResource resolveUnderGroup(Path root, LocalDate date, String group, String relativePath) {
-        validateRoot(root);
+        Path rootAbs = requireAbsolute(root);
         validateDate(date);
         group = validateGroup(group);
-        Path groupReal = groupDir(root, date, group);
+        Path groupReal = groupDir(rootAbs, date, group);
         if (relativePath == null || relativePath.isEmpty()) {
-            return new ResolvedResource(root, date, group, groupReal, "");
+            ensureNoSymlinkUnchecked(rootAbs, groupReal);
+            return new ResolvedResource(rootAbs, date, group, groupReal, "");
         }
-        String normalized = relativePath.replace('\\', '/');
-        while (normalized.startsWith("/")) {
-            normalized = normalized.substring(1);
-        }
-        if (normalized.isEmpty() || normalized.endsWith("/")) {
+        if (relativePath.endsWith("/")) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
-        String[] parts = normalized.split("/");
+        String[] parts = relativePath.split("/", -1);
         for (String part : parts) {
             validateRelativeSegment(part);
         }
@@ -135,7 +131,31 @@ public final class HubResourcePaths {
         for (String part : parts) {
             real = real.resolve(part);
         }
-        return new ResolvedResource(root, date, group, real, joinRelative(parts, 0));
+        ensureNoSymlinkUnchecked(rootAbs, real);
+        return new ResolvedResource(rootAbs, date, group, real, joinRelative(parts, 0));
+    }
+
+    /**
+     * Encode a resource virtual path one segment at a time using the same safe character set
+     * as JavaScript's {@code encodeURIComponent}. Path separators between nested relative
+     * segments remain structural and are never encoded as part of a segment.
+     */
+    public static String encodedVirtualPath(LocalDate date, String group, String relativePath) {
+        validateDate(date);
+        group = validateGroup(group);
+        if (relativePath == null || relativePath.isEmpty() || relativePath.endsWith("/")) {
+            throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
+        }
+        String[] parts = relativePath.split("/", -1);
+        StringBuilder encoded = new StringBuilder(VIRTUAL_PREFIX)
+            .append(encodePathSegment(date.format(DATE_FORMAT)))
+            .append('/')
+            .append(encodePathSegment(group));
+        for (String part : parts) {
+            validateRelativeSegment(part);
+            encoded.append('/').append(encodePathSegment(part));
+        }
+        return encoded.toString();
     }
 
     /**
@@ -201,10 +221,9 @@ public final class HubResourcePaths {
         if (name.startsWith("/") || name.startsWith("\\")) {
             name = name.replaceFirst("^[\\\\/]+", "");
         }
-        // Reject any segment separators or NUL inside the candidate name.
-        if (UPLOAD_FILE_NAME_INVALID.matcher(name).find()) {
-            name = UPLOAD_FILE_NAME_INVALID.matcher(name).replaceAll("_");
-        }
+        // Replace path separators and control characters that the virtual-path contract
+        // deliberately refuses to expose after upload.
+        name = sanitizeRelativeSegmentCharacters(name);
         // Drop any remaining navigation tokens and trailing dots/spaces.
         name = name.replace("..", "_");
         while (name.endsWith(".") || name.endsWith(" ")) {
@@ -263,8 +282,9 @@ public final class HubResourcePaths {
         throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
     }
 
-    private static String tryReserve(Path groupDir, String candidate) {
+    private static String tryReserve(Path groupDir, String candidate) throws IOException {
         Path target = groupDir.resolve(candidate);
+        ensureNoSymlink(groupDir, target);
         try {
             // CREATE_NEW is atomic on POSIX: the channel creation either succeeds (and the
             // file now exists) or throws FileAlreadyExistsException. This is the canonical
@@ -274,9 +294,7 @@ public final class HubResourcePaths {
                 java.nio.file.StandardOpenOption.WRITE)) {
                 return candidate;
             }
-        } catch (java.nio.file.FileAlreadyExistsException ex) {
-            return null;
-        } catch (IOException ex) {
+        } catch (FileAlreadyExistsException ex) {
             return null;
         }
     }
@@ -311,26 +329,23 @@ public final class HubResourcePaths {
 
     /**
      * Walk an existing path and reject symbolic links anywhere along the chain.
-     * Targets that do not yet exist are returned unchanged so callers may create them safely.
+     * Non-existent suffixes are allowed so callers can create them after validation; the
+     * normalized absolute target is returned. This check does not eliminate same-privilege
+     * filesystem replacement races between validation and a later operation.
      */
     public static Path ensureNoSymlink(Path root, Path target) throws IOException {
-        if (!target.toAbsolutePath().normalize().startsWith(root.toAbsolutePath().normalize())) {
+        Path rootAbs = requireAbsolute(root);
+        Path targetAbs = requireAbsolute(target);
+        if (!targetAbs.startsWith(rootAbs)) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
-        Path absolute = target.toAbsolutePath().normalize();
-        Path current = root.toAbsolutePath().normalize();
-        for (Path segment : absolute) {
-            if (current.equals(absolute)) {
-                break;
-            }
-            current = current.resolve(segment.toString());
-            if (Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
-                if (Files.isSymbolicLink(current)) {
-                    throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
-                }
-            }
+        Path current = rootAbs;
+        rejectSymlink(current);
+        for (Path segment : rootAbs.relativize(targetAbs)) {
+            current = current.resolve(segment);
+            rejectSymlink(current);
         }
-        return target;
+        return targetAbs;
     }
 
     /**
@@ -386,13 +401,12 @@ public final class HubResourcePaths {
         }
     }
 
-    private static void validateRoot(Path root) {
-        requireAbsolute(root);
-    }
-
     private static Path requireAbsolute(Path root) {
+        if (root == null) {
+            throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
+        }
         Path abs = root.toAbsolutePath().normalize();
-        if (abs == null || abs.toString().isEmpty()) {
+        if (abs.toString().isEmpty()) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
         return abs;
@@ -425,9 +439,63 @@ public final class HubResourcePaths {
         if (".".equals(segment) || "..".equals(segment)) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
-        if (!RELATIVE_SEGMENT_PATTERN.matcher(segment).matches()) {
+        for (int i = 0; i < segment.length(); i++) {
+            char ch = segment.charAt(i);
+            if (ch == '/' || ch == '\\' || ch == '\u0000' || Character.isISOControl(ch)) {
+                throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
+            }
+        }
+    }
+
+    private static String sanitizeRelativeSegmentCharacters(String value) {
+        StringBuilder sanitized = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (ch == '/' || ch == '\\' || ch == '\u0000' || Character.isISOControl(ch)) {
+                sanitized.append('_');
+            } else {
+                sanitized.append(ch);
+            }
+        }
+        return sanitized.toString();
+    }
+
+    private static void rejectSymlink(Path path) {
+        if (Files.exists(path, LinkOption.NOFOLLOW_LINKS) && Files.isSymbolicLink(path)) {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
+    }
+
+    private static void ensureNoSymlinkUnchecked(Path root, Path target) {
+        try {
+            ensureNoSymlink(root, target);
+        } catch (IOException ex) {
+            throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable(ex);
+        }
+    }
+
+    private static String encodePathSegment(String segment) {
+        byte[] bytes = segment.getBytes(StandardCharsets.UTF_8);
+        StringBuilder encoded = new StringBuilder(bytes.length);
+        for (byte b : bytes) {
+            int value = b & 0xff;
+            if (isEncodeURIComponentSafe(value)) {
+                encoded.append((char) value);
+            } else {
+                encoded.append('%')
+                    .append(HEX[value >>> 4])
+                    .append(HEX[value & 0x0f]);
+            }
+        }
+        return encoded.toString();
+    }
+
+    private static boolean isEncodeURIComponentSafe(int value) {
+        return value >= 'A' && value <= 'Z'
+            || value >= 'a' && value <= 'z'
+            || value >= '0' && value <= '9'
+            || value == '-' || value == '_' || value == '.' || value == '!'
+            || value == '~' || value == '*' || value == '\'' || value == '(' || value == ')';
     }
 
     private static String joinRelative(String[] parts, int offset) {

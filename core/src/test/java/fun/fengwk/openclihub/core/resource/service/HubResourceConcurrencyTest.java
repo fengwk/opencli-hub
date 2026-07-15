@@ -242,6 +242,42 @@ class HubResourceConcurrencyTest {
     }
 
     /**
+     * Concurrent close calls on one lease release exactly one reference, leaving a second
+     * lease on the same path active until that distinct lease is closed.
+     */
+    @Test
+    void shouldReleaseSameLeaseOnlyOnceAcrossConcurrentCloseCalls() throws Exception {
+        Path target = Files.createTempFile("hub-resource-lease-close-", ".txt");
+        HubResourceLease concurrentlyClosed = leaseManager.acquire(target, "concurrent-close");
+        HubResourceLease survivor = leaseManager.acquire(target, "survivor");
+        int threadCount = 64;
+        ExecutorService pool = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<?>> futures = new ArrayList<>();
+        for (int i = 0; i < threadCount; i++) {
+            futures.add(pool.submit(() -> {
+                start.await();
+                concurrentlyClosed.close();
+                return null;
+            }));
+        }
+
+        start.countDown();
+        pool.shutdown();
+        assertThat(pool.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+        for (Future<?> future : futures) {
+            future.get();
+        }
+        assertThat(leaseManager.heldPathCount()).isOne();
+        assertThatThrownBy(() -> leaseManager.runExclusively(target, () -> {}))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+
+        survivor.close();
+        assertThat(leaseManager.heldPathCount()).isZero();
+        Files.deleteIfExists(target);
+    }
+
+    /**
      * The same destructive delete invoked twice on the same target must be serialized: the
      * second invocation sees the delete-in-progress flag and refuses immediately.
      */

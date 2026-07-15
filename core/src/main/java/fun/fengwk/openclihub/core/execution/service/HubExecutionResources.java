@@ -217,7 +217,7 @@ public class HubExecutionResources {
             try {
                 lease.close();
             } catch (RuntimeException ignored) {
-                // best-effort release; manager tolerates over-release
+                // best-effort release; each lease close is independently idempotent
             }
         }
     }

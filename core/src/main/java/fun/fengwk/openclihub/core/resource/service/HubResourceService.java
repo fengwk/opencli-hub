@@ -63,10 +63,15 @@ public class HubResourceService {
         this.properties = Objects.requireNonNull(properties, "properties");
         this.leaseManager = Objects.requireNonNull(leaseManager, "leaseManager");
         this.root = HubResourcePaths.resourceRoot(properties);
+        ensureSafeResourcePath(root);
         try {
             Files.createDirectories(root);
         } catch (IOException ex) {
             throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
+        }
+        ensureSafeResourcePath(root);
+        if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
+            throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
     }
 
@@ -104,10 +109,15 @@ public class HubResourceService {
             : HubResourcePaths.parseDate(request.getDate());
         String group = HubResourcePaths.newUploadGroup();
         Path groupDir = root.resolve(date.format(HubResourcePaths.DATE_FORMAT)).resolve(group);
+        ensureSafeResourcePath(groupDir);
         try {
             Files.createDirectories(groupDir);
         } catch (IOException ex) {
             throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
+        }
+        ensureSafeResourcePath(groupDir);
+        if (!Files.isDirectory(groupDir, LinkOption.NOFOLLOW_LINKS)) {
+            throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
 
         // Each upload records exactly the files it wrote so a partial failure can roll back
@@ -121,6 +131,7 @@ public class HubResourceService {
             for (HubResourceUploadItem item : items) {
                 String reserved = HubResourcePaths.reserveFileName(groupDir, item.getOriginalFileName());
                 Path target = groupDir.resolve(reserved);
+                ensureSafeResourcePath(target);
                 myReservedTargets.add(target);
                 long fileBytes;
                 try {
@@ -225,6 +236,7 @@ public class HubResourceService {
         // Run inside the lease-manager critical section so a concurrent acquirer cannot
         // slip between the assert and the actual delete.
         leaseManager.runExclusively(real, () -> {
+            ensureSafeResourcePath(real);
             try {
                 Files.delete(real);
             } catch (IOException ex) {
@@ -245,6 +257,7 @@ public class HubResourceService {
     public void deleteGroup(String date, String group) {
         LocalDate parsedDate = HubResourcePaths.parseDate(date);
         Path groupReal = HubResourcePaths.groupDir(root, parsedDate, group);
+        ensureSafeResourcePath(groupReal);
         if (!Files.exists(groupReal, LinkOption.NOFOLLOW_LINKS)) {
             throw HubErrorCodes.RESOURCE_NOT_FOUND.asThrowable();
         }
@@ -252,6 +265,7 @@ public class HubResourceService {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
         leaseManager.runExclusively(groupReal, () -> {
+            ensureSafeResourcePath(groupReal);
             try {
                 HubResourcePaths.deleteRecursivelyNoFollow(groupReal);
             } catch (IOException ex) {
@@ -272,6 +286,7 @@ public class HubResourceService {
     public void deleteDate(String date) {
         LocalDate parsedDate = HubResourcePaths.parseDate(date);
         Path dateReal = HubResourcePaths.dateDir(root, parsedDate);
+        ensureSafeResourcePath(dateReal);
         if (!Files.exists(dateReal, LinkOption.NOFOLLOW_LINKS)) {
             throw HubErrorCodes.RESOURCE_NOT_FOUND.asThrowable();
         }
@@ -279,6 +294,7 @@ public class HubResourceService {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
         leaseManager.runExclusively(dateReal, () -> {
+            ensureSafeResourcePath(dateReal);
             try {
                 HubResourcePaths.deleteRecursivelyNoFollow(dateReal);
             } catch (IOException ex) {
@@ -291,6 +307,7 @@ public class HubResourceService {
      * Summaries per UTC date in descending date order.
      */
     public List<HubResourceDateSummaryDTO> listDateSummaries() {
+        ensureSafeResourcePath(root);
         if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
             return List.of();
         }
@@ -320,6 +337,7 @@ public class HubResourceService {
     public HubResourceDateSummaryDTO summarizeDate(String date) {
         LocalDate parsed = HubResourcePaths.parseDate(date);
         Path dateReal = HubResourcePaths.dateDir(root, parsed);
+        ensureSafeResourcePath(dateReal);
         if (!Files.exists(dateReal, LinkOption.NOFOLLOW_LINKS)) {
             throw HubErrorCodes.RESOURCE_NOT_FOUND.asThrowable();
         }
@@ -335,6 +353,7 @@ public class HubResourceService {
         }
         LocalDate date = HubResourcePaths.parseDate(request.getDate());
         Path dateReal = HubResourcePaths.dateDir(root, date);
+        ensureSafeResourcePath(dateReal);
         if (!Files.exists(dateReal, LinkOption.NOFOLLOW_LINKS)) {
             return List.of();
         }
@@ -417,10 +436,15 @@ public class HubResourceService {
         LocalDate targetDate = date == null ? LocalDate.now(ZoneOffset.UTC) : date;
         String group = HubResourcePaths.executionGroup(executionId);
         Path groupReal = HubResourcePaths.groupDir(root, targetDate, group);
+        ensureSafeResourcePath(groupReal);
         try {
             Files.createDirectories(groupReal);
         } catch (IOException ex) {
             throw HubErrorCodes.RESOURCE_DELETE_FAILED.asThrowable(ex);
+        }
+        ensureSafeResourcePath(groupReal);
+        if (!Files.isDirectory(groupReal, LinkOption.NOFOLLOW_LINKS)) {
+            throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
         return HubExecutionResourceGroup.builder()
             .executionId(executionId)
@@ -436,6 +460,7 @@ public class HubResourceService {
      */
     public List<HubResourceItemDTO> scanExecutionGroup(HubExecutionResourceGroup group) {
         Objects.requireNonNull(group, "group");
+        ensureSafeResourcePath(group.getRealPath());
         if (!Files.exists(group.getRealPath(), LinkOption.NOFOLLOW_LINKS)) {
             throw HubErrorCodes.RESOURCE_NOT_FOUND.asThrowable();
         }
@@ -486,6 +511,7 @@ public class HubResourceService {
     public boolean removeExecutionGroupIfEmpty(HubExecutionResourceGroup group) {
         Objects.requireNonNull(group, "group");
         Path real = group.getRealPath();
+        ensureSafeResourcePath(real);
         if (!Files.exists(real, LinkOption.NOFOLLOW_LINKS)) {
             return false;
         }
@@ -494,6 +520,7 @@ public class HubResourceService {
         }
         boolean[] removed = new boolean[] { false };
         leaseManager.runExclusively(real, () -> {
+            ensureSafeResourcePath(real);
             try (var stream = Files.list(real)) {
                 for (Path child : (Iterable<Path>) stream::iterator) {
                     if (Files.exists(child, LinkOption.NOFOLLOW_LINKS)) {
@@ -523,6 +550,7 @@ public class HubResourceService {
     // -----------------------------------------------------------------------------------------
 
     private HubResourceDateSummaryDTO summarizeDateInternal(LocalDate date, Path dateReal) {
+        ensureSafeResourcePath(dateReal);
         long groupCount = 0L;
         long fileCount = 0L;
         long totalSize = 0L;
@@ -584,8 +612,9 @@ public class HubResourceService {
         } catch (IOException ex) {
             dto.setModifiedAt(null);
         }
-        dto.setContentUrl("/api" + virtualPath + "?inline=true");
-        dto.setDownloadUrl("/api" + virtualPath);
+        String encodedVirtualPath = HubResourcePaths.encodedVirtualPath(date, group, relative);
+        dto.setContentUrl("/api" + encodedVirtualPath + "?inline=true");
+        dto.setDownloadUrl("/api" + encodedVirtualPath);
         return dto;
     }
 
@@ -603,8 +632,9 @@ public class HubResourceService {
         if (tempFiles != null) {
             tempFiles.add(tmp);
         }
+        ensureSafeResourcePath(tmp);
         try (OutputStream out = Files.newOutputStream(tmp,
-            StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
             int read;
             while ((read = in.read(buffer)) != -1) {
                 if (read > 0) {
@@ -622,6 +652,8 @@ public class HubResourceService {
             out.flush();
         }
         try {
+            ensureSafeResourcePath(target);
+            ensureSafeResourcePath(tmp);
             performMoveReplace(tmp, target);
         } catch (IOException ex) {
             try {
@@ -691,6 +723,14 @@ public class HubResourceService {
             HubResourcePaths.pruneEmptyAncestors(root, groupDir.getParent());
         } catch (IOException ignored) {
             // best-effort; another upload may have refilled the group concurrently
+        }
+    }
+
+    private void ensureSafeResourcePath(Path target) {
+        try {
+            HubResourcePaths.ensureNoSymlink(root, target);
+        } catch (IOException ex) {
+            throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable(ex);
         }
     }
 
