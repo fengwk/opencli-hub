@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VncViewer } from '@/features/instances/VncViewer'
@@ -37,6 +37,7 @@ afterEach(() => {
   Reflect.deleteProperty(document, 'fullscreenElement')
   Reflect.deleteProperty(document, 'fullscreenEnabled')
   Reflect.deleteProperty(document, 'exitFullscreen')
+  vi.useRealTimers()
   vi.clearAllMocks()
 })
 
@@ -359,6 +360,318 @@ describe('VncViewer', () => {
 
     expect(rfbMock.instances[0].clipboardPasteFrom).toHaveBeenCalledWith('你好')
     expect(screen.getByText(/Latin-1/)).toBeInTheDocument()
+  })
+
+  it('releases the busy state when the clipboard-read permission prompt is left unanswered', async () => {
+    // Real headed Chrome keeps the permission prompt open until the user clicks Allow/Block; the in-flight Promise must not pin the controls.
+    const user = userEvent.setup()
+    let resolveRead: (value: string) => void = () => undefined
+    const readText = vi.fn(() => new Promise<string>((resolve) => { resolveRead = resolve }))
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText, writeText: vi.fn() },
+    })
+    render(<VncViewer instanceId="42" available />)
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
+    const rfb = rfbMock.instances[0]
+    act(() => rfb.emit('connect'))
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '本机剪贴板 → 远端' }))
+      expect(screen.getByRole('button', { name: '本机剪贴板 → 远端' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: '远端剪贴板 → 本机' })).toBeDisabled()
+
+      await act(async () => {
+        vi.advanceTimersByTime(30_000)
+      })
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/超时/)
+      expect(screen.getByRole('alert')).toHaveTextContent(/权限/)
+      expect(screen.getByRole('button', { name: '本机剪贴板 → 远端' })).not.toBeDisabled()
+      expect(rfb.clipboardPasteFrom).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+
+    // A late resolve from the original prompt must not retroactively trigger a paste or success notice.
+    await act(async () => {
+      resolveRead('late payload')
+    })
+    expect(rfb.clipboardPasteFrom).not.toHaveBeenCalled()
+    expect(screen.queryByText(/已向远端发送/)).not.toBeInTheDocument()
+  })
+
+  it('does not let a late clipboard-write resolve overwrite the timeout error', async () => {
+    // Symmetric guard for the local copy path: a late writeText() must not paint a success notice after the user already saw the timeout alert.
+    const user = userEvent.setup()
+    let resolveWrite: (value: undefined) => void = () => undefined
+    const writeText = vi.fn(() => new Promise<undefined>((resolve) => { resolveWrite = resolve }))
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText: vi.fn(), writeText },
+    })
+    render(<VncViewer instanceId="42" available />)
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
+    const rfb = rfbMock.instances[0]
+    act(() => rfb.emit('connect'))
+
+    act(() => rfb.emit('clipboard', new CustomEvent('clipboard', { detail: { text: 'remote payload' } })))
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '远端剪贴板 → 本机' }))
+      expect(screen.getByRole('button', { name: '远端剪贴板 → 本机' })).toBeDisabled()
+
+      await act(async () => {
+        vi.advanceTimersByTime(30_000)
+      })
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/超时/)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    await act(async () => {
+      resolveWrite(undefined)
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent(/超时/)
+    expect(screen.queryByText(/已将远端剪贴板复制到本机/)).not.toBeInTheDocument()
+  })
+
+  it('does not let a late clipboard-read reject overwrite the timeout error', async () => {
+    // A late rejection from the user's late Block click must not replace the actionable timeout message with a generic permission error.
+    const user = userEvent.setup()
+    let rejectRead: (reason?: unknown) => void = () => undefined
+    const readText = vi.fn(() => new Promise<string>((_, reject) => { rejectRead = reject }))
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText, writeText: vi.fn() },
+    })
+    render(<VncViewer instanceId="42" available />)
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
+    const rfb = rfbMock.instances[0]
+    act(() => rfb.emit('connect'))
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '本机剪贴板 → 远端' }))
+
+      await act(async () => {
+        vi.advanceTimersByTime(30_000)
+      })
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/超时/)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    await act(async () => {
+      rejectRead(new DOMException('Permission denied', 'NotAllowedError'))
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent(/超时/)
+    expect(screen.queryByText(/HTTPS 或 localhost/)).not.toBeInTheDocument()
+  })
+
+  it('still completes the clipboard send when readText resolves before the permission timeout', async () => {
+    // Sanity: the timeout wrapper must not interfere with the normal Allow path; a quick resolve still produces the send and success notice.
+    const user = userEvent.setup()
+    const readText = vi.fn().mockResolvedValue('quick allow')
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText, writeText: vi.fn() },
+    })
+    render(<VncViewer instanceId="42" available />)
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
+    const rfb = rfbMock.instances[0]
+    act(() => rfb.emit('connect'))
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '本机剪贴板 → 远端' }))
+      await act(async () => {
+        vi.advanceTimersByTime(1_000)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    await waitFor(() => expect(rfb.clipboardPasteFrom).toHaveBeenCalledWith('quick allow'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '本机剪贴板 → 远端' })).not.toBeDisabled()
+  })
+
+  it('does not paint a timeout alert when the user disconnects mid-permission-prompt', async () => {
+    // The lifecycle guard must drop a stale race result that completes after the user has already abandoned the connection.
+    const user = userEvent.setup()
+    let resolveRead: (value: string) => void = () => undefined
+    const readText = vi.fn(() => new Promise<string>((resolve) => { resolveRead = resolve }))
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText, writeText: vi.fn() },
+    })
+    render(<VncViewer instanceId="42" available />)
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
+    const firstRfb = rfbMock.instances[0]
+    act(() => firstRfb.emit('connect'))
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '本机剪贴板 → 远端' }))
+      expect(screen.getByRole('button', { name: '本机剪贴板 → 远端' })).toBeDisabled()
+
+      // User walks away from the permission prompt and disconnects; the op is now stale.
+      fireEvent.click(screen.getByRole('button', { name: '断开 VNC' }))
+      expect(screen.getByRole('status')).toHaveTextContent('未连接')
+
+      // Drive the 30 s timer to completion; the race's late outcome must be ignored by the epoch guard.
+      await act(async () => {
+        vi.advanceTimersByTime(30_000)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(firstRfb.clipboardPasteFrom).not.toHaveBeenCalled()
+
+    // Even if the user finally answers Allow after disconnecting, the original op must not write any state.
+    await act(async () => {
+      resolveRead('late after disconnect')
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(firstRfb.clipboardPasteFrom).not.toHaveBeenCalled()
+  })
+
+  it('lets the user paste again after disconnecting and reconnecting', async () => {
+    // After the stale op is invalidated, a fresh connection must restore usable clipboard buttons.
+    const user = userEvent.setup()
+    const readText = vi.fn()
+      .mockImplementationOnce(() => new Promise<string>(() => { /* first read stays pending forever */ }))
+      .mockImplementationOnce(() => Promise.resolve('after reconnect'))
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText, writeText: vi.fn() },
+    })
+    render(<VncViewer instanceId="42" available />)
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
+    const firstRfb = rfbMock.instances[0]
+    act(() => firstRfb.emit('connect'))
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '本机剪贴板 → 远端' }))
+      expect(screen.getByRole('button', { name: '本机剪贴板 → 远端' })).toBeDisabled()
+    } finally {
+      vi.useRealTimers()
+    }
+
+    // Manual disconnect while still pending.
+    await user.click(screen.getByRole('button', { name: '断开 VNC' }))
+    expect(firstRfb.disconnect).toHaveBeenCalledTimes(1)
+
+    // Reconnect to a fresh RFB; the buttons must be usable again immediately, not stuck in the old busy state.
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(2))
+    const secondRfb = rfbMock.instances[1]
+    act(() => secondRfb.emit('connect'))
+
+    expect(screen.getByRole('button', { name: '本机剪贴板 → 远端' })).not.toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: '本机剪贴板 → 远端' }))
+    await waitFor(() => expect(secondRfb.clipboardPasteFrom).toHaveBeenCalledWith('after reconnect'))
+    expect(firstRfb.clipboardPasteFrom).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('does not let a stale clipboard op finally clear a newer op busy state', async () => {
+    // If the old op's finally runs after a new op has set busy, the stale finally must not wipe it.
+    const user = userEvent.setup()
+    const readText = vi.fn()
+      .mockImplementationOnce(() => new Promise<string>(() => { /* first read stays pending forever */ }))
+      .mockImplementationOnce(() => new Promise<string>(() => { /* second read also stays pending */ }))
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText, writeText: vi.fn() },
+    })
+    render(<VncViewer instanceId="42" available />)
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
+    const firstRfb = rfbMock.instances[0]
+    act(() => firstRfb.emit('connect'))
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '本机剪贴板 → 远端' }))
+      expect(screen.getByRole('button', { name: '本机剪贴板 → 远端' })).toBeDisabled()
+    } finally {
+      vi.useRealTimers()
+    }
+
+    // Disconnect and reconnect: the new connection is on a fresh epoch, so the old op is already stale.
+    await user.click(screen.getByRole('button', { name: '断开 VNC' }))
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(2))
+    const secondRfb = rfbMock.instances[1]
+    act(() => secondRfb.emit('connect'))
+
+    fireEvent.click(screen.getByRole('button', { name: '本机剪贴板 → 远端' }))
+    // New op must own the busy state right now.
+    expect(screen.getByRole('button', { name: '本机剪贴板 → 远端' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '远端剪贴板 → 本机' })).toBeDisabled()
+
+    // Force the old race to finally settle so its finally runs after the new op has set busy.
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        vi.advanceTimersByTime(30_000)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    // The new op's busy state must still be in effect; the stale finally must not have cleared it.
+    expect(screen.getByRole('button', { name: '本机剪贴板 → 远端' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '远端剪贴板 → 本机' })).toBeDisabled()
+    expect(secondRfb.clipboardPasteFrom).not.toHaveBeenCalled()
+    expect(firstRfb.clipboardPasteFrom).not.toHaveBeenCalled()
+  })
+
+  it('treats a synchronous throw inside the clipboard operation as a normal clipboard error', async () => {
+    // The race wrapper must normalize a sync throw into the error outcome so the busy state is released and the
+    // user sees the generic clipboard failure message rather than an unhandled rejection.
+    const user = userEvent.setup()
+    const readText = vi.fn(() => { throw new DOMException('sync boom', 'NotAllowedError') })
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText, writeText: vi.fn() },
+    })
+    render(<VncViewer instanceId="42" available />)
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
+    const rfb = rfbMock.instances[0]
+    act(() => rfb.emit('connect'))
+
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: '本机剪贴板 → 远端' }))
+      })
+
+      expect(screen.getByRole('alert')).toHaveTextContent('无法读取本机剪贴板')
+      expect(screen.getByRole('alert')).toHaveTextContent('sync boom')
+      expect(screen.queryByText(/超时/)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '本机剪贴板 → 远端' })).not.toBeDisabled()
+      expect(rfb.clipboardPasteFrom).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('exits fullscreen when the user clicks disconnect', async () => {

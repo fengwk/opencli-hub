@@ -15,6 +15,53 @@ function utf8ByteLength(text: string): number {
   return clipboardTextEncoder.encode(text).length
 }
 
+// Browser permission prompts for clipboard read/write stay open until the user answers; if they walk away the
+// underlying Promise never settles and the busy state would otherwise pin the controls forever. A bounded timeout
+// releases the UI without cancelling the user's pending decision: the original Promise may still settle later.
+const CLIPBOARD_PERMISSION_TIMEOUT_MS = 30_000
+
+type ClipboardPermissionOutcome<T> =
+  | { timedOut: true }
+  | { timedOut: false; value: T }
+  | { timedOut: false; error: unknown }
+
+function raceClipboardPermission<T>(operation: () => Promise<T>, timeoutMs: number): Promise<ClipboardPermissionOutcome<T>> {
+  return new Promise((resolve) => {
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      resolve({ timedOut: true })
+    }, timeoutMs)
+    // Normalize a synchronous throw inside the operation factory into the standard error outcome so callers
+    // never see a rejected race promise (which would bypass the timeout/finally busy release).
+    let promise: Promise<T>
+    try {
+      promise = operation()
+    } catch (error) {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ timedOut: false, error })
+      return
+    }
+    promise.then(
+      (value) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve({ timedOut: false, value })
+      },
+      (error) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve({ timedOut: false, error })
+      },
+    )
+  })
+}
+
 const connectionStateLabels: Record<VncConnectionState, string> = {
   disconnected: '未连接',
   connecting: '连接中',
@@ -25,8 +72,15 @@ const connectionStateLabels: Record<VncConnectionState, string> = {
 // noVNC measures the target while constructing its internal 100%-height screen.
 const vncViewportStyle = { height: '72vh' }
 
+function errorMessageOf(error: unknown): string | null {
+  if (typeof error === 'object' && error !== null && 'message' in error && typeof (error as { message: unknown }).message === 'string') {
+    return (error as { message: string }).message
+  }
+  return null
+}
+
 function clipboardAccessError(action: '读取' | '写入', error: unknown): string {
-  const detail = error instanceof Error && error.message ? `（${error.message}）` : ''
+  const detail = errorMessageOf(error) ? `（${errorMessageOf(error)}）` : ''
   return `无法${action}本机剪贴板。请确认页面使用 HTTPS 或 localhost，并已授予浏览器剪贴板权限${detail}`
 }
 
@@ -40,6 +94,11 @@ export function VncViewer({ instanceId, available }: { instanceId: BackendId; av
   const targetRef = useRef<HTMLDivElement>(null)
   const rfbRef = useRef<RFB | null>(null)
   const connectionAttemptRef = useRef(0)
+  // Tracks the latest clipboard/RFB "epoch". Every lifecycle event that invalidates an in-flight clipboard
+  // operation (dispose, instance change, available→false, manual disconnect, reconnect) bumps this counter;
+  // in-flight ops capture the value at start time and check it after every await so stale results cannot
+  // overwrite a fresh connection's alert or busy state.
+  const operationEpochRef = useRef(0)
   const [connectionState, setConnectionState] = useState<VncConnectionState>('disconnected')
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -49,26 +108,32 @@ export function VncViewer({ instanceId, available }: { instanceId: BackendId; av
 
   const dispose = useCallback(() => {
     connectionAttemptRef.current += 1
+    operationEpochRef.current += 1
     const rfb = rfbRef.current
     rfbRef.current = null
     rfb?.disconnect()
   }, [])
 
   useEffect(() => {
+    // Instance change invalidates any in-flight clipboard op on the previous RFB.
+    operationEpochRef.current += 1
     setConnectionState('disconnected')
     setConnectionError(null)
     setRemoteClipboardText(null)
     setClipboardNotice(null)
+    setClipboardOperation(null)
     return () => dispose()
   }, [dispose, instanceId])
 
   useEffect(() => {
     if (!available) {
       dispose()
+      operationEpochRef.current += 1
       setConnectionError(null)
       setConnectionState('disconnected')
       setRemoteClipboardText(null)
       setClipboardNotice(null)
+      setClipboardOperation(null)
     }
   }, [available, dispose])
 
@@ -96,6 +161,9 @@ export function VncViewer({ instanceId, available }: { instanceId: BackendId; av
     }
     const attempt = connectionAttemptRef.current + 1
     connectionAttemptRef.current = attempt
+    // New connection invalidates any in-flight clipboard op; the buttons must be usable on the fresh RFB.
+    operationEpochRef.current += 1
+    setClipboardOperation(null)
     setConnectionError(null)
     setRemoteClipboardText(null)
     setClipboardNotice(null)
@@ -161,6 +229,10 @@ export function VncViewer({ instanceId, available }: { instanceId: BackendId; av
   }
 
   async function disconnect() {
+    // Manual disconnect invalidates any pending clipboard op and clears busy state before the async
+    // exitFullscreen() below yields control; this prevents the buttons from staying disabled.
+    operationEpochRef.current += 1
+    setClipboardOperation(null)
     dispose()
     setConnectionError(null)
     setConnectionState('disconnected')
@@ -204,10 +276,29 @@ export function VncViewer({ instanceId, available }: { instanceId: BackendId; av
       setConnectionError('当前浏览器不支持读取系统剪贴板，请使用 HTTPS 或 localhost。')
       return
     }
+    const epoch = operationEpochRef.current
     setConnectionError(null)
     setClipboardOperation('read')
     try {
-      const text = await navigator.clipboard.readText()
+      const outcome = await raceClipboardPermission(
+        () => navigator.clipboard.readText(),
+        CLIPBOARD_PERMISSION_TIMEOUT_MS,
+      )
+      // The lifecycle guard fires first: any disconnect, reconnect, instance change, or available→false
+      // happened after this op started. The late result belongs to a stale interaction and must not write
+      // any alert or trigger a paste on the fresh connection; the user can retry via the now-enabled button.
+      if (epoch !== operationEpochRef.current) {
+        return
+      }
+      if (outcome.timedOut) {
+        setConnectionError('等待浏览器剪贴板权限超时，请处理地址栏权限提示后重试。')
+        return
+      }
+      if ('error' in outcome) {
+        setConnectionError(clipboardAccessError('读取', outcome.error))
+        return
+      }
+      const text = outcome.value as string
       const outboundBytes = utf8ByteLength(text)
       if (outboundBytes > MAX_CLIPBOARD_BYTES) {
         setConnectionError(`剪贴板文本 UTF-8 编码后不能超过 256 KiB（${outboundBytes} 字节）。`)
@@ -220,10 +311,12 @@ export function VncViewer({ instanceId, available }: { instanceId: BackendId; av
       setClipboardNotice(containsNonLatin1(text)
         ? `已向远端发送 ${outboundBytes} 字节；传统 RFB 剪贴板可能替换非 Latin-1 字符。`
         : `已向远端发送 ${outboundBytes} 字节，请在远端按 Ctrl+V。`)
-    } catch (error) {
-      setConnectionError(clipboardAccessError('读取', error))
     } finally {
-      setClipboardOperation(null)
+      // Only clear busy if this op still owns it; a concurrent invalidating lifecycle event has already
+      // cleared (or re-assigned) clipboardOperation for the new connection.
+      if (epoch === operationEpochRef.current) {
+        setClipboardOperation(null)
+      }
     }
   }
 
@@ -236,20 +329,33 @@ export function VncViewer({ instanceId, available }: { instanceId: BackendId; av
       setConnectionError('当前浏览器不支持写入系统剪贴板，请使用 HTTPS 或 localhost。')
       return
     }
+    const epoch = operationEpochRef.current
     setConnectionError(null)
     setClipboardOperation('write')
     try {
-      await navigator.clipboard.writeText(remoteClipboardText)
+      const outcome = await raceClipboardPermission(
+        () => navigator.clipboard.writeText(remoteClipboardText),
+        CLIPBOARD_PERMISSION_TIMEOUT_MS,
+      )
+      if (epoch !== operationEpochRef.current) {
+        return
+      }
+      if (outcome.timedOut) {
+        setConnectionError('等待浏览器剪贴板权限超时，请处理地址栏权限提示后重试。')
+        return
+      }
+      if ('error' in outcome) {
+        setConnectionError(clipboardAccessError('写入', outcome.error))
+        return
+      }
       if (rfbRef.current !== rfb) {
         return
       }
       setClipboardNotice(`已将远端剪贴板复制到本机（${utf8ByteLength(remoteClipboardText)} 字节）。`)
-    } catch (error) {
-      if (rfbRef.current === rfb) {
-        setConnectionError(clipboardAccessError('写入', error))
-      }
     } finally {
-      setClipboardOperation(null)
+      if (epoch === operationEpochRef.current) {
+        setClipboardOperation(null)
+      }
     }
   }
 
