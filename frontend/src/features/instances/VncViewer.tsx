@@ -80,7 +80,8 @@ function errorMessageOf(error: unknown): string | null {
 }
 
 function clipboardAccessError(action: '读取' | '写入', error: unknown): string {
-  const detail = errorMessageOf(error) ? `（${errorMessageOf(error)}）` : ''
+  const message = errorMessageOf(error)
+  const detail = message ? `（${message}）` : ''
   return `无法${action}本机剪贴板。请确认页面使用 HTTPS 或 localhost，并已授予浏览器剪贴板权限${detail}`
 }
 
@@ -291,10 +292,12 @@ export function VncViewer({ instanceId, available }: { instanceId: BackendId; av
         return
       }
       if (outcome.timedOut) {
+        setClipboardNotice(null)
         setConnectionError('等待浏览器剪贴板权限超时，请处理地址栏权限提示后重试。')
         return
       }
       if ('error' in outcome) {
+        setClipboardNotice(null)
         setConnectionError(clipboardAccessError('读取', outcome.error))
         return
       }
@@ -341,10 +344,12 @@ export function VncViewer({ instanceId, available }: { instanceId: BackendId; av
         return
       }
       if (outcome.timedOut) {
+        setClipboardNotice(null)
         setConnectionError('等待浏览器剪贴板权限超时，请处理地址栏权限提示后重试。')
         return
       }
       if ('error' in outcome) {
+        setClipboardNotice(null)
         setConnectionError(clipboardAccessError('写入', outcome.error))
         return
       }
@@ -364,7 +369,7 @@ export function VncViewer({ instanceId, available }: { instanceId: BackendId; av
   return (
     <section
       ref={viewerRef}
-      className={`vnc-viewer${isFullscreen ? ' is-fullscreen' : ''}`}
+      className="vnc-viewer"
       aria-label="VNC 控制台"
     >
       <div className="section-heading-row vnc-toolbar">
