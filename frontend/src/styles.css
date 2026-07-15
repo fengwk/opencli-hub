@@ -1229,10 +1229,14 @@ input[type='file']::file-selector-button:hover {
   grid-column: 1 / -1;
 }
 
+.instance-detail-page {
+  width: min(1600px, 100%);
+}
+
 .instance-detail-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(300px, .72fr);
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
   align-items: start;
 }
 
@@ -1241,16 +1245,17 @@ input[type='file']::file-selector-button:hover {
 }
 
 .instance-detail-sidebar {
-  position: sticky;
-  top: calc(var(--topbar-height) + 16px);
+  position: static;
 }
 
 .instance-summary-grid {
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .instance-sidebar-actions {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px 150px;
+  align-items: stretch;
   gap: 8px;
 }
 
@@ -1303,15 +1308,62 @@ input[type='file']::file-selector-button:hover {
   margin-top: 12px;
 }
 
+.vnc-clipboard-help, .vnc-operation-status {
+  margin: 9px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.vnc-clipboard-help {
+  color: var(--color-text-dim);
+}
+
+.vnc-operation-status {
+  color: #bde7c6;
+}
+
 .vnc-canvas {
-  min-height: 430px;
-  max-height: 620px;
+  min-height: 620px;
+  max-height: 900px;
   margin-top: 13px;
   overflow: hidden;
   border: 1px solid var(--color-border-strong);
   border-radius: 9px;
   background: #030503;
   box-shadow: inset 0 0 38px rgba(0,0,0,.45);
+}
+
+.vnc-viewer:fullscreen {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 18px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: #07100a;
+}
+
+.vnc-viewer:fullscreen::backdrop {
+  background: #030503;
+}
+
+.vnc-viewer:fullscreen .vnc-toolbar,
+.vnc-viewer:fullscreen .vnc-controls,
+.vnc-viewer:fullscreen .vnc-clipboard-help,
+.vnc-viewer:fullscreen .vnc-operation-status,
+.vnc-viewer:fullscreen > .inline-error {
+  flex: 0 0 auto;
+}
+
+.vnc-viewer:fullscreen .vnc-canvas {
+  flex: 1 1 auto;
+  height: 0 !important;
+  min-height: 0;
+  max-height: none;
 }
 
 /* Command catalogue */
@@ -1754,8 +1806,21 @@ input[type='file']::file-selector-button:hover {
     position: static;
   }
 
+  .instance-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .instance-sidebar-actions {
+    grid-template-columns: 1fr;
+  }
+
   .instance-console-section {
     min-height: auto;
+  }
+
+  .vnc-canvas {
+    min-height: 480px;
+    max-height: 720px;
   }
 }
 
