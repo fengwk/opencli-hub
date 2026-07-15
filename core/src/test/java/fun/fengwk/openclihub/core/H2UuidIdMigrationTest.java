@@ -54,9 +54,13 @@ class H2UuidIdMigrationTest {
     private static void insertLegacyRows(Connection connection) throws Exception {
         try (Statement statement = connection.createStatement()) {
             statement.executeUpdate("""
-                insert into hub_instance values (
+                insert into hub_instance (
+                    id, code, display_name, context_id, state, websites_json, max_pending,
+                    last_error_message, state_changed_at, gmt_create, gmt_modified, version
+                ) values (
                     343020517415976960, 'legacy', 'Legacy', null, 'STOPPED', '[]', 5, null,
-                    current_timestamp, current_timestamp, current_timestamp, 0)
+                    current_timestamp, current_timestamp, current_timestamp, 0
+                )
                 """);
             statement.executeUpdate("""
                 insert into hub_execution values (

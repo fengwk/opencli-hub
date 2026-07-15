@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { listCommands } from '@/features/commands/commands-api'
-import type { InstanceEditableProperties } from '@/features/instances/types'
+import type { InstanceEditableProperties, InstanceProxyMode } from '@/features/instances/types'
+import { maximumProxyServerLength, validateCustomProxyServer } from '@/shared/proxy-validation'
 
 export interface InstanceFormProps {
   initialValues?: InstanceEditableProperties
@@ -35,6 +36,8 @@ export function InstanceForm({
   const [displayName, setDisplayName] = useState(initialValues?.displayName ?? '')
   const [websites, setWebsites] = useState<string[]>(initialValues?.websites ?? [])
   const [maxPending, setMaxPending] = useState(String(initialValues?.maxPending ?? 1))
+  const [proxyMode, setProxyMode] = useState<InstanceProxyMode>(initialValues?.proxyMode ?? 'INHERIT')
+  const [proxyServer, setProxyServer] = useState(initialValues?.proxyServer ?? '')
   const [websiteKeyword, setWebsiteKeyword] = useState('')
   const [validationError, setValidationError] = useState<string | null>(null)
   const commandsQuery = useQuery({ queryKey: ['commands'], queryFn: () => listCommands() })
@@ -75,8 +78,23 @@ export function InstanceForm({
       setValidationError(`最大待处理数必须是 ${minimumPendingCount} 到 ${maximumPendingCount} 之间的整数。`)
       return
     }
+    const normalizedProxyServer = proxyServer.trim()
+    if (proxyMode === 'CUSTOM') {
+      const proxyError = validateCustomProxyServer(normalizedProxyServer)
+      if (proxyError) {
+        setValidationError(proxyError)
+        return
+      }
+    }
     setValidationError(null)
-    await onSubmit({ code: normalizedCode, displayName: normalizedDisplayName, websites, maxPending: parsedMaxPending })
+    await onSubmit({
+      code: normalizedCode,
+      displayName: normalizedDisplayName,
+      websites,
+      maxPending: parsedMaxPending,
+      proxyMode,
+      proxyServer: proxyMode === 'CUSTOM' ? normalizedProxyServer : null,
+    })
   }
 
   return (
@@ -111,6 +129,41 @@ export function InstanceForm({
           }}
         />
       </label>
+      <label>
+        代理模式
+        <select
+          value={proxyMode}
+          disabled={busy}
+          onChange={(event) => {
+            setProxyMode(event.target.value as InstanceProxyMode)
+            setValidationError(null)
+          }}
+        >
+          <option value="INHERIT">继承全局</option>
+          <option value="DIRECT">直连</option>
+          <option value="CUSTOM">自定义代理</option>
+        </select>
+      </label>
+      {proxyMode === 'CUSTOM' ? (
+        <label>
+          代理服务器
+          <input
+            type="text"
+            value={proxyServer}
+            required
+            maxLength={maximumProxyServerLength}
+            autoComplete="off"
+            placeholder="socks5://proxy.example.com:1080"
+            aria-describedby="instance-proxy-server-help"
+            disabled={busy}
+            onChange={(event) => {
+              setProxyServer(event.target.value)
+              setValidationError(null)
+            }}
+          />
+        </label>
+      ) : null}
+      <p id="instance-proxy-server-help" className="form-help instance-proxy-help">代理仅控制浏览器访问网站的流量；容器 localhost 上的 OpenCLI 服务不会经过代理。代理地址按 Hub 容器网络解析。自定义代理仅支持不含用户名或密码的 http、https、socks4、socks5://host:port 地址。运行中的实例需手动重启后才会使用新配置。</p>
       <fieldset disabled={busy || commandsQuery.isPending}>
         <legend>支持的网站</legend>
         {commandsQuery.isPending ? <span className="muted">正在加载网站目录…</span> : null}

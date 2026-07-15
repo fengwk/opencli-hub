@@ -1,5 +1,6 @@
 package fun.fengwk.openclihub.share.model.instance;
 
+import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.util.List;
 import lombok.Data;
 
@@ -15,5 +16,7 @@ public class HubInstanceEditablePropertiesDTO {
     private String displayName;
     private List<String> websites;
     private Integer maxPending;
+    private HubProxyMode proxyMode;
+    private String proxyServer;
 
 }

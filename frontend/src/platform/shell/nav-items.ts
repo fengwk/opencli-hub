@@ -1,4 +1,4 @@
-import { Boxes, FileClock, ListChecks, ScrollText, TerminalSquare } from 'lucide-react'
+import { Boxes, FileClock, ListChecks, ScrollText, Settings, TerminalSquare } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 export interface NavItem {
@@ -14,5 +14,6 @@ export const navItems: NavItem[] = [
   { to: '/executions', label: '执行记录', technicalLabel: 'EXECUTIONS', icon: ListChecks },
   { to: '/commands', label: '命令目录', technicalLabel: 'COMMANDS', icon: TerminalSquare },
   { to: '/resources', label: '资源中心', technicalLabel: 'RESOURCES', icon: FileClock },
+  { to: '/settings', label: '系统设置', technicalLabel: 'SETTINGS', icon: Settings },
   { to: '/logs', label: '日志中心', technicalLabel: 'LOGS', icon: ScrollText },
 ]
