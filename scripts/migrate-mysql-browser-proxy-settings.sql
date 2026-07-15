@@ -48,8 +48,8 @@ create table if not exists hub_system_settings (
     id int not null,
     proxy_mode varchar(16) not null,
     proxy_server varchar(512) null,
-    gmt_create timestamp(3) not null,
-    gmt_modified timestamp(3) not null,
+    gmt_create timestamp(3) not null default current_timestamp(3),
+    gmt_modified timestamp(3) not null default current_timestamp(3),
     version bigint not null default 0,
     primary key (id)
 ) engine=InnoDB default charset=utf8mb4 comment='Hub-wide browser settings singleton';
