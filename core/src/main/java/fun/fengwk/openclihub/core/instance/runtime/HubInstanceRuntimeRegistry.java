@@ -52,6 +52,10 @@ public class HubInstanceRuntimeRegistry {
         return lifecycleLocks.computeIfAbsent(instanceId, ignored -> new ReentrantLock());
     }
 
+    int lifecycleLockCount() {
+        return lifecycleLocks.size();
+    }
+
     /** Records a runtime under the registry and rejects duplicate live registrations. */
     public void register(HubInstanceRuntime runtime) {
         HubInstanceRuntime existing = runtimes.putIfAbsent(runtime.getInstanceId(), runtime);

@@ -14,12 +14,22 @@ import fun.fengwk.openclihub.core.settings.service.FakeHubSystemSettingsService;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceCreateDTO;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
+import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
 import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,6 +52,7 @@ class HubInstanceLifecycleServiceTest {
     private FakeUnexpectedExitListener watcher;
     private OpenCliHubProperties properties;
     private FakeHubSystemSettingsService settingsService;
+    private HubDispatchRegistry dispatchRegistry;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -63,9 +74,10 @@ class HubInstanceLifecycleServiceTest {
         watcher = new FakeUnexpectedExitListener();
         registry = new HubInstanceRuntimeRegistry(launcher, allocationService, watcher);
         settingsService = new FakeHubSystemSettingsService();
+        dispatchRegistry = new HubDispatchRegistry();
         lifecycle = new HubInstanceLifecycleService(
             instanceService, registry, launcher, daemon, properties, settingsService,
-            new ProfileSingletonCleaner(), new HubDispatchRegistry());
+            new ProfileSingletonCleaner(), dispatchRegistry);
     }
 
     private static void cleanupX11BaseRange(int base) {
@@ -158,6 +170,77 @@ class HubInstanceLifecycleServiceTest {
         String chromeCommand = lastChromeCommand();
         assertThat(chromeCommand).contains("--disable-gpu", "--no-proxy-server");
         assertThat(chromeCommand).doesNotContain("--disable-software-rasterizer");
+    }
+
+    /** A newly visible RUNNING row must already have runtime and dispatcher registrations. */
+    @Test
+    void shouldRegisterRuntimeAndDispatcherBeforeCreateRowBecomesVisible() {
+        ObservingInstanceService observingService = new ObservingInstanceService();
+        useInstanceService(observingService, new HubDispatchRegistry());
+        AtomicBoolean observed = new AtomicBoolean();
+        observingService.beforeCreate = instance -> {
+            assertThat(registry.contains(instance.getId())).isTrue();
+            assertThat(dispatchRegistry.getMaxPending(instance.getId()))
+                .isEqualTo(instance.getMaxPending());
+            assertThat(watcher.watchedCount())
+                .as("watcher must not report ERROR before the row exists")
+                .isZero();
+            observed.set(true);
+        };
+        daemon.addConnectedContextAfterFetch("ctx-visible-create", 2);
+
+        HubInstance created = lifecycle.create(createDto("bilibili-visible-create"));
+
+        assertThat(observed).isTrue();
+        assertThat(created.getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(watcher.watchedCount()).isOne();
+    }
+
+    /** The existing-row start path also installs runtime resources before publishing RUNNING. */
+    @Test
+    void shouldRegisterRuntimeAndDispatcherBeforeStartPublishesRunning() {
+        ObservingInstanceService observingService = new ObservingInstanceService();
+        useInstanceService(observingService, new HubDispatchRegistry());
+        String id = seedPersistedInstance("bilibili-visible-start", "ctx-visible-start");
+        OpenCliProfileSnapshot profile = new OpenCliProfileSnapshot();
+        profile.setContextId("ctx-visible-start");
+        profile.setExtensionConnected(true);
+        daemon.setProfiles(List.of(profile));
+        AtomicBoolean observed = new AtomicBoolean();
+        observingService.beforeStateUpdate = (updatedId, state) -> {
+            if (state == HubInstanceState.RUNNING) {
+                assertThat(registry.contains(updatedId)).isTrue();
+                assertThat(dispatchRegistry.getMaxPending(updatedId)).isEqualTo(5);
+                observed.set(true);
+            }
+        };
+
+        lifecycle.start(id);
+
+        assertThat(observed).isTrue();
+    }
+
+    /** A process dying after context discovery is caught before create persists RUNNING. */
+    @Test
+    void shouldEnsureProcessesAliveBeforeCreatePersistsRunning() {
+        HubDispatchRegistry killingDispatchRegistry = new HubDispatchRegistry() {
+            @Override
+            public void register(HubInstance instance) {
+                super.register(instance);
+                launcher.lastHandle(HubInstanceRuntime.HubInstanceProcessKind.CHROME).kill();
+            }
+        };
+        useInstanceService(new InMemoryHubInstanceService(), killingDispatchRegistry);
+        daemon.addConnectedContextAfterFetch("ctx-dies-before-persist", 2);
+
+        assertThatThrownBy(() -> lifecycle.create(createDto("bilibili-dies-before-persist")))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_START_FAILED));
+
+        assertThat(instanceService.list()).isEmpty();
+        assertThat(registry.list()).isEmpty();
+        assertThat(watcher.watchedCount()).isZero();
     }
 
     @Test
@@ -372,15 +455,42 @@ class HubInstanceLifecycleServiceTest {
     /** Invalid route IDs must not allocate an unbounded lifecycle lock or start OS processes. */
     @Test
     void shouldRejectUnsupportedIdBeforeAllocatingLifecycleState() {
+        int lockCount = registry.lifecycleLockCount();
         assertThatThrownBy(() -> lifecycle.start("not-an-id"))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .extracting("code")
             .isEqualTo(prefixed(HubErrorCodes.INSTANCE_NOT_FOUND));
+        assertThat(registry.lifecycleLockCount()).isEqualTo(lockCount);
 
         for (HubInstanceRuntime.HubInstanceProcessKind kind
             : HubInstanceRuntime.HubInstanceProcessKind.values()) {
             assertThat(launcher.launchCount(kind)).isZero();
         }
+    }
+
+    /** Supported but absent ids are rejected before start/stop/delete allocate lifecycle locks. */
+    @Test
+    void shouldRejectMissingIdBeforeAllocatingLifecycleLock() {
+        String missingId = UUID.randomUUID().toString();
+        int lockCount = registry.lifecycleLockCount();
+
+        assertThatThrownBy(() -> lifecycle.start(missingId))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_NOT_FOUND));
+        assertThatThrownBy(() -> lifecycle.stop(missingId))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_NOT_FOUND));
+        assertThatThrownBy(() -> lifecycle.delete(missingId))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_NOT_FOUND));
+        assertThatThrownBy(() -> lifecycle.restart(missingId))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_NOT_FOUND));
+        assertThatThrownBy(() -> lifecycle.update(missingId, new HubInstanceUpdateDTO()))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_NOT_FOUND));
+
+        assertThat(registry.lifecycleLockCount()).isEqualTo(lockCount);
     }
 
     @Test
@@ -440,6 +550,69 @@ class HubInstanceLifecycleServiceTest {
         assertThat(instanceService.get(id).getState()).isEqualTo(HubInstanceState.ERROR);
         assertThat(instanceService.get(ownerId).getState()).isEqualTo(HubInstanceState.STOPPED);
         assertThat(instanceService.get(ownerId).getContextId()).isEqualTo("ctx-collision");
+    }
+
+    /** Editable updates are serialized with start and cannot overwrite its final RUNNING state. */
+    @Test
+    void shouldSerializeEditableUpdateWithLifecycleTransition() throws Exception {
+        BlockingUpdateStateService blockingService = new BlockingUpdateStateService();
+        useInstanceService(blockingService, new HubDispatchRegistry());
+        String id = seedPersistedInstance("bilibili-serialized", "ctx-serialized");
+        OpenCliProfileSnapshot profile = new OpenCliProfileSnapshot();
+        profile.setContextId("ctx-serialized");
+        profile.setExtensionConnected(true);
+        daemon.setProfiles(List.of(profile));
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch updateInvocationStarted = new CountDownLatch(1);
+        try {
+            Future<HubInstance> startFuture = executor.submit(() -> lifecycle.start(id));
+            assertThat(blockingService.startingUpdateEntered.await(1, TimeUnit.SECONDS)).isTrue();
+
+            Future<HubInstance> updateFuture = executor.submit(() -> {
+                updateInvocationStarted.countDown();
+                return lifecycle.update(id, updateDto(instanceService.get(id), 2));
+            });
+            assertThat(updateInvocationStarted.await(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(blockingService.editableUpdateEntered.await(150, TimeUnit.MILLISECONDS))
+                .as("editable write must wait behind the lifecycle lock")
+                .isFalse();
+
+            blockingService.releaseStartingUpdate.countDown();
+            assertThat(startFuture.get(2, TimeUnit.SECONDS).getState())
+                .isEqualTo(HubInstanceState.RUNNING);
+            assertThat(updateFuture.get(2, TimeUnit.SECONDS).getMaxPending()).isEqualTo(2);
+
+            HubInstance persisted = instanceService.get(id);
+            assertThat(persisted.getState()).isEqualTo(HubInstanceState.RUNNING);
+            assertThat(persisted.getMaxPending()).isEqualTo(2);
+            assertThat(dispatchRegistry.getMaxPending(id)).isEqualTo(2);
+        } finally {
+            blockingService.releaseStartingUpdate.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    /** Running dispatchers receive maxPending immediately while proxy changes await restart. */
+    @Test
+    void shouldPropagateRunningMaxPendingWithoutRestartingChrome() {
+        String id = seedPersistedInstance("bilibili-update-running", "ctx-update-running");
+        daemon.addConnectedContextAfterFetch("ctx-update-running", 2);
+        lifecycle.start(id);
+        int chromeLaunches = launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME);
+
+        HubInstanceUpdateDTO update = updateDto(instanceService.get(id), 1);
+        update.setDisplayName("updated display");
+        update.setWebsites(List.of("chatgpt"));
+        update.setProxyMode(HubProxyMode.CUSTOM);
+        update.setProxyServer("http://proxy.example:8080");
+        HubInstance updated = lifecycle.update(id, update);
+
+        assertThat(updated.getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(updated.getWebsites()).containsExactly("chatgpt");
+        assertThat(dispatchRegistry.getMaxPending(id)).isOne();
+        assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
+            .isEqualTo(chromeLaunches);
+        assertThat(lastChromeCommand()).contains("--no-proxy-server");
     }
 
     // ---------------------------------------------------------------------------------
@@ -746,6 +919,26 @@ class HubInstanceLifecycleServiceTest {
         return dto;
     }
 
+    private HubInstanceUpdateDTO updateDto(HubInstance instance, int maxPending) {
+        HubInstanceUpdateDTO dto = new HubInstanceUpdateDTO();
+        dto.setCode(instance.getCode());
+        dto.setDisplayName(instance.getDisplayName());
+        dto.setWebsites(instance.getWebsites());
+        dto.setMaxPending(maxPending);
+        dto.setProxyMode(instance.getProxyMode());
+        dto.setProxyServer(instance.getProxyServer());
+        return dto;
+    }
+
+    private void useInstanceService(InMemoryHubInstanceService service,
+        HubDispatchRegistry newDispatchRegistry) {
+        instanceService = service;
+        dispatchRegistry = newDispatchRegistry;
+        lifecycle = new HubInstanceLifecycleService(
+            instanceService, registry, launcher, daemon, properties, settingsService,
+            new ProfileSingletonCleaner(), dispatchRegistry);
+    }
+
     private String seedPersistedInstance(String code, String contextId) {
         return seedPersistedInstance(code, contextId, HubProxyMode.INHERIT, null);
     }
@@ -798,6 +991,63 @@ class HubInstanceLifecycleServiceTest {
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    private static class ObservingInstanceService extends InMemoryHubInstanceService {
+
+        private Consumer<HubInstance> beforeCreate;
+        private BiConsumer<String, HubInstanceState> beforeStateUpdate;
+
+        @Override
+        public void create(HubInstance instance) {
+            if (beforeCreate != null) {
+                beforeCreate.accept(instance);
+            }
+            super.create(instance);
+        }
+
+        @Override
+        public void updateState(String id, HubInstanceState newState, String errorMessage) {
+            if (beforeStateUpdate != null) {
+                beforeStateUpdate.accept(id, newState);
+            }
+            super.updateState(id, newState, errorMessage);
+        }
+
+    }
+
+    private static final class BlockingUpdateStateService extends ObservingInstanceService {
+
+        private final CountDownLatch startingUpdateEntered = new CountDownLatch(1);
+        private final CountDownLatch releaseStartingUpdate = new CountDownLatch(1);
+        private final CountDownLatch editableUpdateEntered = new CountDownLatch(1);
+
+        @Override
+        public void updateState(String id, HubInstanceState newState, String errorMessage) {
+            if (newState == HubInstanceState.STARTING) {
+                startingUpdateEntered.countDown();
+                await(releaseStartingUpdate);
+            }
+            super.updateState(id, newState, errorMessage);
+        }
+
+        @Override
+        public HubInstance update(String id, HubInstanceUpdateDTO dto) {
+            editableUpdateEntered.countDown();
+            return super.update(id, dto);
+        }
+
+        private static void await(CountDownLatch latch) {
+            try {
+                if (!latch.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("timed out waiting for test release");
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("test wait interrupted", ex);
+            }
+        }
+
     }
 
 }

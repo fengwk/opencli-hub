@@ -78,7 +78,7 @@ public class HubInstanceController {
     public Result<HubInstanceDTO> update(
         @PathVariable String id,
         @Valid @RequestBody HubInstanceUpdateDTO request) {
-        return Results.ok(toDTO(instanceService.update(id, request)));
+        return Results.ok(toDTO(lifecycleService.update(id, request)));
     }
 
     @DeleteMapping("/{id}")

@@ -99,6 +99,49 @@ class HubInstanceDispatcherTest {
         }
     }
 
+    /** Dynamic limits reject immediately without dropping work already accepted by the queue. */
+    @Test
+    void shouldApplyDynamicMaxPendingWithoutDroppingQueuedTasks() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("dynamic", 3);
+        CountDownLatch active = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        Future<String> running = dispatcher.submit(() -> {
+            active.countDown();
+            release.await(5, TimeUnit.SECONDS);
+            return "running";
+        }, deadline);
+        try {
+            assertThat(active.await(1, TimeUnit.SECONDS)).isTrue();
+            Future<String> first = dispatcher.submit(() -> "first", deadline);
+            Future<String> second = dispatcher.submit(() -> "second", deadline);
+            Future<String> third = dispatcher.submit(() -> "third", deadline);
+            assertThat(dispatcher.pendingCount()).isEqualTo(3);
+
+            dispatcher.updateMaxPending(1);
+            assertThat(dispatcher.getMaxPending()).isOne();
+            assertThatThrownBy(() -> dispatcher.submit(() -> "rejected", deadline))
+                .isInstanceOf(ThrowableConventionErrorCode.class)
+                .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                    .isEqualTo(HubErrorCodes.INSTANCE_QUEUE_FULL.getCode()));
+            assertThat(dispatcher.pendingCount()).isEqualTo(3);
+
+            dispatcher.updateMaxPending(4);
+            Future<String> fourth = dispatcher.submit(() -> "fourth", deadline);
+            assertThat(dispatcher.pendingCount()).isEqualTo(4);
+
+            release.countDown();
+            assertThat(running.get(2, TimeUnit.SECONDS)).isEqualTo("running");
+            assertThat(first.get(2, TimeUnit.SECONDS)).isEqualTo("first");
+            assertThat(second.get(2, TimeUnit.SECONDS)).isEqualTo("second");
+            assertThat(third.get(2, TimeUnit.SECONDS)).isEqualTo("third");
+            assertThat(fourth.get(2, TimeUnit.SECONDS)).isEqualTo("fourth");
+        } finally {
+            release.countDown();
+            dispatcher.shutdownNow();
+        }
+    }
+
     /**
      * Verifies that a submit whose deadline is already in the past short-circuits to
      * {@code QUEUE_WAIT_TIMEOUT} without ever touching the bounded queue.

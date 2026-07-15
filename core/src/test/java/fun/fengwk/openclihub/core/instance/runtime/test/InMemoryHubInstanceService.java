@@ -123,8 +123,12 @@ public class InMemoryHubInstanceService implements HubInstanceService {
             if (insertFailure != null) {
                 throw insertFailure;
             }
+            LocalDateTime now = LocalDateTime.now();
             if (instance.getCreateTime() == null) {
-                instance.setCreateTime(LocalDateTime.now());
+                instance.setCreateTime(now);
+            }
+            if (instance.getUpdateTime() == null) {
+                instance.setUpdateTime(now);
             }
             rows.put(instance.getId(), copy(instance));
             codeIndex.put(instance.getCode(), instance.getId());
@@ -145,6 +149,7 @@ public class InMemoryHubInstanceService implements HubInstanceService {
             existing.setMaxPending(dto.getMaxPending());
             existing.setProxyMode(dto.getProxyMode());
             existing.setProxyServer(dto.getProxyServer());
+            existing.setUpdateTime(LocalDateTime.now());
             rows.put(id, copy(existing));
             return copy(existing);
         }
@@ -160,8 +165,10 @@ public class InMemoryHubInstanceService implements HubInstanceService {
             if (existing == null) {
                 throw HubErrorCodes.INSTANCE_NOT_FOUND.asThrowable("instance vanished: " + id);
             }
+            LocalDateTime now = LocalDateTime.now();
             existing.setState(newState);
-            existing.setStateChangedAt(LocalDateTime.now());
+            existing.setStateChangedAt(now);
+            existing.setUpdateTime(now);
             if (newState == HubInstanceState.ERROR) {
                 String trimmed = errorMessage == null ? null : errorMessage.trim();
                 existing.setLastErrorMessage(
@@ -192,6 +199,7 @@ public class InMemoryHubInstanceService implements HubInstanceService {
                 ctxIndex.remove(existing.getContextId(), id);
             }
             existing.setContextId(normalized);
+            existing.setUpdateTime(LocalDateTime.now());
             ctxIndex.put(normalized, id);
         }
     }
