@@ -52,12 +52,15 @@ public class OrphanInstanceScanner {
     public Result scan() {
         Result result = new Result();
         Path root = HubInstanceDirectoryLayout.instancesRoot(properties.getDataDir());
-        if (!Files.exists(root)) {
+        if (!isRealInstancesRoot(root, result)) {
             return result;
         }
         Set<String> knownIds = new HashSet<>();
         for (HubInstance instance : instanceService.list()) {
             knownIds.add(instance.getId());
+        }
+        if (!isRealInstancesRoot(root, result)) {
+            return result;
         }
         try (var stream = Files.list(root)) {
             stream.forEach(entry -> inspectEntry(entry, knownIds, result));
@@ -71,6 +74,23 @@ public class OrphanInstanceScanner {
                 result.managedOrphanDeleted, result.unsafeNameProtected);
         }
         return result;
+    }
+
+    private boolean isRealInstancesRoot(Path root, Result result) {
+        if (Files.isSymbolicLink(root)) {
+            log.warn("orphan scanner: protected symbolic link instances root: {}", root);
+            result.unsafeNameProtected++;
+            return false;
+        }
+        if (!Files.exists(root, NOFOLLOW_LINKS)) {
+            return false;
+        }
+        if (!Files.isDirectory(root, NOFOLLOW_LINKS)) {
+            log.warn("orphan scanner: protected non-directory instances root: {}", root);
+            result.unsafeNameProtected++;
+            return false;
+        }
+        return true;
     }
 
     private void inspectEntry(Path entry, Set<String> knownIds, Result result) {

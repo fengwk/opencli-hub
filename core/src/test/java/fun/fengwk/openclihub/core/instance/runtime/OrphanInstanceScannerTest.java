@@ -173,6 +173,54 @@ class OrphanInstanceScannerTest {
     }
 
     @Test
+    void shouldProtectSymlinkInstancesRootWithoutTouchingExternalTree() throws IOException {
+        Path outside = Files.createDirectories(dataDir.resolve("outside-root"));
+        Path uuidOrphan = Files.createDirectories(outside.resolve(UUID.randomUUID().toString()));
+        Path marker = Files.createFile(uuidOrphan.resolve(".creating"));
+        Path uuidSentinel = Files.writeString(uuidOrphan.resolve("sentinel"), "uuid-kept");
+        Path decimalOrphan = Files.createDirectories(outside.resolve("9876"));
+        Path decimalSentinel = Files.writeString(
+            decimalOrphan.resolve("sentinel"), "decimal-kept");
+        Path rootLink = Files.createSymbolicLink(dataDir.resolve("instances"), outside);
+
+        // The scanner must reject a symlink root before enumerating its external target.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(result.creatingOrphanDeleted).isZero();
+        assertThat(result.managedOrphanDeleted).isZero();
+        assertThat(Files.exists(rootLink, NOFOLLOW_LINKS)).isTrue();
+        assertThat(marker).exists();
+        assertThat(uuidSentinel).hasContent("uuid-kept");
+        assertThat(decimalSentinel).hasContent("decimal-kept");
+    }
+
+    @Test
+    void shouldProtectBrokenSymlinkInstancesRoot() throws IOException {
+        Path missingTarget = dataDir.resolve("missing-root-target");
+        Path rootLink = Files.createSymbolicLink(dataDir.resolve("instances"), missingTarget);
+
+        // A broken root symlink is still a protected non-canonical root entry.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(Files.exists(rootLink, NOFOLLOW_LINKS)).isTrue();
+        assertThat(Files.exists(rootLink)).isFalse();
+        assertThat(Files.exists(missingTarget)).isFalse();
+    }
+
+    @Test
+    void shouldProtectRegularFileInstancesRoot() throws IOException {
+        Path rootFile = Files.writeString(dataDir.resolve("instances"), "kept");
+
+        // A regular file cannot be treated as the canonical instances directory.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(rootFile).hasContent("kept");
+    }
+
+    @Test
     void shouldReturnZerosWhenInstancesRootMissing() {
         assertThat(scanner().scan().total()).isZero();
     }
