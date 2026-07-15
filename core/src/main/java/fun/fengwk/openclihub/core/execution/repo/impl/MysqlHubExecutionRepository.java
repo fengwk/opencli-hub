@@ -53,8 +53,8 @@ public class MysqlHubExecutionRepository implements HubExecutionRepository {
 
     @Override
     public Page<HubExecution> page(PageQuery pageQuery, String instanceId) {
-        long offset = Pages.queryOffset(pageQuery);
         int limit = Pages.queryLimit(pageQuery);
+        long offset = ((long) pageQuery.getPageNumber() - 1L) * limit;
         List<HubExecutionDO> rows;
         long totalCount;
         if (instanceId == null) {

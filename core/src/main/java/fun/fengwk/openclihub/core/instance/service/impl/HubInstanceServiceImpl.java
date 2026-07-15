@@ -86,11 +86,18 @@ public class HubInstanceServiceImpl implements HubInstanceService {
     @Override
     public void create(HubInstance instance) {
         validateAndNormalizeForCreate(instance);
+        LocalDateTime now = LocalDateTime.now();
         if (instance.getId() == null || instance.getId().isBlank()) {
             instance.setId(repository.generateId());
         }
         if (instance.getStateChangedAt() == null) {
-            instance.setStateChangedAt(LocalDateTime.now());
+            instance.setStateChangedAt(now);
+        }
+        if (instance.getCreateTime() == null) {
+            instance.setCreateTime(now);
+        }
+        if (instance.getUpdateTime() == null) {
+            instance.setUpdateTime(now);
         }
 
         try {
@@ -125,6 +132,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
         existing.setMaxPending(dto.getMaxPending());
         existing.setProxyMode(dto.getProxyMode());
         existing.setProxyServer(dto.getProxyServer());
+        existing.setUpdateTime(LocalDateTime.now());
 
         // Pre-check code uniqueness excluding the row being updated.
         HubInstance byCode = repository.findByCode(existing.getCode());
@@ -155,6 +163,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
         LocalDateTime now = LocalDateTime.now();
         existing.setState(newState);
         existing.setStateChangedAt(now);
+        existing.setUpdateTime(now);
         if (newState == HubInstanceState.ERROR) {
             // Trim to avoid storing accidental padding; design does not impose a length cap.
             String trimmed = errorMessage == null ? null : errorMessage.trim();
@@ -191,6 +200,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
                 "contextId already bound: " + normalized);
         }
         existing.setContextId(normalized);
+        existing.setUpdateTime(LocalDateTime.now());
         try {
             boolean updated = repository.update(existing);
             if (!updated) {

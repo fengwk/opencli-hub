@@ -61,9 +61,12 @@ create table if not exists hub_execution (
 
 alter table hub_execution alter column id varchar(36) not null;
 alter table hub_execution alter column instance_id varchar(36) null;
-create index if not exists idx_hub_execution_instance_id on hub_execution (instance_id);
+drop index if exists idx_hub_execution_instance_id;
+drop index if exists idx_hub_execution_gmt_create;
+create index if not exists idx_hub_execution_queued_at_id on hub_execution (queued_at, id);
+create index if not exists idx_hub_execution_instance_queued_at_id
+    on hub_execution (instance_id, queued_at, id);
 create index if not exists idx_hub_execution_status on hub_execution (status);
-create index if not exists idx_hub_execution_gmt_create on hub_execution (gmt_create);
 
 create table if not exists hub_command_blacklist (
     id varchar(36) not null,

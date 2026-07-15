@@ -18,6 +18,10 @@
   - JDK UUID 与旧 BIGINT ID 兼容规则
   - H2 自动迁移和 MySQL 停机手工迁移
   - Profile、Execution 与资源保留边界
+- [Execution 查询索引迁移](execution-index-migration.md)
+  - `queued_at, id` 稳定分页组合索引
+  - H2 自动升级和 MySQL 5.7 停机手工迁移
+  - 备份、校验与备份恢复回滚流程
 - [浏览器代理设置](browser-proxy-settings.md)
   - 全局默认与 Instance 覆盖语义
   - Docker 代理可达性与 Runtime Chrome 参数

@@ -13,10 +13,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -28,6 +30,29 @@ class ProcessBuilderOpenCliCatalogSourceTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void shouldRejectNonPositiveTimeout() {
+        // A non-positive timeout cannot establish a usable shared execution deadline.
+        assertThrows(IllegalArgumentException.class,
+            () -> new ProcessBuilderOpenCliCatalogSource(new OpenCliHubProperties(), 0L));
+    }
+
+    @Test
+    void shouldReturnSmallJsonOutput() throws Exception {
+        // The successful path must still expose the complete catalog as an in-memory stream.
+        Path binary = executable("small-output.sh", """
+            #!/bin/sh
+            printf '[{"name":"demo"}]'
+            """);
+        ProcessBuilderOpenCliCatalogSource source = new ProcessBuilderOpenCliCatalogSource(
+            properties(binary), 2000L);
+
+        try (var inputStream = source.open()) {
+            assertEquals("[{\"name\":\"demo\"}]",
+                new String(inputStream.readAllBytes(), StandardCharsets.UTF_8));
+        }
+    }
 
     @Test
     void shouldDrainLargeOutputWhileProcessIsRunning() throws Exception {
@@ -45,6 +70,22 @@ class ProcessBuilderOpenCliCatalogSourceTest {
     }
 
     @Test
+    void shouldRejectNonZeroExitCode() throws Exception {
+        // A completed reader must not change the existing non-zero process exit contract.
+        Path binary = executable("non-zero.sh", """
+            #!/bin/sh
+            printf 'failure'
+            exit 7
+            """);
+        ProcessBuilderOpenCliCatalogSource source = new ProcessBuilderOpenCliCatalogSource(
+            properties(binary), 2000L);
+
+        IOException exception = assertThrows(IOException.class, source::open);
+        assertTrue(exception.getMessage().contains("exited with code 7"));
+    }
+
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.SECONDS)
     void shouldKeepCatalogProcessTimeoutBounded() throws Exception {
         // A stuck CLI must still fail within the configured catalog timeout.
         Path binary = executable("slow.sh", """
@@ -55,8 +96,65 @@ class ProcessBuilderOpenCliCatalogSourceTest {
         ProcessBuilderOpenCliCatalogSource source = new ProcessBuilderOpenCliCatalogSource(
             properties(binary), 100L);
 
+        long startedNanos = System.nanoTime();
         IOException exception = assertThrows(IOException.class, source::open);
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
         assertTrue(exception.getMessage().contains("Timed out"));
+        assertTrue(elapsedMillis < 1500L, "Direct process timeout took " + elapsedMillis + " ms");
+    }
+
+    /**
+     * Reproduces a real {@code /bin/sh list -f json} parent that exits successfully while
+     * its reparented background child still owns the merged stdout pipe.
+     */
+    @Test
+    @Timeout(value = 2, unit = TimeUnit.SECONDS)
+    void shouldTimeOutWhenExitedParentLeavesOutputPipeOpen() throws Exception {
+        Path pidFile = tempDir.resolve("inherited-pipe.pid");
+        Files.writeString(tempDir.resolve("list"), """
+            sleep 20 &
+            child=$!
+            printf '%%s %%s\n' "$$" "$child" > "%s"
+            printf '[]'
+            # Keep the parent alive briefly so the reader deterministically blocks on the inherited pipe.
+            sleep 0.05
+            exit 0
+            """.formatted(pidFile), StandardCharsets.UTF_8);
+        ProcessBuilderOpenCliCatalogSource source = new ProcessBuilderOpenCliCatalogSource(
+            properties(Path.of("/bin/sh")), 250L);
+
+        long childPid = -1L;
+        String readerName = null;
+        try {
+            long startedNanos = System.nanoTime();
+            IOException exception = assertThrows(IOException.class, source::open);
+            long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+
+            assertTrue(elapsedMillis >= 150L, "Output drain timed out too early after " + elapsedMillis + " ms");
+            assertTrue(elapsedMillis < 1500L, "Output drain timeout took " + elapsedMillis + " ms");
+            assertTrue(exception.getMessage().contains("process exited but output did not reach EOF"));
+            assertTrue(Files.isRegularFile(pidFile), "Catalog script did not publish its pids");
+            String[] pids = Files.readString(pidFile).trim().split("\\s+");
+            long parentPid = Long.parseLong(pids[0]);
+            childPid = Long.parseLong(pids[1]);
+            readerName = "opencli-catalog-output-" + parentPid;
+            assertTrue(ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false),
+                "Reparented pipe-holding child should remain as the documented cleanup limitation");
+        } finally {
+            if (childPid < 0L && Files.isRegularFile(pidFile)) {
+                String[] pids = Files.readString(pidFile).trim().split("\\s+");
+                childPid = Long.parseLong(pids[1]);
+            }
+            if (childPid > 0L) {
+                destroyProcessTree(childPid);
+            }
+            if (readerName != null) {
+                String expectedReaderName = readerName;
+                assertTrue(await(() -> Thread.getAllStackTraces().keySet().stream()
+                        .noneMatch(thread -> thread.isAlive() && thread.getName().equals(expectedReaderName)),
+                    Duration.ofMillis(500)), "Catalog output reader survived child cleanup");
+            }
+        }
     }
 
     @Test

@@ -16,6 +16,7 @@ import fun.fengwk.openclihub.core.settings.service.model.HubSystemSettings;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceCreateDTO;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
+import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
 import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -124,41 +125,29 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     }
 
     /**
+     * Updates editable properties under the same per-instance lock as every lifecycle
+     * transition, then propagates the queue limit to an already-running dispatcher.
+     */
+    public HubInstance update(String instanceId, HubInstanceUpdateDTO dto) {
+        ReentrantLock lock = lockExistingInstance(instanceId);
+        try {
+            loadInstance(instanceId);
+            HubInstance updated = instanceService.update(instanceId, dto);
+            dispatchRegistry.updateMaxPending(instanceId, updated.getMaxPending());
+            return updated;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
      * Starts an existing instance (no DB insert). Follows the priority rules in design §17.3.
      */
     public HubInstance start(String instanceId) {
-        ReentrantLock lock = registry.lifecycleLock(instanceId);
-        lock.lock();
+        ReentrantLock lock = lockExistingInstance(instanceId);
         try {
             HubInstance current = loadInstance(instanceId);
-            if (registry.contains(instanceId)) {
-                throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
-                    "instance already has a runtime: " + instanceId);
-            }
-            instanceService.updateState(instanceId, HubInstanceState.STARTING, null);
-            ensureDaemonRunning();
-            Set<String> beforeSnapshot = snapshotContextIds();
-            HubInstanceRuntime runtime = null;
-            boolean registeredRuntime = false;
-            try {
-                runtime = startRuntime(current);
-                waitForExpectedOrUniqueContext(instanceId, current, beforeSnapshot, runtime);
-                if (runtime.getContextId() != null) {
-                    instanceService.bindContextId(instanceId, runtime.getContextId());
-                }
-                instanceService.updateState(instanceId, HubInstanceState.RUNNING, null);
-                registry.register(runtime);
-                registeredRuntime = true;
-                registry.unexpectedExitListener().watch(instanceId, runtime);
-                // M5: a dispatcher only makes sense once the live runtime is registered,
-                // so the M5 router sees consistent (state=RUNNING, context connected,
-                // dispatcher registered) state for routing and load calculation.
-                dispatchRegistry.register(instanceService.get(instanceId));
-                return instanceService.get(instanceId);
-            } catch (RuntimeException ex) {
-                handleStartFailure(instanceId, runtime, registeredRuntime, ex);
-                throw ex;
-            }
+            return startUnderLock(instanceId, current);
         } finally {
             lock.unlock();
         }
@@ -169,33 +158,10 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
      * unregisters the runtime.
      */
     public void stop(String instanceId) {
-        ReentrantLock lock = registry.lifecycleLock(instanceId);
-        lock.lock();
+        ReentrantLock lock = lockExistingInstance(instanceId);
         try {
             loadInstance(instanceId);
-            HubInstanceRuntimeSnapshot snapshot = dispatchRegistry.getSnapshot(instanceId);
-            if (!snapshot.isIdle()) {
-                throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
-                    "instance has active/pending work: active=" + snapshot.getActiveCount()
-                        + " pending=" + snapshot.getPendingCount());
-            }
-            instanceService.updateState(instanceId, HubInstanceState.STOPPING, null);
-            if (!dispatchRegistry.unregisterWhenIdle(instanceId)) {
-                instanceService.updateState(instanceId, HubInstanceState.RUNNING, null);
-                HubInstanceRuntimeSnapshot raced = dispatchRegistry.getSnapshot(instanceId);
-                throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
-                    "instance accepted work while stopping: active=" + raced.getActiveCount()
-                        + " pending=" + raced.getPendingCount());
-            }
-            try {
-                HubInstanceRuntime runtime = registry.get(instanceId);
-                if (runtime != null) {
-                    registry.stopProcesses(runtime);
-                    registry.unregister(instanceId);
-                }
-            } finally {
-                instanceService.updateState(instanceId, HubInstanceState.STOPPED, null);
-            }
+            stopUnderLock(instanceId);
         } finally {
             lock.unlock();
         }
@@ -205,11 +171,11 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
      * Restarts an instance: stop + start, preserving the on-disk Profile.
      */
     public void restart(String instanceId) {
-        ReentrantLock lock = registry.lifecycleLock(instanceId);
-        lock.lock();
+        ReentrantLock lock = lockExistingInstance(instanceId);
         try {
-            stop(instanceId);
-            start(instanceId);
+            loadInstance(instanceId);
+            stopUnderLock(instanceId);
+            startUnderLock(instanceId, loadInstance(instanceId));
         } finally {
             lock.unlock();
         }
@@ -220,8 +186,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
      * directory. Active/pending requests cause rejection.
      */
     public void delete(String instanceId) {
-        ReentrantLock lock = registry.lifecycleLock(instanceId);
-        lock.lock();
+        ReentrantLock lock = lockExistingInstance(instanceId);
         try {
             loadInstance(instanceId);
             HubInstanceRuntimeSnapshot snapshot = dispatchRegistry.getSnapshot(instanceId);
@@ -230,7 +195,9 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
                     "instance is busy; cannot delete: active=" + snapshot.getActiveCount()
                         + " pending=" + snapshot.getPendingCount());
             }
+            instanceService.updateState(instanceId, HubInstanceState.STOPPING, null);
             if (!dispatchRegistry.unregisterWhenIdle(instanceId)) {
+                instanceService.updateState(instanceId, HubInstanceState.RUNNING, null);
                 HubInstanceRuntimeSnapshot raced = dispatchRegistry.getSnapshot(instanceId);
                 throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
                     "instance accepted work while deleting: active=" + raced.getActiveCount()
@@ -252,21 +219,29 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
      * Called by the unexpected-exit watcher when a tracked process dies.
      */
     public void markUnexpectedExit(String instanceId, String reason) {
-        ReentrantLock lock = registry.lifecycleLock(instanceId);
-        lock.lock();
+        ReentrantLock lock = null;
         try {
+            lock = lockExistingInstance(instanceId);
+            loadInstance(instanceId);
             HubInstanceRuntime runtime = registry.get(instanceId);
             if (runtime == null) {
                 return;
             }
+            try {
+                instanceService.updateState(instanceId, HubInstanceState.ERROR, reason);
+            } catch (RuntimeException stateEx) {
+                log.warn("failed to mark unexpectedly exited instance {} ERROR: {}",
+                    instanceId, stateEx.getMessage());
+            }
             registry.stopProcesses(runtime);
-            registry.unregister(instanceId);
             dispatchRegistry.unregister(instanceId);
-            instanceService.updateState(instanceId, HubInstanceState.ERROR, reason);
+            registry.unregister(instanceId);
         } catch (RuntimeException ex) {
             log.warn("markUnexpectedExit({}) failed: {}", instanceId, ex.getMessage(), ex);
         } finally {
-            lock.unlock();
+            if (lock != null) {
+                lock.unlock();
+            }
         }
     }
 
@@ -298,11 +273,18 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
      */
     public void normalizeAllStatesToStarting() {
         for (HubInstance instance : instanceService.list()) {
+            ReentrantLock lock = null;
             try {
+                lock = lockExistingInstance(instance.getId());
+                loadInstance(instance.getId());
                 instanceService.updateState(instance.getId(), HubInstanceState.STARTING, null);
             } catch (RuntimeException ex) {
                 log.error("normalise start for instance {} failed: {}",
                     instance.getId(), ex.getMessage());
+            } finally {
+                if (lock != null) {
+                    lock.unlock();
+                }
             }
         }
     }
@@ -336,6 +318,61 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     // ---------------------------------------------------------------------------------------
     //  Internals
     // ---------------------------------------------------------------------------------------
+
+    private HubInstance startUnderLock(String instanceId, HubInstance current) {
+        if (registry.contains(instanceId)) {
+            throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
+                "instance already has a runtime: " + instanceId);
+        }
+        HubInstanceRuntime runtime = null;
+        boolean registeredRuntime = false;
+        try {
+            instanceService.updateState(instanceId, HubInstanceState.STARTING, null);
+            ensureDaemonRunning();
+            Set<String> beforeSnapshot = snapshotContextIds();
+            runtime = startRuntime(current);
+            waitForExpectedOrUniqueContext(instanceId, current, beforeSnapshot, runtime);
+            if (runtime.getContextId() != null) {
+                instanceService.bindContextId(instanceId, runtime.getContextId());
+            }
+            registry.register(runtime);
+            registeredRuntime = true;
+            dispatchRegistry.register(instanceService.get(instanceId));
+            registry.unexpectedExitListener().watch(instanceId, runtime);
+            ensureProcessesAlive(runtime);
+            instanceService.updateState(instanceId, HubInstanceState.RUNNING, null);
+            return instanceService.get(instanceId);
+        } catch (RuntimeException ex) {
+            handleStartFailure(instanceId, runtime, registeredRuntime, ex);
+            throw ex;
+        }
+    }
+
+    private void stopUnderLock(String instanceId) {
+        HubInstanceRuntimeSnapshot snapshot = dispatchRegistry.getSnapshot(instanceId);
+        if (!snapshot.isIdle()) {
+            throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
+                "instance has active/pending work: active=" + snapshot.getActiveCount()
+                    + " pending=" + snapshot.getPendingCount());
+        }
+        instanceService.updateState(instanceId, HubInstanceState.STOPPING, null);
+        if (!dispatchRegistry.unregisterWhenIdle(instanceId)) {
+            instanceService.updateState(instanceId, HubInstanceState.RUNNING, null);
+            HubInstanceRuntimeSnapshot raced = dispatchRegistry.getSnapshot(instanceId);
+            throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
+                "instance accepted work while stopping: active=" + raced.getActiveCount()
+                    + " pending=" + raced.getPendingCount());
+        }
+        try {
+            HubInstanceRuntime runtime = registry.get(instanceId);
+            if (runtime != null) {
+                registry.stopProcesses(runtime);
+                registry.unregister(instanceId);
+            }
+        } finally {
+            instanceService.updateState(instanceId, HubInstanceState.STOPPED, null);
+        }
+    }
 
     private HubInstance createUnderLock(HubInstance preset) {
         // Step 1: reserve an id, but DO NOT insert yet. The repository generator is the
@@ -376,14 +413,15 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             shadow.setContextId(runtime.getContextId());
             shadow.setState(HubInstanceState.RUNNING);
             shadow.setStateChangedAt(LocalDateTime.now());
-            instanceService.create(shadow);
-            rowInserted = true;
             registry.register(runtime);
             registeredRuntime = true;
+            dispatchRegistry.register(shadow);
+            ensureProcessesAlive(runtime);
+            instanceService.create(shadow);
+            rowInserted = true;
+            // Do not arm the watcher until the row exists: an immediate callback must never
+            // race create rollback by trying to mark a non-existent instance ERROR.
             registry.unexpectedExitListener().watch(id, runtime);
-            // Mirror the start() path: install the per-instance dispatcher once the
-            // runtime is registered, otherwise the M5 router cannot route to it.
-            dispatchRegistry.register(instanceService.get(id));
             try {
                 Files.deleteIfExists(
                     HubInstanceDirectoryLayout.creatingMarker(properties.getDataDir(), id));
@@ -395,22 +433,23 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             String reason = ex.getMessage() == null
                 ? ex.getClass().getSimpleName() : ex.getMessage();
             // Reverse-order cleanup.
-            if (runtime != null) {
-                registry.stopProcesses(runtime);
-            }
-            if (registeredRuntime) {
-                registry.unregister(id);
-            } else if (runtime != null) {
-                registry.allocationService().release(runtime);
-            }
-            dispatchRegistry.unregisterWhenIdle(id);
             if (rowInserted) {
+                registry.unexpectedExitListener().unwatch(id);
                 try {
                     instanceService.deleteById(id);
                 } catch (RuntimeException cleanupEx) {
                     log.warn("failed to delete instance row {} during create rollback: {}",
                         id, cleanupEx.getMessage());
                 }
+            }
+            if (runtime != null) {
+                registry.stopProcesses(runtime);
+            }
+            dispatchRegistry.unregister(id);
+            if (registeredRuntime) {
+                registry.unregister(id);
+            } else if (runtime != null) {
+                registry.allocationService().release(runtime);
             }
             cleanupCreateFailureArtifacts(id);
             // Preserve the precise domain code (e.g. CONTEXT_ID_AMBIGUOUS, EXTENSION_CONNECT_TIMEOUT)
@@ -657,25 +696,34 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     private void handleStartFailure(String instanceId, HubInstanceRuntime runtime,
         boolean registeredRuntime, RuntimeException ex) {
         String reason = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
-        if (runtime != null) {
-            registry.stopProcesses(runtime);
-        }
-        if (registeredRuntime) {
-            registry.unregister(instanceId);
-        } else if (runtime != null) {
-            registry.allocationService().release(runtime);
-        }
-        dispatchRegistry.unregister(instanceId);
         try {
             instanceService.updateState(instanceId, HubInstanceState.ERROR, reason);
         } catch (RuntimeException stateEx) {
             log.warn("failed to mark instance {} ERROR after start failure: {}",
                 instanceId, stateEx.getMessage());
         }
+        if (runtime != null) {
+            registry.stopProcesses(runtime);
+        }
+        dispatchRegistry.unregister(instanceId);
+        if (registeredRuntime) {
+            registry.unregister(instanceId);
+        } else if (runtime != null) {
+            registry.allocationService().release(runtime);
+        }
     }
 
     private HubInstance loadInstance(String instanceId) {
         return instanceService.get(instanceId);
+    }
+
+    private ReentrantLock lockExistingInstance(String instanceId) {
+        // Validate existence before allocating a permanent lock entry, then callers reload
+        // after acquiring the lock to close the delete/update TOCTOU window.
+        loadInstance(instanceId);
+        ReentrantLock lock = registry.lifecycleLock(instanceId);
+        lock.lock();
+        return lock;
     }
 
     private void resetLog(Path path) {

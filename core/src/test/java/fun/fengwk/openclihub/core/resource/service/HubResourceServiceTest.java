@@ -131,6 +131,43 @@ class HubResourceServiceTest {
         assertThat(resourceService.exists(reportVp)).isFalse();
     }
 
+    /**
+     * Spaces, Unicode and URL-reserved characters must survive upload/deduplication and
+     * round-trip through resolve, read and delete; DTO URLs encode each path segment.
+     */
+    @Test
+    void shouldRoundTripSpecialAndDuplicateUploadFileNames() throws IOException {
+        LocalDate date = LocalDate.of(2026, 7, 12);
+        String fileName = "报告 #1?.txt";
+        HubResourceService.UploadResult result = resourceService.upload(
+            HubResourceUploadRequest.builder()
+                .date(date.toString())
+                .items(List.of(
+                    uploadItem(fileName, "first"),
+                    uploadItem(fileName, "second")))
+                .build());
+
+        assertThat(result.getItems()).extracting(HubResourceItemDTO::getFileName)
+            .containsExactly("报告 #1?.txt", "报告 #1? (2).txt");
+        String encodedBase = "/api/resources/2026-07-12/" + result.getGroup() + "/";
+        assertThat(result.getItems().get(0).getDownloadUrl())
+            .isEqualTo(encodedBase + "%E6%8A%A5%E5%91%8A%20%231%3F.txt");
+        assertThat(result.getItems().get(0).getContentUrl())
+            .isEqualTo(encodedBase + "%E6%8A%A5%E5%91%8A%20%231%3F.txt?inline=true");
+        assertThat(result.getItems().get(1).getDownloadUrl())
+            .isEqualTo(encodedBase + "%E6%8A%A5%E5%91%8A%20%231%3F%20(2).txt");
+
+        for (HubResourceItemDTO item : result.getItems()) {
+            HubResourcePaths.ResolvedResource resolved = resourceService.resolve(item.getResourcePath());
+            assertThat(resolved.getRealPath()).exists();
+            try (HubResourceStream stream = resourceService.openForRead(item.getResourcePath())) {
+                assertThat(stream.getInputStream().readAllBytes()).isNotEmpty();
+            }
+            resourceService.deleteResource(item.getResourcePath());
+            assertThat(resourceService.exists(item.getResourcePath())).isFalse();
+        }
+    }
+
     // -- Path traversal rejection ----------------------------------------------------------
 
     /**
@@ -142,6 +179,12 @@ class HubResourceServiceTest {
         assertThatThrownBy(() -> resourceService.resolve("/resources/2026-07-12/upload-x/../../etc/passwd"))
             .isInstanceOf(ThrowableConventionErrorCode.class);
         assertThatThrownBy(() -> resourceService.resolve("/resources/2026-07-12/upload-x/..%2F..%2Fetc"))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        assertThatThrownBy(() -> resourceService.resolve("/resources/2026-07-12/upload-x/a//b.txt"))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        assertThatThrownBy(() -> resourceService.resolve("/resources/2026-07-12/upload-x/a\\b.txt"))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        assertThatThrownBy(() -> resourceService.resolve("/resources/2026-07-12/upload-x/a\nb.txt"))
             .isInstanceOf(ThrowableConventionErrorCode.class);
     }
 
@@ -177,14 +220,68 @@ class HubResourceServiceTest {
         Files.createSymbolicLink(groupDir.resolve("escape-link"), outsideFile);
 
         String linkVp = "/resources/" + date.toString() + "/" + group + "/escape-link";
+        assertThatThrownBy(() -> resourceService.resolve(linkVp))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
         assertThatThrownBy(() -> resourceService.openForRead(linkVp))
             .isInstanceOf(ThrowableConventionErrorCode.class);
+        assertThatThrownBy(() -> resourceService.deleteResource(linkVp))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        assertThat(outsideFile).exists();
 
         // Listing skips the symlinked file entirely so no DTO exposes an untrusted target.
         List<HubResourceItemDTO> day = resourceService.listDay(listFor(date));
         assertThat(day).extracting(HubResourceItemDTO::getFileName)
             .doesNotContain("escape-link");
         forceCleanOutside(outside);
+    }
+
+    /** Existing root and ancestor symlinks are rejected before create/read/delete can follow them. */
+    @Test
+    void shouldRejectRootAndAncestorSymlinksOnCriticalPaths() throws IOException {
+        LocalDate date = LocalDate.of(2026, 7, 14);
+        String group = HubResourcePaths.newUploadGroup();
+        Path root = resourceService.rootDir();
+        Path outsideRoot = Files.createTempDirectory("hub-resource-root-link-");
+        Path outsideFile = Files.createDirectories(outsideRoot.resolve(date.toString()).resolve(group))
+            .resolve("outside.txt");
+        Files.writeString(outsideFile, "outside");
+        String virtualPath = "/resources/" + date + "/" + group + "/outside.txt";
+
+        Files.deleteIfExists(root);
+        Files.createSymbolicLink(root, outsideRoot);
+        try {
+            assertThatThrownBy(() -> resourceService.resolve(virtualPath))
+                .isInstanceOf(ThrowableConventionErrorCode.class);
+            assertThatThrownBy(() -> resourceService.upload(HubResourceUploadRequest.builder()
+                .date(date.toString()).items(List.of(uploadItem("new.txt", "new"))).build()))
+                .isInstanceOf(ThrowableConventionErrorCode.class);
+            assertThatThrownBy(() -> resourceService.deleteResource(virtualPath))
+                .isInstanceOf(ThrowableConventionErrorCode.class);
+            assertThat(outsideFile).exists();
+        } finally {
+            Files.deleteIfExists(root);
+            forceCleanOutside(outsideRoot);
+            Files.createDirectories(root);
+        }
+
+        Path outsideDate = Files.createTempDirectory("hub-resource-date-link-");
+        Path ancestorFile = Files.createDirectories(outsideDate.resolve(group)).resolve("ancestor.txt");
+        Files.writeString(ancestorFile, "ancestor");
+        Path dateLink = root.resolve(date.toString());
+        Files.createSymbolicLink(dateLink, outsideDate);
+        String ancestorVirtualPath = "/resources/" + date + "/" + group + "/ancestor.txt";
+        try {
+            assertThatThrownBy(() -> resourceService.resolve(ancestorVirtualPath))
+                .isInstanceOf(ThrowableConventionErrorCode.class);
+            assertThatThrownBy(() -> resourceService.createExecutionGroup("8123", date))
+                .isInstanceOf(ThrowableConventionErrorCode.class);
+            assertThatThrownBy(() -> resourceService.deleteGroup(date.toString(), group))
+                .isInstanceOf(ThrowableConventionErrorCode.class);
+            assertThat(ancestorFile).exists();
+        } finally {
+            Files.deleteIfExists(dateLink);
+            forceCleanOutside(outsideDate);
+        }
     }
 
     // -- Size limits -----------------------------------------------------------------------
@@ -264,6 +361,18 @@ class HubResourceServiceTest {
             .resolve(r1.getGroup());
         assertThat(HubResourcePaths.reserveFileName(groupDir, "invoice.pdf"))
             .isEqualTo("invoice (2).pdf");
+    }
+
+    /** Only FileAlreadyExists is a naming conflict; other filesystem failures must surface. */
+    @Test
+    void shouldPropagateNonConflictReservationIoFailure() throws IOException {
+        Path notDirectory = Files.createTempFile("hub-resource-reserve-", ".tmp");
+        try {
+            assertThatThrownBy(() -> HubResourcePaths.reserveFileName(notDirectory, "file.txt"))
+                .isInstanceOf(IOException.class);
+        } finally {
+            Files.deleteIfExists(notDirectory);
+        }
     }
 
     // -- Date and group validation ---------------------------------------------------------
@@ -367,6 +476,31 @@ class HubResourceServiceTest {
         forceCleanOutside(outsideDir);
     }
 
+    /** Nested execution output names use the same special-name resolver and URL encoder. */
+    @Test
+    void shouldResolveNestedExecutionPathsWithSpecialFileNames() throws IOException {
+        String executionId = "8124";
+        LocalDate date = LocalDate.of(2026, 7, 15);
+        ExecutionGroupHolder group = ExecutionGroupHolder.create(resourceService, executionId, date);
+        Path nested = Files.createDirectories(group.realPath.resolve("子 目录#?"));
+        Files.writeString(nested.resolve("结果 #1?.json"), "{}");
+
+        HubResourceItemDTO item = resourceService.scanExecutionGroup(group.model).get(0);
+        assertThat(item.getRelativePath()).isEqualTo("子 目录#?/结果 #1?.json");
+        assertThat(item.getDownloadUrl()).isEqualTo(
+            "/api/resources/2026-07-15/execution-8124/"
+                + "%E5%AD%90%20%E7%9B%AE%E5%BD%95%23%3F/"
+                + "%E7%BB%93%E6%9E%9C%20%231%3F.json");
+        assertThat(resourceService.resolve(item.getResourcePath()).getRealPath())
+            .isEqualTo(nested.resolve("结果 #1?.json"));
+        try (HubResourceStream stream = resourceService.openForRead(item.getResourcePath())) {
+            assertThat(stream.getInputStream().readAllBytes())
+                .containsExactly("{}".getBytes(StandardCharsets.UTF_8));
+        }
+        resourceService.deleteResource(item.getResourcePath());
+        assertThat(resourceService.exists(item.getResourcePath())).isFalse();
+    }
+
     // -- Deletion and empty-directory cleanup ---------------------------------------------
 
     /**
@@ -465,6 +599,8 @@ class HubResourceServiceTest {
             .doesNotContain(":");
         assertThat(HubResourcePaths.sanitizeUploadFileName("naughty\u0000name.txt"))
             .isEqualTo("naughty_name.txt");
+        assertThat(HubResourcePaths.sanitizeUploadFileName("line\nbreak.txt"))
+            .isEqualTo("line_break.txt");
         assertThat(HubResourcePaths.sanitizeUploadFileName(".."))
             .isEqualTo("file");
         assertThat(HubResourcePaths.sanitizeUploadFileName(""))

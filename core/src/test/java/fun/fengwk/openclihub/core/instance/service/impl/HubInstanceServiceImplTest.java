@@ -21,6 +21,7 @@ import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
 import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -106,6 +107,8 @@ class HubInstanceServiceImplTest {
         assertThat(saved.getProxyMode()).isEqualTo(HubProxyMode.INHERIT);
         assertThat(saved.getProxyServer()).isNull();
         assertThat(saved.getStateChangedAt()).isNotNull();
+        assertThat(saved.getCreateTime()).isNotNull();
+        assertThat(saved.getUpdateTime()).isEqualTo(saved.getCreateTime());
     }
 
     @Test
@@ -179,6 +182,9 @@ class HubInstanceServiceImplTest {
         // Keeping the same code is allowed: pre-check must skip the row itself.
         HubInstance existing = newInstance("1", "kept-code");
         existing.setState(HubInstanceState.RUNNING);
+        LocalDateTime createTime = LocalDateTime.of(2025, 1, 2, 3, 4);
+        existing.setCreateTime(createTime);
+        existing.setUpdateTime(createTime);
         doReturn(existing).when(repository).findById("1");
         // Simulating repository.findByCode returning self row.
         doReturn(existing).when(repository).findByCode("kept-code");
@@ -199,6 +205,8 @@ class HubInstanceServiceImplTest {
         assertThat(result.getMaxPending()).isEqualTo(10);
         assertThat(result.getProxyMode()).isEqualTo(HubProxyMode.CUSTOM);
         assertThat(result.getProxyServer()).isEqualTo("http://proxy.example:8080");
+        assertThat(result.getCreateTime()).isEqualTo(createTime);
+        assertThat(result.getUpdateTime()).isAfter(createTime);
     }
 
     @Test
@@ -240,6 +248,7 @@ class HubInstanceServiceImplTest {
         assertThat(saved.getState()).isEqualTo(HubInstanceState.RUNNING);
         assertThat(saved.getLastErrorMessage()).isNull();
         assertThat(saved.getStateChangedAt()).isNotNull();
+        assertThat(saved.getUpdateTime()).isEqualTo(saved.getStateChangedAt());
     }
 
     @Test
@@ -389,6 +398,8 @@ class HubInstanceServiceImplTest {
     void shouldTrimContextIdOnBind() {
         // bindContextId must query and persist the trimmed canonical value.
         HubInstance existing = newInstance("1", "code");
+        LocalDateTime previousUpdateTime = LocalDateTime.of(2025, 1, 2, 3, 4);
+        existing.setUpdateTime(previousUpdateTime);
         doReturn(existing).when(repository).findById("1");
         doReturn(null).when(repository).findByContextId("ctx-y");
         doReturn(true).when(repository).update(any());
@@ -398,6 +409,7 @@ class HubInstanceServiceImplTest {
         ArgumentCaptor<HubInstance> captor = ArgumentCaptor.forClass(HubInstance.class);
         verify(repository).update(captor.capture());
         assertThat(captor.getValue().getContextId()).isEqualTo("ctx-y");
+        assertThat(captor.getValue().getUpdateTime()).isAfter(previousUpdateTime);
         // The repository must be queried with the trimmed value so uniqueness checks are exact.
         verify(repository).findByContextId("ctx-y");
     }

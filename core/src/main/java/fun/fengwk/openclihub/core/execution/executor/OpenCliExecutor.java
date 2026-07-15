@@ -17,7 +17,8 @@ public interface OpenCliExecutor {
     /**
      * Run {@code hubManagedArgv} against {@code instance} within {@code timeoutMillis} and
      * return a captured process result. Stdout and stderr are read concurrently so neither
-     * can block the other; both are truncated to the configured capture cap.
+     * can block the other; process exit and both stream drains share one deadline, and both
+     * streams are truncated to the configured capture cap.
      */
     OpenCliExecutionResult execute(HubInstance instance, List<String> hubManagedArgv, long timeoutMillis);
 

@@ -1,5 +1,6 @@
 package fun.fengwk.openclihub.core.instance.runtime;
 
+import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import fun.fengwk.openclihub.core.instance.runtime.test.InMemoryHubInstanceService;
@@ -104,6 +105,119 @@ class OrphanInstanceScannerTest {
         assertThat(zero).exists();
         assertThat(leadingZero).exists();
         assertThat(outOfRange).exists();
+    }
+
+    @Test
+    void shouldProtectKnownValidIdSymlinkWithoutTouchingExternalDirectory() throws IOException {
+        String id = service.reserveId();
+        service.create(persisted(id));
+        Path outside = Files.createDirectories(dataDir.resolve("outside-known"));
+        Path marker = Files.createFile(outside.resolve(".creating"));
+        Path sentinel = Files.writeString(outside.resolve("sentinel"), "kept");
+        Path instancesRoot = Files.createDirectories(dataDir.resolve("instances"));
+        Path link = Files.createSymbolicLink(instancesRoot.resolve(id), outside);
+
+        // A known ID must not make the scanner resolve marker paths through an instance symlink.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(result.creatingMarkerRemoved).isZero();
+        assertThat(Files.exists(link, NOFOLLOW_LINKS)).isTrue();
+        assertThat(marker).exists();
+        assertThat(sentinel).hasContent("kept");
+    }
+
+    @Test
+    void shouldProtectUnknownValidIdSymlinkToExternalDirectory() throws IOException {
+        Path outside = Files.createDirectories(dataDir.resolve("outside-unknown"));
+        Path sentinel = Files.writeString(outside.resolve("sentinel"), "kept");
+        Path instancesRoot = Files.createDirectories(dataDir.resolve("instances"));
+        Path link = Files.createSymbolicLink(
+            instancesRoot.resolve(UUID.randomUUID().toString()), outside);
+
+        // An unknown valid ID symlink must be retained instead of treated as an orphan directory.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(Files.exists(link, NOFOLLOW_LINKS)).isTrue();
+        assertThat(sentinel).hasContent("kept");
+    }
+
+    @Test
+    void shouldProtectSymlinkToExternalFile() throws IOException {
+        Path outside = Files.writeString(dataDir.resolve("outside-file"), "kept");
+        Path instancesRoot = Files.createDirectories(dataDir.resolve("instances"));
+        Path link = Files.createSymbolicLink(instancesRoot.resolve("4242"), outside);
+
+        // Symlinks are protected entries even when their target is not a directory.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(Files.exists(link, NOFOLLOW_LINKS)).isTrue();
+        assertThat(outside).hasContent("kept");
+    }
+
+    @Test
+    void shouldProtectBrokenSymlinkWithUnmanagedName() throws IOException {
+        Path instancesRoot = Files.createDirectories(dataDir.resolve("instances"));
+        Path missingTarget = dataDir.resolve("missing-target");
+        Path link = Files.createSymbolicLink(instancesRoot.resolve("manual-link"), missingTarget);
+
+        // Broken symlinks must be detected without following the missing target.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(Files.exists(link, NOFOLLOW_LINKS)).isTrue();
+        assertThat(Files.exists(link)).isFalse();
+        assertThat(Files.exists(missingTarget)).isFalse();
+    }
+
+    @Test
+    void shouldProtectSymlinkInstancesRootWithoutTouchingExternalTree() throws IOException {
+        Path outside = Files.createDirectories(dataDir.resolve("outside-root"));
+        Path uuidOrphan = Files.createDirectories(outside.resolve(UUID.randomUUID().toString()));
+        Path marker = Files.createFile(uuidOrphan.resolve(".creating"));
+        Path uuidSentinel = Files.writeString(uuidOrphan.resolve("sentinel"), "uuid-kept");
+        Path decimalOrphan = Files.createDirectories(outside.resolve("9876"));
+        Path decimalSentinel = Files.writeString(
+            decimalOrphan.resolve("sentinel"), "decimal-kept");
+        Path rootLink = Files.createSymbolicLink(dataDir.resolve("instances"), outside);
+
+        // The scanner must reject a symlink root before enumerating its external target.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(result.creatingOrphanDeleted).isZero();
+        assertThat(result.managedOrphanDeleted).isZero();
+        assertThat(Files.exists(rootLink, NOFOLLOW_LINKS)).isTrue();
+        assertThat(marker).exists();
+        assertThat(uuidSentinel).hasContent("uuid-kept");
+        assertThat(decimalSentinel).hasContent("decimal-kept");
+    }
+
+    @Test
+    void shouldProtectBrokenSymlinkInstancesRoot() throws IOException {
+        Path missingTarget = dataDir.resolve("missing-root-target");
+        Path rootLink = Files.createSymbolicLink(dataDir.resolve("instances"), missingTarget);
+
+        // A broken root symlink is still a protected non-canonical root entry.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(Files.exists(rootLink, NOFOLLOW_LINKS)).isTrue();
+        assertThat(Files.exists(rootLink)).isFalse();
+        assertThat(Files.exists(missingTarget)).isFalse();
+    }
+
+    @Test
+    void shouldProtectRegularFileInstancesRoot() throws IOException {
+        Path rootFile = Files.writeString(dataDir.resolve("instances"), "kept");
+
+        // A regular file cannot be treated as the canonical instances directory.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(rootFile).hasContent("kept");
     }
 
     @Test

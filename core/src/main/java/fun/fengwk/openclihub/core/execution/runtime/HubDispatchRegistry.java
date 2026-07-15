@@ -77,6 +77,14 @@ public class HubDispatchRegistry {
         return dispatcher == null ? 0 : dispatcher.getMaxPending();
     }
 
+    /** Applies an editable maxPending change to an already-running instance, if present. */
+    public void updateMaxPending(String instanceId, int maxPending) {
+        HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
+        if (dispatcher != null) {
+            dispatcher.updateMaxPending(maxPending);
+        }
+    }
+
     /**
      * Remove the per-instance dispatcher when it has no live or pending work; refuses
      * the removal otherwise (caller's lifecycle lock already verified busy=false, this is

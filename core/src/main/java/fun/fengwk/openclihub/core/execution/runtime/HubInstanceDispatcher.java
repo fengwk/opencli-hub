@@ -2,11 +2,11 @@ package fun.fengwk.openclihub.core.execution.runtime;
 
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -32,17 +32,19 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class HubInstanceDispatcher {
 
-    private final int maxPending;
+    private int maxPending;
     private final ThreadPoolExecutor executor;
     /**
-     * Serialises submit against {@link #shutdownIfIdle()} so a submittable window and a
-     * shutdown decision cannot race. {@link ThreadPoolExecutor#execute(Runnable)} already
+     * Serialises submit and maxPending changes against {@link #shutdownIfIdle()} so a
+     * submittable window and a shutdown decision cannot race. The physical queue may retain
+     * already-accepted tasks above a reduced limit; every new acceptance is bounded here.
+     * {@link ThreadPoolExecutor#execute(Runnable)} already
      * races with its own {@code shutdown}, which is fine because the executor coerces
      * a post-shutdown submit into {@link RejectedExecutionException} — but our explicit
      * flag allows {@link #shutdownIfIdle()} to refuse to commit to a teardown while a
      * submit is in flight.
      */
-    private final ReentrantLock shutdownLock = new ReentrantLock();
+    private final ReentrantLock submitLock = new ReentrantLock();
     private volatile boolean shutdown;
 
     public HubInstanceDispatcher(String instanceCode, int maxPending) {
@@ -55,13 +57,35 @@ public class HubInstanceDispatcher {
             1,
             0L,
             TimeUnit.MILLISECONDS,
-            new ArrayBlockingQueue<>(maxPending),
+            new LinkedBlockingQueue<>(),
             new DispatcherThreadFactory(instanceCode),
             new ThreadPoolExecutor.AbortPolicy());
     }
 
     public int getMaxPending() {
-        return maxPending;
+        submitLock.lock();
+        try {
+            return maxPending;
+        } finally {
+            submitLock.unlock();
+        }
+    }
+
+    /**
+     * Changes the logical pending limit without replacing the worker or dropping queued work.
+     * When the limit is reduced below the current queue size, existing tasks drain normally and
+     * new submissions are rejected until the pending count falls below the new limit.
+     */
+    public void updateMaxPending(int maxPending) {
+        if (maxPending <= 0) {
+            throw new IllegalArgumentException("maxPending must be positive");
+        }
+        submitLock.lock();
+        try {
+            this.maxPending = maxPending;
+        } finally {
+            submitLock.unlock();
+        }
     }
 
     /**
@@ -96,7 +120,7 @@ public class HubInstanceDispatcher {
      *   <li>{@code task == null} → {@link IllegalArgumentException},</li>
      *   <li>{@link #isShuttingDown()} → {@code INSTANCE_QUEUE_FULL},</li>
      *   <li>deadline already elapsed → {@code QUEUE_WAIT_TIMEOUT} without enqueueing,</li>
-     *   <li>executor rejected (queue full + saturated worker) →
+     *   <li>logical pending limit reached or executor rejected during shutdown →
      *       {@code INSTANCE_QUEUE_FULL}.</li>
      * </ol>
      */
@@ -104,7 +128,7 @@ public class HubInstanceDispatcher {
         if (task == null) {
             throw new IllegalArgumentException("task must not be null");
         }
-        shutdownLock.lock();
+        submitLock.lock();
         try {
             if (shutdown) {
                 throw HubErrorCodes.INSTANCE_QUEUE_FULL.asThrowable(
@@ -113,6 +137,10 @@ public class HubInstanceDispatcher {
             if (deadlineNanos - System.nanoTime() <= 0L) {
                 throw HubErrorCodes.QUEUE_WAIT_TIMEOUT.asThrowable(
                     "Queue deadline already exceeded before enqueue");
+            }
+            if (executor.getQueue().size() >= maxPending) {
+                throw HubErrorCodes.INSTANCE_QUEUE_FULL.asThrowable(
+                    "Instance pending queue reached maxPending=" + maxPending);
             }
             FutureTask<T> future = new FutureTask<>(new DeadlineAwareCallable<>(task, deadlineNanos));
             try {
@@ -124,7 +152,7 @@ public class HubInstanceDispatcher {
             }
             return future;
         } finally {
-            shutdownLock.unlock();
+            submitLock.unlock();
         }
     }
 
@@ -143,7 +171,7 @@ public class HubInstanceDispatcher {
      * down; {@code false} when there is still work and the caller must wait.
      */
     public boolean shutdownIfIdle() {
-        shutdownLock.lock();
+        submitLock.lock();
         try {
             if (shutdown) {
                 return true;
@@ -155,13 +183,13 @@ public class HubInstanceDispatcher {
             shutdown = true;
             return true;
         } finally {
-            shutdownLock.unlock();
+            submitLock.unlock();
         }
     }
 
     /** Force shutdown used for unexpected runtime exit and application teardown. */
     public void shutdownNow() {
-        shutdownLock.lock();
+        submitLock.lock();
         try {
             List<Runnable> dropped = executor.shutdownNow();
             for (Runnable task : dropped) {
@@ -171,7 +199,7 @@ public class HubInstanceDispatcher {
             }
             shutdown = true;
         } finally {
-            shutdownLock.unlock();
+            submitLock.unlock();
         }
     }
 

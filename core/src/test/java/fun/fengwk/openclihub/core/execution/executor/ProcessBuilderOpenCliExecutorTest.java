@@ -13,8 +13,10 @@ import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -101,6 +103,50 @@ class ProcessBuilderOpenCliExecutorTest {
             Thread.sleep(10L);
         }
         assertThat(ProcessHandle.of(child).map(ProcessHandle::isAlive).orElse(false)).isFalse();
+    }
+
+    /**
+     * Covers the real shell case where the parent exits but a reparented background child
+     * keeps both output pipes open, so output drain must share the process deadline.
+     */
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.SECONDS)
+    void shouldTimeOutWhenExitedParentLeavesOutputPipesOpen() throws Exception {
+        Path childPid = tempDir.resolve("pipe-child.pid");
+        Path script = script("inherited-pipe.sh", """
+            printf 'captured-prefix'
+            sleep 20 &
+            printf '%%s' "$!" > "%s"
+            # Let both capture tasks enter their blocking reads before the parent exits.
+            sleep 0.05
+            exit 0
+            """.formatted(childPid));
+        ProcessBuilderOpenCliExecutor executor = new ProcessBuilderOpenCliExecutor(properties);
+
+        long startedNanos = System.nanoTime();
+        try {
+            OpenCliExecutionResult result = executor.execute(
+                instance, List.of(script.toString()), 200L);
+            long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+
+            assertThat(elapsedMillis).isLessThan(1_500L);
+            assertThat(result.isTimedOut()).isTrue();
+            assertThat(result.getExitCode()).isEqualTo(124);
+            assertThat(result.getErrorMessage()).contains("output streams did not reach EOF");
+            assertThat(result.getStdout()).startsWith("captured-prefix");
+            assertThat(result.isStdoutTruncated()).isTrue();
+            assertThat(result.isStderrTruncated()).isTrue();
+        } finally {
+            executor.destroy();
+            if (Files.exists(childPid)) {
+                long child = Long.parseLong(Files.readString(childPid));
+                ProcessHandle.of(child).ifPresent(handle -> {
+                    if (handle.isAlive()) {
+                        handle.destroyForcibly();
+                    }
+                });
+            }
+        }
     }
 
     @Test

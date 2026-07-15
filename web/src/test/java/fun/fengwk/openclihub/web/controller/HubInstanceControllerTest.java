@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -163,7 +164,7 @@ class HubInstanceControllerTest {
         request.setWebsites(List.of("bilibili"));
         request.setMaxPending(5);
         request.setProxyMode(HubProxyMode.DIRECT);
-        when(instanceService.update(any(String.class), any())).thenReturn(instance);
+        when(lifecycleService.update(any(String.class), any())).thenReturn(instance);
         when(lifecycleService.start("11")).thenReturn(instance);
         when(instanceService.get("11")).thenReturn(instance);
         doNothing().when(lifecycleService).stop("11");
@@ -180,6 +181,8 @@ class HubInstanceControllerTest {
             .andExpect(status().isOk());
         mockMvc.perform(post("/api/instances/11/restart"))
             .andExpect(status().isOk());
+        verify(lifecycleService).update("11", request);
+        verify(instanceService, never()).update(any(String.class), any());
     }
 
     /** Delete success remains a Result response so frontend unwrapping stays uniform. */

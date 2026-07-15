@@ -1,5 +1,7 @@
 package fun.fengwk.openclihub.core.instance.runtime;
 
+import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
+
 import fun.fengwk.openclihub.core.instance.service.HubInstanceService;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
@@ -17,7 +19,7 @@ import org.springframework.stereotype.Component;
 /**
  * Reconciles the on-disk instance directory tree against the database after an ungraceful
  * Hub shutdown. Only canonical UUID and migrated positive-long directory names are managed
- * automatically. Every other directory is protected, including one containing {@code .creating}.
+ * automatically. Symlinks and every other non-canonical entry are protected.
  *
  * @author fengwk
  */
@@ -50,16 +52,18 @@ public class OrphanInstanceScanner {
     public Result scan() {
         Result result = new Result();
         Path root = HubInstanceDirectoryLayout.instancesRoot(properties.getDataDir());
-        if (!Files.exists(root)) {
+        if (!isRealInstancesRoot(root, result)) {
             return result;
         }
         Set<String> knownIds = new HashSet<>();
         for (HubInstance instance : instanceService.list()) {
             knownIds.add(instance.getId());
         }
+        if (!isRealInstancesRoot(root, result)) {
+            return result;
+        }
         try (var stream = Files.list(root)) {
-            stream.filter(Files::isDirectory)
-                .forEach(dir -> classify(dir, knownIds, result));
+            stream.forEach(entry -> inspectEntry(entry, knownIds, result));
         } catch (IOException ex) {
             log.error("orphan scan failed to list {}: {}", root, ex.getMessage());
         }
@@ -72,7 +76,44 @@ public class OrphanInstanceScanner {
         return result;
     }
 
+    private boolean isRealInstancesRoot(Path root, Result result) {
+        if (Files.isSymbolicLink(root)) {
+            log.warn("orphan scanner: protected symbolic link instances root: {}", root);
+            result.unsafeNameProtected++;
+            return false;
+        }
+        if (!Files.exists(root, NOFOLLOW_LINKS)) {
+            return false;
+        }
+        if (!Files.isDirectory(root, NOFOLLOW_LINKS)) {
+            log.warn("orphan scanner: protected non-directory instances root: {}", root);
+            result.unsafeNameProtected++;
+            return false;
+        }
+        return true;
+    }
+
+    private void inspectEntry(Path entry, Set<String> knownIds, Result result) {
+        if (!isDirectoryEntry(entry, result)) {
+            return;
+        }
+        classify(entry, knownIds, result);
+    }
+
+    private boolean isDirectoryEntry(Path entry, Result result) {
+        if (Files.isSymbolicLink(entry)) {
+            log.warn("orphan scanner: protected symbolic link: {}", entry);
+            result.unsafeNameProtected++;
+            return false;
+        }
+        return Files.isDirectory(entry, NOFOLLOW_LINKS);
+    }
+
     private void classify(Path dir, Set<String> knownIds, Result result) {
+        // The entry may have been replaced after Files.list emitted it.
+        if (!isDirectoryEntry(dir, result)) {
+            return;
+        }
         String id = dir.getFileName().toString();
         if (!HubInstanceDirectoryLayout.isManagedInstanceId(id)) {
             log.warn("orphan scanner: protected directory with unmanaged name: {}", dir);
@@ -80,11 +121,14 @@ public class OrphanInstanceScanner {
             return;
         }
         Path marker = dir.resolve(HubInstanceDirectoryLayout.MARKER_CREATING);
-        if (Files.exists(marker, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+        if (Files.exists(marker, NOFOLLOW_LINKS)) {
             handleCreating(dir, id, marker, knownIds, result);
             return;
         }
         if (!knownIds.contains(id)) {
+            if (!isDirectoryEntry(dir, result)) {
+                return;
+            }
             try {
                 deleteRecursively(dir);
                 log.warn("orphan scanner: removed managed directory with no DB row: {}", dir);
@@ -98,6 +142,9 @@ public class OrphanInstanceScanner {
     private void handleCreating(Path dir, String id, Path marker, Set<String> knownIds,
                                 Result result) {
         if (knownIds.contains(id)) {
+            if (!isDirectoryEntry(dir, result)) {
+                return;
+            }
             try {
                 Files.deleteIfExists(marker);
                 log.info("orphan scanner: removed leftover .creating marker for instance {}", id);
@@ -106,6 +153,9 @@ public class OrphanInstanceScanner {
                 log.warn("orphan scanner: failed to remove marker {}: {}", marker,
                     ex.getMessage());
             }
+            return;
+        }
+        if (!isDirectoryEntry(dir, result)) {
             return;
         }
         try {

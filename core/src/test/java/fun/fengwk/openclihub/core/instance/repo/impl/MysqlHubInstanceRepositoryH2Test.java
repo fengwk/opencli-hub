@@ -5,11 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.openclihub.core.instance.repo.HubInstanceRepository;
+import fun.fengwk.openclihub.core.instance.service.impl.HubInstanceServiceImpl;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.core.instance.service.validation.CatalogWebsiteLookup;
 import fun.fengwk.openclihub.core.instance.service.validation.HubInstanceValidator;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
+import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
 import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -163,6 +165,45 @@ class MysqlHubInstanceRepositoryH2Test {
         assertThat(repository.findById(id).getWebsites()).isEmpty();
     }
 
+    /** Service audit timestamps must reach both the API model and the gmt_modified column. */
+    @Test
+    void shouldPersistServiceAuditTimestampUpdatesAndPreserveCreateTime() {
+        String id = repository.generateId();
+        HubInstance instance = build(id, uniqueCode("audit-time"), HubInstanceState.STOPPED);
+        LocalDateTime originalCreateTime = LocalDateTime.of(2025, 1, 2, 3, 4);
+        instance.setCreateTime(originalCreateTime);
+        instance.setUpdateTime(originalCreateTime);
+        assertThat(repository.add(instance)).isTrue();
+        HubInstanceServiceImpl service = newService();
+
+        HubInstanceUpdateDTO update = new HubInstanceUpdateDTO();
+        update.setCode(instance.getCode());
+        update.setDisplayName("Audit Updated");
+        update.setWebsites(List.of("bilibili"));
+        update.setMaxPending(7);
+        HubInstance updated = service.update(id, update);
+
+        HubInstance loaded = repository.findById(id);
+        LocalDateTime modifiedColumn = jdbcTemplate.queryForObject(
+            "select gmt_modified from hub_instance where id = ?",
+            LocalDateTime.class,
+            id);
+        assertThat(updated.getCreateTime()).isEqualTo(originalCreateTime);
+        assertThat(loaded.getCreateTime()).isEqualTo(originalCreateTime);
+        assertThat(loaded.getUpdateTime()).isAfter(originalCreateTime);
+        assertThat(modifiedColumn).isEqualTo(loaded.getUpdateTime());
+
+        service.updateState(id, HubInstanceState.RUNNING, null);
+        loaded = repository.findById(id);
+        assertThat(loaded.getUpdateTime()).isEqualTo(loaded.getStateChangedAt());
+
+        service.bindContextId(id, "ctx-" + instance.getCode());
+        loaded = repository.findById(id);
+        assertThat(loaded.getContextId()).isEqualTo("ctx-" + instance.getCode());
+        assertThat(loaded.getUpdateTime()).isAfter(originalCreateTime);
+        assertThat(loaded.getCreateTime()).isEqualTo(originalCreateTime);
+    }
+
     private HubInstance build(String id, String code, HubInstanceState state) {
         HubInstance instance = new HubInstance();
         instance.setId(id);
@@ -188,10 +229,13 @@ class MysqlHubInstanceRepositoryH2Test {
      * constraint behavior. Reuses a fresh validator bound to a small in-memory website set.
      */
     private void serviceCreate(HubInstance instance) {
+        newService().create(instance);
+    }
+
+    private HubInstanceServiceImpl newService() {
         CatalogWebsiteLookup lookup = () -> Set.of("bilibili");
         HubInstanceValidator validator = new HubInstanceValidator(lookup);
-        new fun.fengwk.openclihub.core.instance.service.impl.HubInstanceServiceImpl(
-            repository, validator).create(instance);
+        return new HubInstanceServiceImpl(repository, validator);
     }
 
 }

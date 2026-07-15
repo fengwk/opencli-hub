@@ -42,6 +42,7 @@ env JAVA_HOME=$JAVA_HOME_17 \
 - 本地联调：H2，自动执行 `schema-h2.sql` 和 `data-h2.sql`，并原地兼容旧 BIGINT ID；
 - 生产环境：MySQL，通用部署需预先执行 `schema-mysql.sql` 和 `data-mysql.sql`；仓库内 Compose 示例仅在新卷首启时由 MySQL 官方 entrypoint 自动执行；
 - 已有 MySQL 数据库必须在停机备份后执行 [`scripts/migrate-mysql-uuid-ids.sql`](scripts/migrate-mysql-uuid-ids.sql)，详见 [UUID ID 迁移](docs/uuid-id-migration.md)；
+- 已有 MySQL 数据库必须在停机备份后执行 [`scripts/migrate-mysql-execution-indexes.sql`](scripts/migrate-mysql-execution-indexes.sql)，详见 [Execution 查询索引迁移](docs/execution-index-migration.md)；
 - Service、Repository 和 Mapper 不负责运行时建表。
 
 MyBatis SQL 由 Auto Mapper 在 Maven `compile` 阶段生成到 `target/classes`，不要在源码资源目录提交同路径空 Mapper XML。
@@ -90,10 +91,12 @@ docker compose -f compose.yml down
 | `OPENCLI_HUB_STARTUP_RECOVERY_ENABLED` | `true` | 启动后按创建时间和 ID 的稳定顺序恢复数据库中的 Instance |
 | `OPENCLI_HUB_DEFAULT_TIMEOUT_MILLIS` | `600000` | 同步执行默认端到端 deadline |
 | `OPENCLI_HUB_MAX_TIMEOUT_MILLIS` | `1800000` | 调用方可请求的最大 deadline |
+| `OPENCLI_HUB_RESOURCE_MAX_FILE_SIZE` | `104857600`（100 MiB） | 单文件上传上限（字节），同时绑定 core 校验与 Spring multipart |
+| `OPENCLI_HUB_RESOURCE_MAX_REQUEST_SIZE` | `524288000`（500 MiB） | 单次上传请求上限（字节），同时绑定 core 校验与 Spring multipart |
 | `OPENCLI_HUB_SHUTDOWN_TIMEOUT_SECONDS` | `30` | entrypoint 等待 Hub/CRX 子进程退出的单进程上限 |
 | `JAVA_OPTS` | 空 | 以空白分隔的 JVM 参数，不用于 Spring `--` 参数 |
 
-其他路径、DISPLAY/VNC 范围和资源限制可按 `web/src/main/resources/application.yml` 中的占位符覆盖。
+其他路径和 DISPLAY/VNC 范围可按 `web/src/main/resources/application.yml` 中的占位符覆盖。资源上传限制环境变量只接受字节数值，配置会为 Spring multipart 自动追加 `B` 单位。
 
 ### SCG/反向代理要求
 
@@ -106,5 +109,6 @@ docker compose -f compose.yml down
 
 - [技术设计](docs/technical-design.md)
 - [UUID ID 迁移](docs/uuid-id-migration.md)
+- [Execution 查询索引迁移](docs/execution-index-migration.md)
 - [实施计划](docs/implementation-plan.md)
 - [文档索引](docs/README.md)
