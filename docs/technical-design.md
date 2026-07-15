@@ -545,13 +545,17 @@ create table hub_execution (
     gmt_modified timestamp(3) not null,
     version bigint not null default 0,
     primary key (id),
-    key idx_hub_execution_instance_id (instance_id),
-    key idx_hub_execution_status (status),
-    key idx_hub_execution_gmt_create (gmt_create)
+    key idx_hub_execution_queued_at_id (queued_at, id),
+    key idx_hub_execution_instance_queued_at_id (instance_id, queued_at, id),
+    key idx_hub_execution_status (status)
 );
 ```
 
 不建立到 `hub_instance` 的外键，因为删除 Instance 后必须保留历史 Execution。
+
+Execution 列表固定按 `queued_at DESC, id DESC` 排序；按 Instance 查询先以 `instance_id` 等值过滤。
+MySQL 5.7 可反向扫描普通升序 B-tree，因此以上两个组合索引分别覆盖全量和按 Instance 的稳定分页查询。
+`instance_id` 单列索引已被组合索引左前缀覆盖，不再单独保留；`gmt_create` 不参与该查询排序。
 
 H2 中将 `mediumtext` 替换为 `clob`。
 
@@ -598,8 +602,9 @@ core/src/main/resources/
 ```
 
 - `schema-h2.sql`、`data-h2.sql` 由 H2 profile 每次启动幂等执行，并自动把旧 BIGINT ID 转为 `VARCHAR(36)`；
-- 新 MySQL 数据库执行 `schema-mysql.sql`、`data-mysql.sql`；已有数据库停机后执行 `scripts/migrate-mysql-uuid-ids.sql`；
-- 迁移流程见 `docs/uuid-id-migration.md`；
+- 新 MySQL 数据库执行 `schema-mysql.sql`、`data-mysql.sql`；已有数据库按变更内容在停机备份后执行
+  `scripts/migrate-mysql-uuid-ids.sql` 和 `scripts/migrate-mysql-execution-indexes.sql`；
+- 迁移流程见 `docs/uuid-id-migration.md` 和 `docs/execution-index-migration.md`；
 - Service、Repository 和 Mapper 不负责建表；
 - 删除当前 `Repository.init()`、`Mapper.createTableIfNotExists()` 链路。
 

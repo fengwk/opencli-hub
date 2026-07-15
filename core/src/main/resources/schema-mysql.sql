@@ -57,9 +57,9 @@ create table if not exists hub_execution (
     gmt_modified timestamp(3) not null default current_timestamp(3),
     version bigint not null default 0,
     primary key (id),
-    key idx_hub_execution_instance_id (instance_id),
-    key idx_hub_execution_status (status),
-    key idx_hub_execution_gmt_create (gmt_create)
+    key idx_hub_execution_queued_at_id (queued_at, id),
+    key idx_hub_execution_instance_queued_at_id (instance_id, queued_at, id),
+    key idx_hub_execution_status (status)
 ) engine=InnoDB default charset=utf8mb4 comment='OpenCLI execution history';
 
 create table if not exists hub_command_blacklist (

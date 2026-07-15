@@ -42,6 +42,7 @@ env JAVA_HOME=$JAVA_HOME_17 \
 - 本地联调：H2，自动执行 `schema-h2.sql` 和 `data-h2.sql`，并原地兼容旧 BIGINT ID；
 - 生产环境：MySQL，通用部署需预先执行 `schema-mysql.sql` 和 `data-mysql.sql`；仓库内 Compose 示例仅在新卷首启时由 MySQL 官方 entrypoint 自动执行；
 - 已有 MySQL 数据库必须在停机备份后执行 [`scripts/migrate-mysql-uuid-ids.sql`](scripts/migrate-mysql-uuid-ids.sql)，详见 [UUID ID 迁移](docs/uuid-id-migration.md)；
+- 已有 MySQL 数据库必须在停机备份后执行 [`scripts/migrate-mysql-execution-indexes.sql`](scripts/migrate-mysql-execution-indexes.sql)，详见 [Execution 查询索引迁移](docs/execution-index-migration.md)；
 - Service、Repository 和 Mapper 不负责运行时建表。
 
 MyBatis SQL 由 Auto Mapper 在 Maven `compile` 阶段生成到 `target/classes`，不要在源码资源目录提交同路径空 Mapper XML。
@@ -108,5 +109,6 @@ docker compose -f compose.yml down
 
 - [技术设计](docs/technical-design.md)
 - [UUID ID 迁移](docs/uuid-id-migration.md)
+- [Execution 查询索引迁移](docs/execution-index-migration.md)
 - [实施计划](docs/implementation-plan.md)
 - [文档索引](docs/README.md)
