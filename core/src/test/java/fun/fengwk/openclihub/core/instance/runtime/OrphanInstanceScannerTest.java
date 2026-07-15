@@ -1,5 +1,6 @@
 package fun.fengwk.openclihub.core.instance.runtime;
 
+import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import fun.fengwk.openclihub.core.instance.runtime.test.InMemoryHubInstanceService;
@@ -104,6 +105,71 @@ class OrphanInstanceScannerTest {
         assertThat(zero).exists();
         assertThat(leadingZero).exists();
         assertThat(outOfRange).exists();
+    }
+
+    @Test
+    void shouldProtectKnownValidIdSymlinkWithoutTouchingExternalDirectory() throws IOException {
+        String id = service.reserveId();
+        service.create(persisted(id));
+        Path outside = Files.createDirectories(dataDir.resolve("outside-known"));
+        Path marker = Files.createFile(outside.resolve(".creating"));
+        Path sentinel = Files.writeString(outside.resolve("sentinel"), "kept");
+        Path instancesRoot = Files.createDirectories(dataDir.resolve("instances"));
+        Path link = Files.createSymbolicLink(instancesRoot.resolve(id), outside);
+
+        // A known ID must not make the scanner resolve marker paths through an instance symlink.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(result.creatingMarkerRemoved).isZero();
+        assertThat(Files.exists(link, NOFOLLOW_LINKS)).isTrue();
+        assertThat(marker).exists();
+        assertThat(sentinel).hasContent("kept");
+    }
+
+    @Test
+    void shouldProtectUnknownValidIdSymlinkToExternalDirectory() throws IOException {
+        Path outside = Files.createDirectories(dataDir.resolve("outside-unknown"));
+        Path sentinel = Files.writeString(outside.resolve("sentinel"), "kept");
+        Path instancesRoot = Files.createDirectories(dataDir.resolve("instances"));
+        Path link = Files.createSymbolicLink(
+            instancesRoot.resolve(UUID.randomUUID().toString()), outside);
+
+        // An unknown valid ID symlink must be retained instead of treated as an orphan directory.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(Files.exists(link, NOFOLLOW_LINKS)).isTrue();
+        assertThat(sentinel).hasContent("kept");
+    }
+
+    @Test
+    void shouldProtectSymlinkToExternalFile() throws IOException {
+        Path outside = Files.writeString(dataDir.resolve("outside-file"), "kept");
+        Path instancesRoot = Files.createDirectories(dataDir.resolve("instances"));
+        Path link = Files.createSymbolicLink(instancesRoot.resolve("4242"), outside);
+
+        // Symlinks are protected entries even when their target is not a directory.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(Files.exists(link, NOFOLLOW_LINKS)).isTrue();
+        assertThat(outside).hasContent("kept");
+    }
+
+    @Test
+    void shouldProtectBrokenSymlinkWithUnmanagedName() throws IOException {
+        Path instancesRoot = Files.createDirectories(dataDir.resolve("instances"));
+        Path missingTarget = dataDir.resolve("missing-target");
+        Path link = Files.createSymbolicLink(instancesRoot.resolve("manual-link"), missingTarget);
+
+        // Broken symlinks must be detected without following the missing target.
+        OrphanInstanceScanner.Result result = scanner().scan();
+
+        assertThat(result.unsafeNameProtected).isEqualTo(1);
+        assertThat(Files.exists(link, NOFOLLOW_LINKS)).isTrue();
+        assertThat(Files.exists(link)).isFalse();
+        assertThat(Files.exists(missingTarget)).isFalse();
     }
 
     @Test
