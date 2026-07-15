@@ -30,7 +30,7 @@ opencli-hub 新建的 Instance、Execution、命令黑名单和输出规则使�
 4. 检查健康状态、旧数字 Instance、VNC、日志和历史 Execution；
 5. 创建一条新记录，确认返回的是 UUID。
 
-## MySQL 8.4
+## MySQL 5.7
 
 MySQL profile 设置了 `spring.sql.init.mode=never`。新 volume 由 MySQL 官方 entrypoint 执行当前 `schema-mysql.sql`；已有数据库不会自动迁移，必须在停机窗口手工执行 [`scripts/migrate-mysql-uuid-ids.sql`](../scripts/migrate-mysql-uuid-ids.sql)。
 

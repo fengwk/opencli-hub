@@ -1,3 +1,7 @@
+-- MySQL 5.7 defaults sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES,…'; `timestamp not null` without
+-- DEFAULT would be rejected at create time. MyBatis INSERT statements set gmt_create/gmt_modified
+-- explicitly so the DEFAULT only acts as a strict-mode safety net.
+
 create table if not exists hub_instance (
     id varchar(36) not null,
     code varchar(64) not null,
@@ -10,8 +14,8 @@ create table if not exists hub_instance (
     proxy_server varchar(512) null,
     last_error_message text null,
     state_changed_at timestamp(3) not null,
-    gmt_create timestamp(3) not null,
-    gmt_modified timestamp(3) not null,
+    gmt_create timestamp(3) not null default current_timestamp(3),
+    gmt_modified timestamp(3) not null default current_timestamp(3),
     version bigint not null default 0,
     primary key (id),
     unique key uk_hub_instance_code (code),
@@ -23,8 +27,8 @@ create table if not exists hub_system_settings (
     id int not null,
     proxy_mode varchar(16) not null,
     proxy_server varchar(512) null,
-    gmt_create timestamp(3) not null,
-    gmt_modified timestamp(3) not null,
+    gmt_create timestamp(3) not null default current_timestamp(3),
+    gmt_modified timestamp(3) not null default current_timestamp(3),
     version bigint not null default 0,
     primary key (id)
 ) engine=InnoDB default charset=utf8mb4 comment='Hub-wide browser settings singleton';
@@ -49,8 +53,8 @@ create table if not exists hub_execution (
     queued_at timestamp(3) not null,
     started_at timestamp(3) null,
     finished_at timestamp(3) null,
-    gmt_create timestamp(3) not null,
-    gmt_modified timestamp(3) not null,
+    gmt_create timestamp(3) not null default current_timestamp(3),
+    gmt_modified timestamp(3) not null default current_timestamp(3),
     version bigint not null default 0,
     primary key (id),
     key idx_hub_execution_instance_id (instance_id),
@@ -62,8 +66,8 @@ create table if not exists hub_command_blacklist (
     id varchar(36) not null,
     command_key varchar(160) not null,
     reason varchar(512) null,
-    gmt_create timestamp(3) not null,
-    gmt_modified timestamp(3) not null,
+    gmt_create timestamp(3) not null default current_timestamp(3),
+    gmt_modified timestamp(3) not null default current_timestamp(3),
     version bigint not null default 0,
     primary key (id),
     unique key uk_hub_command_blacklist_command_key (command_key)
@@ -75,8 +79,8 @@ create table if not exists hub_command_output_rule (
     argument_name varchar(64) not null,
     target_type varchar(32) not null,
     file_name varchar(255) null,
-    gmt_create timestamp(3) not null,
-    gmt_modified timestamp(3) not null,
+    gmt_create timestamp(3) not null default current_timestamp(3),
+    gmt_modified timestamp(3) not null default current_timestamp(3),
     version bigint not null default 0,
     primary key (id),
     unique key uk_hub_command_output_rule_command_key (command_key)
