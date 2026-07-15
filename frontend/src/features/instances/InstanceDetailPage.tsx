@@ -115,7 +115,7 @@ export function InstanceDetailPage() {
   }
 
   return (
-    <div className="page">
+    <div className="page instance-detail-page">
       <header className="page-header instance-detail-header detail-hero">
         <div>
           <p className="eyebrow"><Link to="/instances">实例管理</Link> <span aria-hidden="true">/</span> INSTANCE · {instance.code}</p>
