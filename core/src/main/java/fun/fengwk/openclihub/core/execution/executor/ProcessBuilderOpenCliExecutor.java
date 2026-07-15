@@ -17,6 +17,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -25,7 +26,8 @@ import org.springframework.stereotype.Component;
  * arguments plus any Hub-owned segments ({@code --profile}, managed output argument and
  * {@code --format json}). This class only prepends the configured binary, sets the working
  * directory, runs {@code ProcessBuilder}, reads stdout/stderr concurrently, and enforces
- * the timeout via a destroy-then-grace-then-descendant-kill chain.
+ * one deadline across process exit and output drain via a
+ * destroy-then-grace-then-descendant-kill chain.
  *
  * @author fengwk
  */
@@ -46,6 +48,7 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
 
     @Override
     public OpenCliExecutionResult execute(HubInstance instance, List<String> hubManagedArgv, long timeoutMillis) {
+        long deadlineNanos = deadlineAfterMillis(timeoutMillis);
         List<String> command = buildCommand(hubManagedArgv);
         ProcessBuilder processBuilder = new ProcessBuilder(command);
         processBuilder.directory(Path.of(properties.getOpencli().getWorkdir()).toFile());
@@ -55,9 +58,7 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
             processBuilder.environment().put("OPENCLI_HUB_INSTANCE_CODE",
                 instance.getCode() == null ? "" : instance.getCode());
         }
-        Process process = null;
-        Future<CapturedText> stdoutFuture = null;
-        Future<CapturedText> stderrFuture = null;
+        Process process;
         try {
             process = processBuilder.start();
         } catch (IOException ex) {
@@ -65,41 +66,58 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
             throw HubErrorCodes.OPENCLI_EXECUTION_FAILED.asThrowable(
                 ex, "Failed to start OpenCLI process");
         }
-        stdoutFuture = capture(process.getInputStream());
-        stderrFuture = capture(process.getErrorStream());
-        boolean finished;
+        CaptureGroup captures = capture(process);
         try {
-            finished = process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS);
+            boolean finished = waitFor(process, deadlineNanos);
+            if (!finished) {
+                cleanup(process, captures);
+                return result(
+                    captures,
+                    true,
+                    124,
+                    "OpenCLI process exceeded deadline of " + timeoutMillis + " ms");
+            }
+
+            if (!captures.awaitUntil(deadlineNanos)) {
+                cleanup(process, captures);
+                return result(
+                    captures,
+                    true,
+                    124,
+                    "OpenCLI process exited but output streams did not reach EOF before deadline of "
+                        + timeoutMillis + " ms");
+            }
+
+            return result(
+                captures,
+                false,
+                process.exitValue(),
+                process.exitValue() == 0
+                    ? null : "OpenCLI exited with code " + process.exitValue());
         } catch (InterruptedException ex) {
             // Caller-side interrupt. Kill the process we just spawned before propagating
             // the interrupt status so we never leak an orphan OpenCLI/Chrome.
-            terminateProcess(process);
-            try {
-                stdoutFuture.get();
-                stderrFuture.get();
-            } catch (Exception ignored) {
-                // best-effort drain; the result is undefined when the caller is gone
-            }
+            cleanup(process, captures);
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while running OpenCLI", ex);
         }
-        if (!finished) {
-            terminateProcess(process);
-        }
-        CapturedText stdout = join(stdoutFuture);
-        CapturedText stderr = join(stderrFuture);
+    }
+
+    private OpenCliExecutionResult result(
+        CaptureGroup captures,
+        boolean timedOut,
+        int exitCode,
+        String errorMessage) {
+        CapturedText stdout = captures.stdout().snapshot();
+        CapturedText stderr = captures.stderr().snapshot();
         OpenCliExecutionResult result = new OpenCliExecutionResult();
-        result.setExitCode(finished ? process.exitValue() : 124);
+        result.setExitCode(exitCode);
         result.setStdout(stdout.content());
         result.setStdoutTruncated(stdout.truncated());
         result.setStderr(stderr.content());
         result.setStderrTruncated(stderr.truncated());
-        result.setTimedOut(!finished);
-        if (!finished) {
-            result.setErrorMessage("OpenCLI process exceeded deadline of " + timeoutMillis + " ms");
-        } else if (result.getExitCode() != 0) {
-            result.setErrorMessage("OpenCLI exited with code " + result.getExitCode());
-        }
+        result.setTimedOut(timedOut);
+        result.setErrorMessage(errorMessage);
         return result;
     }
 
@@ -118,28 +136,22 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
         return command;
     }
 
-    private CompletableFuture<CapturedText> capture(InputStream inputStream) {
-        return CompletableFuture.supplyAsync(() -> readStream(inputStream), ioExecutor);
+    private CaptureGroup capture(Process process) {
+        StreamCapture stdout = new StreamCapture(
+            process.getInputStream(), properties.getExecution().getMaxCaptureChars());
+        StreamCapture stderr = new StreamCapture(
+            process.getErrorStream(), properties.getExecution().getMaxCaptureChars());
+        stdout.start(ioExecutor);
+        stderr.start(ioExecutor);
+        return new CaptureGroup(stdout, stderr);
     }
 
-    private CapturedText readStream(InputStream inputStream) {
-        int maxChars = properties.getExecution().getMaxCaptureChars();
-        StringBuilder content = new StringBuilder(Math.min(maxChars, 8192));
-        boolean truncated = false;
-        try (InputStreamReader reader = new InputStreamReader(inputStream, StandardCharsets.UTF_8)) {
-            char[] buffer = new char[4096];
-            int read;
-            while ((read = reader.read(buffer)) >= 0) {
-                int remaining = maxChars - content.length();
-                if (remaining > 0) {
-                    content.append(buffer, 0, Math.min(read, remaining));
-                }
-                truncated |= read > remaining;
-            }
-            return new CapturedText(content.toString(), truncated);
-        } catch (IOException ex) {
-            throw new IllegalStateException("Failed to capture OpenCLI process output", ex);
+    private boolean waitFor(Process process, long deadlineNanos) throws InterruptedException {
+        long remainingNanos = remainingNanos(deadlineNanos);
+        if (remainingNanos == 0L) {
+            return !process.isAlive();
         }
+        return process.waitFor(remainingNanos, TimeUnit.NANOSECONDS);
     }
 
     /**
@@ -147,15 +159,21 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
      * terminating the parent because a short-lived shell can disappear first and make
      * {@link ProcessHandle#descendants()} empty while its children still hold the pipes.
      */
-    private void terminateProcess(Process process) {
-        List<ProcessHandle> descendants = process.descendants().toList();
+    private boolean terminateProcess(
+        Process process,
+        List<ProcessHandle> descendants,
+        long cleanupDeadlineNanos) {
         boolean interrupted = false;
-        process.destroy();
-        try {
-            process.waitFor(properties.getExecution().getProcessStopGraceMillis(),
-                TimeUnit.MILLISECONDS);
-        } catch (InterruptedException ex) {
-            interrupted = true;
+        if (process.isAlive()) {
+            process.destroy();
+            try {
+                long remainingNanos = remainingNanos(cleanupDeadlineNanos);
+                if (remainingNanos > 0L) {
+                    process.waitFor(remainingNanos, TimeUnit.NANOSECONDS);
+                }
+            } catch (InterruptedException ex) {
+                interrupted = true;
+            }
         }
 
         for (ProcessHandle handle : descendants) {
@@ -171,32 +189,182 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
         if (process.isAlive()) {
             process.destroyForcibly();
         }
-        try {
-            process.waitFor();
-        } catch (InterruptedException ex) {
-            interrupted = true;
-            if (process.isAlive()) {
-                process.destroyForcibly();
-            }
-        } finally {
-            if (interrupted) {
-                Thread.currentThread().interrupt();
+        if (!interrupted && process.isAlive()) {
+            try {
+                long remainingNanos = remainingNanos(cleanupDeadlineNanos);
+                if (remainingNanos > 0L) {
+                    process.waitFor(remainingNanos, TimeUnit.NANOSECONDS);
+                }
+            } catch (InterruptedException ex) {
+                interrupted = true;
             }
         }
+        return interrupted;
     }
 
-    private CapturedText join(Future<CapturedText> future) {
+    private void cleanup(Process process, CaptureGroup captures) {
+        long cleanupDeadlineNanos = deadlineAfterMillis(
+            Math.max(0L, properties.getExecution().getProcessStopGraceMillis()));
+        List<ProcessHandle> descendants = process.descendants().toList();
+        captures.closeAndCancel();
+        boolean interrupted = terminateProcess(process, descendants, cleanupDeadlineNanos);
         try {
-            return future.get();
+            captures.awaitUntil(cleanupDeadlineNanos);
         } catch (InterruptedException ex) {
+            interrupted = true;
+        }
+        if (interrupted) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while capturing OpenCLI output", ex);
-        } catch (ExecutionException ex) {
-            throw new IllegalStateException("Failed to capture OpenCLI output", ex.getCause());
         }
     }
 
     private record CapturedText(String content, boolean truncated) {
+    }
+
+    private static long deadlineAfterMillis(long timeoutMillis) {
+        return System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, timeoutMillis));
+    }
+
+    private static long remainingNanos(long deadlineNanos) {
+        return Math.max(0L, deadlineNanos - System.nanoTime());
+    }
+
+    private static final class CaptureGroup {
+
+        private final StreamCapture stdout;
+        private final StreamCapture stderr;
+        private final CompletableFuture<Void> completion;
+
+        private CaptureGroup(StreamCapture stdout, StreamCapture stderr) {
+            this.stdout = stdout;
+            this.stderr = stderr;
+            completion = CompletableFuture.allOf(stdout.completion(), stderr.completion());
+        }
+
+        private StreamCapture stdout() {
+            return stdout;
+        }
+
+        private StreamCapture stderr() {
+            return stderr;
+        }
+
+        private boolean awaitUntil(long deadlineNanos) throws InterruptedException {
+            if (completion.isDone()) {
+                return true;
+            }
+            long remainingNanos = remainingNanos(deadlineNanos);
+            if (remainingNanos == 0L) {
+                return false;
+            }
+            try {
+                completion.get(remainingNanos, TimeUnit.NANOSECONDS);
+                return true;
+            } catch (TimeoutException ex) {
+                return false;
+            } catch (ExecutionException ex) {
+                throw new IllegalStateException("Failed to capture OpenCLI output", ex.getCause());
+            }
+        }
+
+        private void closeAndCancel() {
+            stdout.requestClose();
+            stderr.requestClose();
+            stdout.closeInput();
+            stderr.closeInput();
+            stdout.cancel();
+            stderr.cancel();
+        }
+
+    }
+
+    private static final class StreamCapture implements Runnable {
+
+        private final InputStream inputStream;
+        private final int maxChars;
+        private final StringBuilder content;
+        private final CompletableFuture<Void> completion = new CompletableFuture<>();
+        private Future<?> future;
+        private boolean closeRequested;
+        private boolean eof;
+        private boolean truncated;
+        private IOException failure;
+
+        private StreamCapture(InputStream inputStream, int maxChars) {
+            this.inputStream = inputStream;
+            this.maxChars = maxChars;
+            content = new StringBuilder(Math.min(maxChars, 8192));
+        }
+
+        private void start(ExecutorService executor) {
+            future = executor.submit(this);
+        }
+
+        @Override
+        public void run() {
+            try (InputStreamReader reader = new InputStreamReader(inputStream, StandardCharsets.UTF_8)) {
+                char[] buffer = new char[4096];
+                int read;
+                while ((read = reader.read(buffer)) >= 0) {
+                    append(buffer, read);
+                }
+                synchronized (this) {
+                    eof = true;
+                }
+            } catch (IOException ex) {
+                synchronized (this) {
+                    if (closeRequested) {
+                        truncated = true;
+                    } else {
+                        failure = ex;
+                    }
+                }
+            } finally {
+                completion.complete(null);
+            }
+        }
+
+        private synchronized void append(char[] buffer, int read) {
+            int remaining = maxChars - content.length();
+            if (remaining > 0) {
+                content.append(buffer, 0, Math.min(read, remaining));
+            }
+            truncated |= read > remaining;
+        }
+
+        private CompletableFuture<Void> completion() {
+            return completion;
+        }
+
+        private synchronized void requestClose() {
+            closeRequested = true;
+            if (!eof) {
+                truncated = true;
+            }
+        }
+
+        private void closeInput() {
+            try {
+                inputStream.close();
+            } catch (IOException ignored) {
+                // Best effort: cancellation and the process-tree cleanup remain bounded.
+            }
+        }
+
+        private void cancel() {
+            Future<?> current = future;
+            if (current != null) {
+                current.cancel(true);
+            }
+        }
+
+        private synchronized CapturedText snapshot() {
+            if (failure != null) {
+                throw new IllegalStateException("Failed to capture OpenCLI output", failure);
+            }
+            return new CapturedText(content.toString(), truncated);
+        }
+
     }
 
 }
