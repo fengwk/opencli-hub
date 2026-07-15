@@ -1,6 +1,6 @@
 services:
   mysql:
-    image: mysql:8.4.5
+    image: mysql:5.7.44
     environment:
       MYSQL_DATABASE: opencli_hub
       MYSQL_USER: opencli_hub

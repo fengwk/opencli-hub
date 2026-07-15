@@ -64,7 +64,9 @@ docker compose -f compose.h2.yml down
 
 `opencli-hub-h2-data` 保存 `/data/opencli-hub`（H2 文件数据库、日志、资源和实例目录），`opencli-hub-h2-home` 保存 `/var/lib/opencli`。`application-docker-h2.yml` 以幂等 H2 schema/data 脚本初始化新库；该 profile 仅适合单容器 H2。`OPENCLI_HUB_SMOKE_BUILD_MODE=local` 会先执行 `scripts/docker/build-local.sh`，再用 Compose 启动同一 `opencli-hub:local` 镜像，适合网络不稳定时的本地回归。Smoke 脚本默认使用隔离的 `opencli-hub-smoke-$UID` Compose project 和宿主端口 `18080`，退出时只删除自己的临时 volumes；可通过 `OPENCLI_HUB_SMOKE_PROJECT`、`OPENCLI_HUB_SMOKE_PORT` 覆盖。
 
-MySQL 部署使用固定 `mysql:8.4.5`，并在**新建** `opencli-hub-mysql-data` 卷的首次启动时由 MySQL 官方 entrypoint 执行版本化的 `schema-mysql.sql`、`data-mysql.sql`。该 Compose 文件 bind mount 仓库内 SQL，因此应从仓库根目录执行。Hub 的运行时 `spring.sql.init.mode` 仍为 `never`：不要依赖 Hub 对既有 MySQL 建表或迁移；已有 BIGINT schema 先按 [UUID ID 迁移](docs/uuid-id-migration.md) 操作。两个密码环境变量均为必填，避免误用弱默认值。
+MySQL 部署使用固定 `mysql:5.7.44`（5.7 系列最后稳定版），并在**新建** `opencli-hub-mysql-data` 卷的首次启动时由 MySQL 官方 entrypoint 执行版本化的 `schema-mysql.sql`、`data-mysql.sql`。该 Compose 文件 bind mount 仓库内 SQL，因此应从仓库根目录执行。Hub 的运行时 `spring.sql.init.mode` 仍为 `never`：不要依赖 Hub 对既有 MySQL 建表或迁移；已有 BIGINT schema 先按 [UUID ID 迁移](docs/uuid-id-migration.md) 操作。两个密码环境变量均为必填，避免误用弱默认值。
+
+> MySQL 5.7 不支持 8.0 才引入的 `caching_sha2_password`，所以 Hub 的 JDBC URL 已加 `defaultAuthenticationPlugin=mysql_native_password`；运维在新建业务账号时也需保持 `mysql_native_password`（默认即如此）。MySQL 5.7 已于 2023-10 EOL，本仓库继续以 `5.7.44` 镜像兜底，不引入 8.x 才有的 SQL 语法（JSON_TABLE、CTE、SKIP LOCKED 等）。
 
 ```bash
 export MYSQL_ROOT_PASSWORD='replace-with-a-secret'
