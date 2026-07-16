@@ -10,3 +10,10 @@ runtime
 *.log
 *.pid
 README.md
+.secrets
+**/*.pem
+**/*.key
+**/id_rsa
+**/id_dsa
+**/id_ecdsa
+**/id_ed25519

@@ -7,12 +7,23 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly IMAGE_TAG="${1:-opencli-hub:local}"
 readonly JAVA_HOME_17_VALUE="${JAVA_HOME_17:?JAVA_HOME_17 is required}"
+readonly configured_signing_key="${OPENCLI_HUB_EXTENSION_SIGNING_KEY_FILE:-.secrets/opencli-extension-signing-key.pem}"
+if [[ "${configured_signing_key}" == /* ]]; then
+    readonly signing_key_file="${configured_signing_key}"
+else
+    readonly signing_key_file="${PROJECT_DIR}/${configured_signing_key}"
+fi
 artifact_dir=""
 
 cleanup() {
     [[ -n "${artifact_dir}" ]] && rm -rf "${artifact_dir}"
 }
 trap cleanup EXIT
+
+[[ -r "${signing_key_file}" && -s "${signing_key_file}" ]] || {
+    printf '[build-local] signing key must be readable and nonempty: %s\n' "${signing_key_file}" >&2
+    exit 1
+}
 
 printf '[build-local] building frontend with host npm cache\n'
 (
@@ -43,6 +54,7 @@ cp "${jar_path}" "${artifact_dir}/artifact/opencli-hub.jar"
 printf '[build-local] assembling %s from the host-built JAR\n' "${IMAGE_TAG}"
 docker build \
     --platform linux/amd64 \
+    --secret "id=opencli_extension_signing_key,src=${signing_key_file}" \
     --build-context "prebuilt-artifact=${artifact_dir}" \
     --build-arg HUB_ARTIFACT_SOURCE=prebuilt-artifact \
     --tag "${IMAGE_TAG}" \

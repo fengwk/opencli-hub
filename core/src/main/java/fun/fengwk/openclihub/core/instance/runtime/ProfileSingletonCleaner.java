@@ -11,9 +11,6 @@ import lombok.extern.slf4j.Slf4j;
  * safe to delete before Chrome starts. Persistent data, cookies, extension storage and
  * login state must NOT be touched.
  *
- * <p>The list of volatile files mirrors the cleanup performed by
- * {@code scripts/docker/poc-entrypoint.sh}.
- *
  * @author fengwk
  */
 @Slf4j
