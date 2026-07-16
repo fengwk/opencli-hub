@@ -1,0 +1,86 @@
+name: Docker Publish
+
+on:
+  push:
+    branches:
+      - docker
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: opencli-hub
+  DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || secrets.DOCKERHUB_USERNAME || secrets.DOCKER_USERNAME }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Validate Docker Hub and signing configuration
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || secrets.DOCKER_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKER_PASSWORD }}
+          OPENCLI_HUB_EXTENSION_SIGNING_KEY: ${{ secrets.OPENCLI_HUB_EXTENSION_SIGNING_KEY }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "${DOCKERHUB_USERNAME}" ]] || {
+            echo '::error::DOCKERHUB_USERNAME or DOCKER_USERNAME secret is required'
+            exit 1
+          }
+          [[ -n "${DOCKERHUB_TOKEN}" ]] || {
+            echo '::error::DOCKERHUB_TOKEN or DOCKER_PASSWORD secret is required'
+            exit 1
+          }
+          [[ -n "${DOCKERHUB_NAMESPACE}" ]] || {
+            echo '::error::DOCKERHUB_NAMESPACE variable or Docker Hub username secret is required'
+            exit 1
+          }
+          [[ -n "${OPENCLI_HUB_EXTENSION_SIGNING_KEY}" ]] || {
+            echo '::error::OPENCLI_HUB_EXTENSION_SIGNING_KEY secret is required'
+            exit 1
+          }
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log into Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME || secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKER_PASSWORD }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=docker
+            type=raw,value=latest
+            type=sha,prefix=sha-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        env:
+          OPENCLI_HUB_EXTENSION_SIGNING_KEY: ${{ secrets.OPENCLI_HUB_EXTENSION_SIGNING_KEY }}
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          no-cache-filters: opencli-assets
+          secret-envs: |
+            opencli_extension_signing_key=OPENCLI_HUB_EXTENSION_SIGNING_KEY
