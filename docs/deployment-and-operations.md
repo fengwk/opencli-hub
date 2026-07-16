@@ -48,6 +48,31 @@ Dockerfile 将其作为 BuildKit secret `opencli_extension_signing_key` 挂载�
 
 已经泄露或曾提交到版本库的 key 不得用于 release。
 
+### GitHub 自动构建并发布镜像
+
+推送 `docker` 分支会触发 `.github/workflows/docker-publish.yml`，构建
+`linux/amd64` 镜像并推送以下 Docker Hub tag：
+
+```text
+<namespace>/opencli-hub:docker
+<namespace>/opencli-hub:latest
+<namespace>/opencli-hub:sha-<commit>
+```
+
+仓库需要配置：
+
+| 类型 | 名称 | 说明 |
+|---|---|---|
+| Secret | `DOCKERHUB_USERNAME` | Docker Hub 用户名；兼容旧名称 `DOCKER_USERNAME`。 |
+| Secret | `DOCKERHUB_TOKEN` | Docker Hub access token；兼容旧名称 `DOCKER_PASSWORD`。 |
+| Secret | `OPENCLI_HUB_EXTENSION_SIGNING_KEY` | 完整 RSA PEM；必须使用受保护且长期稳定、未泄露的 key。 |
+| Variable | `DOCKERHUB_NAMESPACE` | 可选镜像命名空间；缺省使用 Docker Hub 用户名。 |
+
+workflow 也支持手工触发。签名 key 通过 BuildKit secret
+`opencli_extension_signing_key` 直接提供给 Docker build，不写入 checkout、build context
+或镜像。构建会绕过 `opencli-assets` stage 的缓存，确保 key 轮换后重新生成 CRX；其他
+stage 仍使用 GitHub Actions cache。
+
 ## 3. H2 单容器运行
 
 H2 profile 为 `docker-h2`，数据库文件位于：
