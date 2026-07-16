@@ -2,7 +2,7 @@
 
 ## 1. 文档目的
 
-本文档是 opencli-hub MVP 的技术设计基线，用于指导后续单 Agent 或多 Agent 并行开发。
+本文档是 opencli-hub 的最终技术设计基线，描述 release 版本的架构、运行约束与接口契约。
 
 设计目标：
 
@@ -143,7 +143,9 @@ opencli-hub/
 ├── docs/
 │   ├── README.md
 │   ├── technical-design.md
-│   └── implementation-plan.md
+│   ├── uuid-id-migration.md
+│   ├── execution-index-migration.md
+│   └── browser-proxy-settings.md
 ├── scripts/
 ├── Dockerfile
 ├── pom.xml
@@ -373,6 +375,8 @@ public class HubInstance {
     private HubInstanceState state;
     private List<String> websites;
     private int maxPending;
+    private HubProxyMode proxyMode;
+    private String proxyServer;
     private String lastErrorMessage;
     private LocalDateTime stateChangedAt;
     private LocalDateTime createTime;
@@ -413,6 +417,7 @@ public class HubExecution {
     private String site;
     private SiteSessionMode siteSession;
     private List<String> argv;
+    private boolean reuseInstance;
     private HubExecutionStatus status;
     private Integer exitCode;
     private String stdout;
@@ -472,14 +477,15 @@ public enum HubCommandOutputTargetType {
 
 | 表 | 用途 |
 |---|---|
-| `hub_instance` | Instance 配置和最近运行状态 |
+| `hub_instance` | Instance 配置、最近运行状态和 Instance 代理覆盖 |
+| `hub_system_settings` | 全局浏览器代理策略单例 |
 | `hub_execution` | 同步命令执行历史 |
 | `hub_command_blacklist` | 被管理员禁用的命令 |
 | `hub_command_output_rule` | OpenCLI 本地资源输出参数规则 |
 
 不建立资源表、日志表、运行时进程表、VNC session 表和 Command Catalog 全量表。
 
-四张表的新主键均由 JDK `UUID.randomUUID()` 本地生成，数据库与运行时不依赖 Snowflake、`worker-id`、Redis 或其他 ID 服务。迁移前的正 BIGINT ID 原值转换为十进制字符串，不改名 Instance 目录或 execution resource group。`code` 保持唯一但可编辑的业务别名，不承担内部身份。
+除 `hub_system_settings` 使用固定 `id=1` 单例外，其余四张业务表的新主键均由 JDK `UUID.randomUUID()` 本地生成，数据库与运行时不依赖 Snowflake、`worker-id`、Redis 或其他 ID 服务。迁移前的正 BIGINT ID 原值转换为十进制字符串，不改名 Instance 目录或 execution resource group。`code` 保持唯一但可编辑的业务别名，不承担内部身份。
 
 ### 9.2 hub_instance
 
@@ -492,6 +498,8 @@ create table hub_instance (
     state varchar(32) not null,
     websites_json text not null,
     max_pending int not null,
+    proxy_mode varchar(16) not null default 'INHERIT',
+    proxy_server varchar(512) null,
     last_error_message text null,
     state_changed_at timestamp(3) not null,
     gmt_create timestamp(3) not null,
@@ -519,7 +527,25 @@ Profile 路径由 ID 计算：
 {dataDir}/instances/{instanceId}/chrome
 ```
 
-### 9.3 hub_execution
+### 9.3 hub_system_settings
+
+全局浏览器代理策略使用单例行 `id=1`，只影响之后启动的 Instance：
+
+```sql
+create table hub_system_settings (
+    id int not null,
+    proxy_mode varchar(16) not null,
+    proxy_server varchar(512) null,
+    gmt_create timestamp(3) not null,
+    gmt_modified timestamp(3) not null,
+    version bigint not null default 0,
+    primary key (id)
+);
+```
+
+全局 `proxy_mode` 只能是 `DIRECT` 或 `CUSTOM`；Instance 的 `INHERIT` 在启动时解析为当前全局策略。代理只用于 Chrome 网站流量，不代理 Hub HTTP、共享 daemon 或 loopback CRX/bridge 流量。代理 URI 必须是带显式端口且不含凭据的 `http`、`https`、`socks4` 或 `socks5` URI。
+
+### 9.4 hub_execution
 
 ```sql
 create table hub_execution (
@@ -530,6 +556,7 @@ create table hub_execution (
     site varchar(80) not null,
     site_session varchar(16) not null,
     argv_json text not null,
+    reuse_instance tinyint(1) not null default 0,
     status varchar(32) not null,
     exit_code int null,
     stdout_content mediumtext null,
@@ -559,7 +586,7 @@ MySQL 5.7 可反向扫描普通升序 B-tree，因此以上两个组合索引分
 
 H2 中将 `mediumtext` 替换为 `clob`。
 
-### 9.4 hub_command_blacklist
+### 9.5 hub_command_blacklist
 
 ```sql
 create table hub_command_blacklist (
@@ -574,7 +601,7 @@ create table hub_command_blacklist (
 );
 ```
 
-### 9.5 hub_command_output_rule
+### 9.6 hub_command_output_rule
 
 ```sql
 create table hub_command_output_rule (
@@ -591,7 +618,7 @@ create table hub_command_output_rule (
 );
 ```
 
-### 9.6 SQL 文件
+### 9.7 SQL 文件
 
 ```text
 core/src/main/resources/
@@ -944,18 +971,19 @@ sequenceDiagram
 
 ### 16.3 Chrome extension 安装与启动参数
 
-Chrome 150 stable 已实测忽略 `--load-extension` 等 unpacked extension 参数，因此生产方案固定为：
+正式 Google Chrome stable 不依赖 unpacked extension 的命令行加载。Release 镜像采用构建期签名和 managed policy：
 
 ```text
 OpenCLI Browser Bridge extension 1.0.22
--> 构建期使用 google-chrome-stable --pack-extension 生成 CRX3
--> 固定 PEM 签名身份
--> 固定 extension ID: lieajjjjjggpnhebbjmmlfofjojallpe
--> Linux managed policy 强制安装
+-> 构建阶段校验固定版本 release asset
+-> BuildKit secret 仅在构建阶段提供受保护的 stable signing key
+-> 使用 google-chrome-stable --pack-extension 生成 CRX3
+-> 从同一签名产物生成 extension identity、update manifest 和 managed policy
 -> loopback update server: 127.0.0.1:18181
+-> Chrome 通过 Linux managed policy 强制安装
 ```
 
-managed policy 同时配置 `ExtensionInstallForcelist`、`ExtensionSettings` 和 `override_update_url=true`。CRX、update manifest、policy 和 update server 均在镜像构建/启动层准备，Instance Runtime 只负责启动独立 Chrome Profile。
+签名 key 只能通过 BuildKit secret 挂载到构建步骤，不能提交到仓库、写入镜像层或复制到运行时。CRX、update manifest 和 policy 必须从同一构建产物生成；policy 中的 extension identity 必须由构建步骤填充，文档和运行时参数不得硬编码历史 ID。`ExtensionInstallForcelist`、`ExtensionSettings` 和 `override_update_url=true` 一起使用，确保首次安装与后续更新都走容器内 loopback update server。Instance Runtime 只负责启动独立 Chrome Profile，容器启动层负责在 Chrome 前提供 CRX 文件和 update manifest。
 
 Java Runtime 允许的 Chrome 参数：
 
@@ -968,6 +996,8 @@ Java Runtime 允许的 Chrome 参数：
 --disable-popup-blocking
 --window-size=1600,900
 ```
+
+`--enable-unsafe-extension-debugging` 是正式 Browser Bridge 运行参数；它不负责 unpacked extension 加载，也不改变 managed policy 的安装路径。采用 managed policy 后仍需保留该参数以维持正式运行时的 extension 调试接口兼容。
 
 明确禁止重新加入：
 
@@ -985,8 +1015,8 @@ Java Runtime 允许的 Chrome 参数：
 - 使用正式 `google-chrome-stable` headed 模式；
 - Chrome 由非 root 用户运行，不默认加 `--no-sandbox`；
 - 不添加 WebDriver、ChromeDriver、Selenium 或 Playwright 参数；
-- Docker 推荐 `--shm-size=2g`；当前宿主 sandbox 验证需要 `--security-opt seccomp=unconfined`；
-- 构建资产、固定哈希、policy 和实测步骤以 [Chrome Extension PoC](./poc-chrome-extension.md) 为准。
+- Docker 推荐 `--shm-size=2g`；若宿主默认 seccomp 阻断 Chrome sandbox，部署环境必须提供兼容的 seccomp 配置；
+- Release 构建资产、policy 与 update server 必须保持同一签名身份，运行时只读取构建产物。
 
 ### 16.4 `contextId` 发现
 
@@ -1585,6 +1615,15 @@ GET /api/instances/{id}/logs
 GET /api/instances/{id}/logs/download
 ```
 
+### 26.7 Browser proxy settings
+
+```text
+GET /api/settings
+PUT /api/settings
+```
+
+全局设置的 `proxyMode` 为 `DIRECT` 或 `CUSTOM`；Instance 创建和更新请求可以通过 `proxyMode`/`proxyServer` 选择 `INHERIT`、`DIRECT` 或 `CUSTOM`。代理配置只在 Instance 启动时解析并传给 Chrome，修改后必须重启或 stop/start 才会生效。
+
 ## 27. 错误码
 
 至少包含：
@@ -1861,7 +1900,6 @@ Hub 仍负责：
 ### 删除
 
 - `infra` Maven module；
-- `DemoController` 和 Demo 测试；
 - Repository `init()`；
 - Mapper `createTableIfNotExists()`；
 - Mapper XML 中常规 CRUD 和 DDL；
@@ -1879,43 +1917,22 @@ Hub 仍负责：
 - Dockerfile；
 - SQL 和真实测试。
 
-## 32. 参考实现
+## 32. 参考组件
 
-### convention4j / kk-studio
+- convention4j：Result、Page、BaseMapperScan、ConventionDO 和 Logback 等基础能力；
+- kk-studio：业务逻辑、Repository、Mapper/DO 和 React/Vite feature-first 结构的实现参考；
+- OpenCLI：官方 CLI、Browser Bridge extension、daemon、profile 和 execution 能力；
+- Web2API：Xvfb/openbox/x11vnc、VNC WebSocket 代理、noVNC 和日志页面的实现参考。
 
-- `~/proj/convention4j`：父 POM、Result、Page、BaseMapperScan、ConventionDO、Logback；
-- `~/proj/kk-studio/core`：业务逻辑、Repository impl、Mapper 和 DO 同 module；
-- `~/proj/kk-studio/frontend`：React/Vite feature-first 结构。
+## 33. Release 基线
 
-### OpenCLI
-
-- `~/proj/OpenCLI/extension/manifest.json`；
-- `~/proj/OpenCLI/extension/src/background.ts`；
-- `~/proj/OpenCLI/src/daemon.ts`；
-- `~/proj/OpenCLI/src/browser/profile.ts`；
-- `~/proj/OpenCLI/src/execution.ts`；
-- `~/proj/OpenCLI/cli-manifest.json`。
-
-### Web2API
-
-- `~/proj/web2api/supervisor.js`：Xvfb/openbox/x11vnc；
-- `~/proj/web2api/src/server/api/admin/vncProxy.js`：VNC WebSocket；
-- `~/proj/web2api/webui/src/components/tools/display.vue`：noVNC；
-- `~/proj/web2api/src/utils/logger.js` 和 `webui/src/components/tools/logs.vue`：日志页面。
-
-## 33. 完成定义
-
-MVP 完成必须满足：
+Release 版本应保持以下边界：
 
 - 仓库只保留 `share/core/web` 三个 Maven module；
-- `mvn clean test` 通过；
-- frontend build/test 通过；
-- H2 启动自动建表和初始化规则；
-- MySQL SQL 可手工执行；
-- Docker 镜像可构建；
-- 正式 Chrome + extension + contextId PoC 通过；
-- Instance 可创建、重启恢复、VNC 登录、编辑 websites 和彻底删除；
-- Execute API 能安全校验 argv、路由、排队、超时、持久 affinity 和资源；
-- Commands/Resources/Logs/Executions 页面可用；
-- 无认证逻辑；
-- 无 Redis、MQ、Kubernetes、远程 Agent 或 OpenCLI fork。
+- Maven test suite、frontend build/test 和 Docker 镜像构建可重复执行；
+- H2 启动自动建表和初始化规则，MySQL SQL 可手工执行；
+- 正式 Chrome 通过 managed policy 加载构建期签名的 extension，并能发现和绑定 `contextId`；
+- Instance 支持创建、重启恢复、VNC 登录、编辑 websites 和彻底删除；
+- Execute API 安全校验 argv，完成路由、排队、超时、持久 affinity 和资源处理；
+- Commands、Resources、Logs 和 Executions 页面可用；
+- 无认证逻辑、Redis、MQ、Kubernetes、远程 Agent 或 OpenCLI fork。
