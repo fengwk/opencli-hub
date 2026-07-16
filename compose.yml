@@ -21,6 +21,8 @@ services:
   hub:
     build:
       context: .
+      secrets:
+        - opencli_extension_signing_key
     image: opencli-hub:local
     platform: linux/amd64
     user: "1000:1000"
@@ -51,3 +53,7 @@ volumes:
   opencli-hub-mysql-data:
   opencli-hub-mysql-hub-data:
   opencli-hub-mysql-home:
+
+secrets:
+  opencli_extension_signing_key:
+    file: "${OPENCLI_HUB_EXTENSION_SIGNING_KEY_FILE:-.secrets/opencli-extension-signing-key.pem}"

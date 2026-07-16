@@ -1,4 +1,4 @@
-# Browser proxy settings
+# 浏览器代理设置
 
 ## Scope
 
@@ -44,8 +44,12 @@ MySQL schema changes are manual because DDL commits implicitly. The stopped-serv
 3. Run:
 
    ```bash
-   mysql --database=opencli_hub < scripts/migrate-mysql-browser-proxy-settings.sql
+   mysql --host "$OPENCLI_HUB_MYSQL_HOST" \
+     --user "$OPENCLI_HUB_MYSQL_USERNAME" \
+     --password --database=opencli_hub < scripts/migrate-mysql-browser-proxy-settings.sql
    ```
+
+   `--password` 会交互式读取密码。运行前将 host 和 user 变量设置为目标数据库的连接信息。
 
 4. Verify the final result sets printed by the script:
    - every Instance mode is `INHERIT`, `DIRECT`, or `CUSTOM`;

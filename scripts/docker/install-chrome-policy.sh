@@ -9,14 +9,10 @@
 #   /etc/opt/chrome/policies/managed/*.json
 #
 # 由 Chrome 在每次启动时读取；managed policy 必须以 root 写入（openclihub 用户
-# 无法写到 /etc/opt/chrome/policies/managed/，因此该脚本必须以 root 运行，
-# 通常由容器构建阶段已经写好；这里提供一个运行时入口供 PoC 调试）。
+# 无法写到 /etc/opt/chrome/policies/managed/），因此该脚本在容器构建阶段以 root 运行。
 #
 # 用法（root）：
 #   install-chrome-policy.sh <extension-id> <update-base-url> [policy-out-dir]
-#
-# 例：
-#   install-chrome-policy.sh 5f16320f80bf2c69c263eafaf213634c http://127.0.0.1:18181
 #
 # 输出 policy 文件为 JSON，Chrome 读取后会：
 #   1. 解析 update_url；
@@ -26,8 +22,7 @@
 #   5. 校验 CRX3 header 内 RSA 公钥哈希是否等于该 extension ID；
 #   6. 验证通过则静默安装。
 #
-# 验证是否成功需看容器日志里的 "ExtensionSettingsManager::OnUpdateExtension" 类日志，
-# 或用 chrome://extensions 页面、poc-status.sh 的 /status 接口观察。
+# 验证是否成功需检查 Chrome managed policy 和 extension 状态。
 
 set -euo pipefail
 

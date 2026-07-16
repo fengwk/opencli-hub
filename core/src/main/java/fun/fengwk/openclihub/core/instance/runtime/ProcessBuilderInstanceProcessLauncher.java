@@ -14,7 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * {@link InstanceProcessLauncher} backed by {@link ProcessBuilder}.
  *
- * <p>Verified launch flags come from the F1 PoC, not from earlier design prose:
+ * <p>Chrome launch flags preserve the managed-extension runtime constraints:
  * <ul>
  *   <li>NO {@code --load-extension} / {@code --disable-extensions-except} /
  *       {@code --disable-features=DisableLoadExtensionCommandLineSwitch}. These are rejected
@@ -24,9 +24,7 @@ import lombok.extern.slf4j.Slf4j;
  *       to the daemon.</li>
  *   <li>NO {@code --no-sandbox}. Sandbox diagnostics are handled by the container entrypoint;
  *       production relaxes seccomp at the Docker level when required.</li>
- *   <li>The extension is force-installed through {@code /etc/opt/chrome/policies/managed}; the
- *       fixed ID is {@code lieajjjjjggpnhebbjmmlfofjojallpe} (PEM public key pinned in the
- *       image).</li>
+ *   <li>The extension is force-installed through {@code /etc/opt/chrome/policies/managed}.</li>
  * </ul>
  *
  * @author fengwk

@@ -2,7 +2,7 @@
 //
 // crx-http-server.mjs
 //
-// F1 PoC: 容器内本地 HTTP server，仅监听 127.0.0.1，serve：
+// 容器内本地 HTTP server，仅监听 127.0.0.1，serve：
 //   GET /extension.crx       -> CRX3 file
 //   GET /updates.xml         -> Chrome update manifest (XML)
 //   GET /info                -> build-info.json（人读）
@@ -12,7 +12,8 @@
 //
 // 用法（容器内）：
 //   OPENCLI_CRX_HTTP_PORT=18181 OPENCLI_UPDATE_BASE_URL=http://127.0.0.1:18181 \
-//     crx-http-server.mjs /opt/opencli/extension.crx /opt/opencli/updates.xml /opt/opencli/build-info.json
+//     crx-http-server.mjs /opt/opencli/crx/extension.crx \
+//       /opt/opencli/crx/updates.xml /opt/opencli/crx/build-info.json
 //
 // 设计动机：Chrome ExtensionInstallForcelist/ExtensionSettings 支持 update_url 使用 http scheme
 //   （Chrome Enterprise 文档明确说明），通过 managed policy 从 127.0.0.1 拉取 CRX3

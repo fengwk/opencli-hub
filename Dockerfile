@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 # Production image: build the React SPA and Spring Boot JAR outside the runtime image.
 ARG NODE_MAJOR=20
 ARG OPENCLI_VERSION=1.8.6
@@ -91,27 +93,27 @@ RUN set -eux; \
     npm cache clean --force; \
     rm -f /usr/local/bin/install-opencli.sh /usr/local/bin/install-extension.sh
 
-# Pack the fixed extension and generate its fixed-ID policy during the build.
+# Pack the extension and generate its managed-install policy during the build.
 # Chrome needs --no-sandbox only for this root-owned build-time pack operation;
 # neither Hub nor its Java-owned Chrome instances receive that flag at runtime.
 COPY --chmod=0755 scripts/docker/build-extension-crx.mjs scripts/docker/install-chrome-policy.sh /usr/local/bin/
-COPY --chmod=0600 scripts/docker/build-assets/extension-signing-key.pem /tmp/extension-signing-key.pem
-RUN set -eux; \
-    mkdir -p "${OPENCLI_INSTALL_DIR}/crx" "${OPENCLI_INSTALL_DIR}/certs" /tmp/opencli-extension-pack; \
-    mv /tmp/extension-signing-key.pem "${OPENCLI_INSTALL_DIR}/certs/extension-signing-key.pem"; \
+RUN --mount=type=secret,id=opencli_extension_signing_key,required=true \
+    set -eux; \
+    signing_key=/run/secrets/opencli_extension_signing_key; \
+    test -r "${signing_key}" && test -s "${signing_key}"; \
+    mkdir -p "${OPENCLI_INSTALL_DIR}/crx" /tmp/opencli-extension-pack; \
     cp -a "${OPENCLI_INSTALL_DIR}/extension" /tmp/opencli-extension-pack/extension; \
     HOME=/tmp/opencli-extension-pack google-chrome-stable --no-sandbox --headless=new --disable-gpu \
         --pack-extension=/tmp/opencli-extension-pack/extension \
-        --pack-extension-key="${OPENCLI_INSTALL_DIR}/certs/extension-signing-key.pem"; \
+        --pack-extension-key="${signing_key}"; \
     mv /tmp/opencli-extension-pack/extension.crx "${OPENCLI_INSTALL_DIR}/crx/extension.crx"; \
-    build-extension-crx.mjs "${OPENCLI_INSTALL_DIR}/extension" "${OPENCLI_INSTALL_DIR}/certs/extension-signing-key.pem" \
+    build-extension-crx.mjs "${OPENCLI_INSTALL_DIR}/extension" "${signing_key}" \
         "${OPENCLI_INSTALL_DIR}/crx/extension.crx" "${OPENCLI_INSTALL_DIR}/crx/updates.xml" \
         "${OPENCLI_INSTALL_DIR}/crx/build-info.json" "${EXTENSION_VERSION}"; \
     extension_id="$(jq -er '.extensionId | select(test("^[a-p]{32}$"))' "${OPENCLI_INSTALL_DIR}/crx/build-info.json")"; \
     install-chrome-policy.sh "${extension_id}" http://127.0.0.1:18181 /etc/opt/chrome/policies/managed; \
-    rm -rf /tmp/opencli-extension-pack "${OPENCLI_INSTALL_DIR}/certs" /usr/local/bin/build-extension-crx.mjs /usr/local/bin/install-chrome-policy.sh; \
+    rm -rf /tmp/opencli-extension-pack /usr/local/bin/build-extension-crx.mjs /usr/local/bin/install-chrome-policy.sh; \
     chmod -R a+rX "${OPENCLI_INSTALL_DIR}/extension" "${OPENCLI_INSTALL_DIR}/crx" "${OPENCLI_INSTALL_DIR}/npm"
-COPY --chown=root:root --chmod=0755 scripts/docker/ /opt/opencli/scripts/
 
 FROM runtime-base AS final
 ENV HOME=/var/lib/opencli \
@@ -131,9 +133,11 @@ RUN set -eux; \
 COPY --from=opencli-assets --chown=root:root /opt/opencli /opt/opencli
 COPY --from=opencli-assets --chown=root:root /etc/opt/chrome/policies/managed/opencli-hub-extension.json /etc/opt/chrome/policies/managed/opencli-hub-extension.json
 COPY --from=hub-artifact --chown=openclihub:openclihub /artifact/opencli-hub.jar /opt/opencli-hub/opencli-hub.jar
+COPY --chown=root:root --chmod=0755 scripts/docker/hub-entrypoint.sh scripts/docker/crx-http-server.mjs /opt/opencli/scripts/
 RUN test -s /opt/opencli-hub/opencli-hub.jar \
  && test -r /opt/opencli/crx/extension.crx \
- && test -r /etc/opt/chrome/policies/managed/opencli-hub-extension.json
+ && test -r /etc/opt/chrome/policies/managed/opencli-hub-extension.json \
+ && test "$(find /opt/opencli/scripts -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort | paste -sd ' ' -)" = "crx-http-server.mjs hub-entrypoint.sh"
 VOLUME ["/data/opencli-hub", "/var/lib/opencli"]
 USER 1000:1000
 WORKDIR /var/lib/opencli

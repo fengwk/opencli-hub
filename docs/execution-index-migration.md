@@ -33,9 +33,10 @@ MySQL Runtime 设置 `spring.sql.init.mode=never`，已有数据库不会自动�
 ```bash
 mysql --host "$OPENCLI_HUB_MYSQL_HOST" \
   --user "$OPENCLI_HUB_MYSQL_USERNAME" \
-  --password \
-  opencli_hub < scripts/migrate-mysql-execution-indexes.sql
+  --password --database=opencli_hub < scripts/migrate-mysql-execution-indexes.sql
 ```
+
+`--password` 会交互式读取密码，避免在命令行或环境变量中传递密码。运行前将 host 和 user 变量设置为目标数据库的连接信息。
 
 脚本通过 `information_schema.statistics` 判断索引是否存在及列顺序，不使用 MySQL 5.7 不支持的
 `CREATE INDEX IF NOT EXISTS`，可在演练和校验时重复执行。

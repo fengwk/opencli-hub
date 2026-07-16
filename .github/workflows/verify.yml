@@ -1,0 +1,97 @@
+name: Verify
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  java:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - run: mvn -B -ntp -fae clean test
+
+  frontend:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm run build
+
+  static:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose and shell scripts
+        env:
+          OPENCLI_HUB_MYSQL_PASSWORD: ci-placeholder
+          MYSQL_ROOT_PASSWORD: ci-placeholder
+        run: |
+          docker compose -f compose.yml config
+          docker compose -f compose.h2.yml config
+          find scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+          git diff --check
+      - name: Reject private key material and retired extension identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          private_key_pattern="$(printf '%s' '-----BEGIN (RSA )?' 'PRIVATE KEY-----')"
+          retired_extension_id="$(printf '%s' 'lieajjjjjggpnhebb' 'jmmlfofjojallpe')"
+          if git ls-files '*.pem' '*.key' id_rsa id_dsa id_ecdsa id_ed25519 | grep -q .; then
+            echo 'Tracked private-key-like file detected' >&2
+            exit 1
+          fi
+          if git grep -n -E -- "${private_key_pattern}|${retired_extension_id}"; then
+            echo 'Tracked private key material or retired extension identity detected' >&2
+            exit 1
+          fi
+
+  release-image:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    env:
+      OPENCLI_HUB_EXTENSION_SIGNING_KEY: ${{ secrets.OPENCLI_HUB_EXTENSION_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the release image without persisting the signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ -n "${OPENCLI_HUB_EXTENSION_SIGNING_KEY}" ]] || {
+            echo 'OPENCLI_HUB_EXTENSION_SIGNING_KEY repository secret is required for a release image build' >&2
+            exit 1
+          }
+          key_file="$(mktemp)"
+          trap 'rm -f "${key_file}"' EXIT
+          chmod 600 "${key_file}"
+          printf '%s' "${OPENCLI_HUB_EXTENSION_SIGNING_KEY}" >"${key_file}"
+          DOCKER_BUILDKIT=1 docker build \
+            --platform linux/amd64 \
+            --secret "id=opencli_extension_signing_key,src=${key_file}" \
+            --tag opencli-hub:ci \
+            .
+          docker run --rm --entrypoint sh opencli-hub:ci -ec '
+            ! find /opt/opencli /opt/opencli-hub -type f \( -name "*.pem" -o -name "*.key" -o -name "*signing*key*" \) -print | grep .
+            ! grep -R -F "PRIVATE KEY-----" /opt/opencli /opt/opencli-hub 2>/dev/null
+          '

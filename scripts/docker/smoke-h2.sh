@@ -11,7 +11,14 @@ readonly service="${HUB_SERVICE:-hub}"
 readonly host_port="${OPENCLI_HUB_SMOKE_PORT:-18080}"
 readonly base_url="${OPENCLI_HUB_SMOKE_URL:-http://127.0.0.1:${host_port}}"
 readonly build_mode="${OPENCLI_HUB_SMOKE_BUILD_MODE:-docker}"
+readonly configured_signing_key="${OPENCLI_HUB_EXTENSION_SIGNING_KEY_FILE:-.secrets/opencli-extension-signing-key.pem}"
+if [[ "${configured_signing_key}" == /* ]]; then
+    readonly signing_key_file="${configured_signing_key}"
+else
+    readonly signing_key_file="${project_dir}/${configured_signing_key}"
+fi
 export OPENCLI_HUB_HOST_PORT="${host_port}"
+export OPENCLI_HUB_EXTENSION_SIGNING_KEY_FILE="${signing_key_file}"
 
 run_compose() {
     docker compose --project-name "${compose_project}" -f "${compose_file}" "$@"
@@ -27,6 +34,11 @@ if [[ ! "${host_port}" =~ ^[1-9][0-9]*$ ]] || (( 10#${host_port} > 65535 )); the
     printf 'OPENCLI_HUB_SMOKE_PORT must be between 1 and 65535: %s\n' "${host_port}" >&2
     exit 2
 fi
+[[ -r "${signing_key_file}" && -s "${signing_key_file}" ]] || {
+    printf 'OPENCLI_HUB_EXTENSION_SIGNING_KEY_FILE must be readable and nonempty: %s\n' \
+        "${signing_key_file}" >&2
+    exit 1
+}
 trap cleanup EXIT
 
 cd "${project_dir}"
