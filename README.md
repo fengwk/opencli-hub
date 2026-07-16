@@ -12,7 +12,7 @@
 - Hub 共享一个 OpenCLI daemon，并按受控 Command Catalog 校验参数和重建 argv；不接受任意 shell/CLI 透传。
 - 单个 Instance 串行执行且有界排队；支持显式 `instanceId` 粘性路由；不自动 failover，也不自动重试写命令。
 - 提供 Instance 生命周期、VNC WebSocket、执行历史、资源、日志、命令黑名单/输出规则和浏览器代理设置。
-- 支持持久化 H2 单容器与 MySQL 5.7.44。Hub Runtime 不对既有 MySQL 自动执行 DDL。
+- 支持持久化 H2 单容器与 MySQL 5.7.44。两个 profile 都通过 Spring SQL initialization 幂等应用当前 schema/data；旧 MySQL schema 的结构升级仍须显式迁移。
 - 后端 ID 是不透明字符串：新记录使用 UUID，旧正 BIGINT ID 保留为十进制字符串。集成方不得将 ID 转为 JavaScript `Number`。
 
 不在范围内：多节点调度、远程 Agent、Kubernetes、Redis/MQ、Hub 自身认证、WebDriver/Selenium/Playwright，以及修改 OpenCLI adapter/runtime。
@@ -107,7 +107,9 @@ OPENCLI_HUB_SMOKE_BUILD_MODE=local scripts/docker/smoke-h2.sh
 
 ## MySQL 新装与既有库升级
 
-`compose.yml` 固定使用 `mysql:5.7.44`。仅在**新建** MySQL volume 首次启动时，MySQL 官方 entrypoint 执行当前 `schema-mysql.sql` 和 `data-mysql.sql`。两个密码没有默认值：
+`compose.yml` 固定使用 `mysql:5.7.44`。MySQL 官方 entrypoint 在**新建** volume 首次启动时创建
+`opencli_hub` 数据库和应用账号；Hub 的 `mysql` profile 随后通过 Spring SQL initialization 在每次
+启动时幂等执行 classpath `schema-mysql.sql` 和 `data-mysql.sql`。两个密码没有默认值：
 
 ```bash
 export MYSQL_ROOT_PASSWORD="$(openssl rand -hex 32)"
@@ -116,9 +118,13 @@ docker compose -f compose.yml up --build -d
 curl --fail --show-error http://127.0.0.1:8080/actuator/health
 ```
 
-Hub JDBC 使用 `mysql_native_password`，并设置 `spring.sql.init.mode=never`。不要依赖 Hub 为既有 MySQL 建表或迁移。持久卷为 `opencli-hub-mysql-data`、`opencli-hub-mysql-hub-data` 与 `opencli-hub-mysql-home`；MySQL 8.x volume 不可直接挂载到 5.7，跨主版本迁移必须 dump/import 到新卷。
+Hub JDBC 使用 `mysql_native_password`；`mysql` profile 设置 `spring.sql.init.mode=always` 并显式引用这两个
+MySQL SQL 资源。它只保证当前 schema/data 的幂等初始化，不能把旧版本表结构升级为当前版本。持久卷为
+`opencli-hub-mysql-data`、`opencli-hub-mysql-hub-data` 与 `opencli-hub-mysql-home`；MySQL 8.x volume 不可直接
+挂载到 5.7，跨主版本迁移必须 dump/import 到新卷。
 
-MySQL DDL 会隐式提交。先停止所有 Hub，验证数据库和 Hub 数据卷备份可恢复，再按以下顺序执行；每一步读取脚本末尾校验结果后才进入下一步：
+对既有 MySQL schema 的版本迁移，DDL 会隐式提交。先停止所有 Hub，验证数据库和 Hub 数据卷备份可恢复，再按
+以下顺序执行；每一步读取脚本末尾校验结果后才进入下一步：
 
 ```bash
 # 命令会提示输入数据库密码；在目标 opencli_hub 库上执行。
