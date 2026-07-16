@@ -6,8 +6,8 @@ import java.util.Set;
  * Functional lookup of the set of websites known to the OpenCLI command catalog.
  *
  * <p>Decoupled from {@link fun.fengwk.openclihub.core.command.catalog.OpenCliCommandCatalog}
- * so the validator can be unit tested with a static supplier and so the catalog bean
- * remains optional during the M3 / M1 parallel window.
+ * so the validator can be unit tested with a static supplier and the catalog dependency
+ * remains optional for isolated data-layer tests.
  *
  * @author fengwk
  */

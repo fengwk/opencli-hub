@@ -8,8 +8,8 @@ import lombok.NoArgsConstructor;
 import java.io.InputStream;
 
 /**
- * A single uploaded payload submitted to the resource service. Implementations of the M6
- * controller will translate multipart parts into this model before calling the core API.
+ * A single uploaded payload submitted to the resource service. Web controllers translate
+ * multipart parts into this model before calling the core API.
  *
  * @author fengwk
  */

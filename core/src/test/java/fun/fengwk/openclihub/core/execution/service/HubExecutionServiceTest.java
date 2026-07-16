@@ -60,7 +60,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Verifies the M5 execution state machine, deadline handling and no-retry contract.
+ * Verifies the execution state machine, deadline handling and no-retry contract.
  */
 class HubExecutionServiceTest {
 

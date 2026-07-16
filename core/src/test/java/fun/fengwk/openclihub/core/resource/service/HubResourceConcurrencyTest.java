@@ -44,7 +44,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Focused concurrency hardening tests for the M2 Resource Center. Each scenario is
+ * Focused concurrency hardening tests for the Resource Center. Each scenario is
  * deterministic: a {@link CountDownLatch} start gate and per-thread recording of results
  * let the assertions verify exclusivity, atomicity and rollback boundaries.
  */

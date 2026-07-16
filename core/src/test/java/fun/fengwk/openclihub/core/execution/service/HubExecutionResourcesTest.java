@@ -181,8 +181,8 @@ class HubExecutionResourcesTest {
     }
 
     /**
-     * A symlink planted inside the group must NOT be exposed by the scanner (mirrors the
-     * M2 listDay / scanExecutionGroup behaviour).
+     * A symlink planted inside the group must NOT be exposed by the scanner (mirrors resource
+     * list and execution-group scan behaviour).
      */
     @Test
     void shouldNotExposeSymlinksInScannedGroup() throws IOException {

@@ -17,7 +17,7 @@ import java.util.Optional;
  * <p>The validator refuses to pass raw caller input to the executor. It re-parses the
  * supplied argv against the resolved command's declared arguments, enforces Hub-exclusive
  * options, validates types/choices/required flags and rebuilds a canonical argv list that
- * downstream executors (M5) can forward to the OpenCLI process via {@code ProcessBuilder}.
+ * downstream executors can forward to the OpenCLI process via {@code ProcessBuilder}.
  *
  * <p>Boolean flag arguments ({@code valueRequired=false, type=boolean}) are normalized as
  * a single {@code --name} token: the validator rejects {@code --name=value} and

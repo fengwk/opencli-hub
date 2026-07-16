@@ -9,7 +9,7 @@ import java.util.List;
  * Public service contract for browser instance data operations.
  *
  * <p>Implementations are expected to be pure CRUD and validation only: no browser, VNC or
- * extension process is started here. Lifecycle and runtime operations live in M4 and must
+ * extension process is started here. Lifecycle and runtime operations must
  * consume this contract as their persistence boundary.
  *
  * @author fengwk
@@ -17,7 +17,7 @@ import java.util.List;
 public interface HubInstanceService {
 
     /**
-     * Allocates a new instance id without inserting a row. Used by the M4 lifecycle layer
+     * Allocates a new instance id without inserting a row. Used by the lifecycle layer
      * to reserve an id during the synchronous create flow. The id is returned by the same
      * underlying generator that backs {@code create}, so reservations remain unique across retries.
      */
@@ -67,7 +67,7 @@ public interface HubInstanceService {
     /**
      * Internal state transition. Maintains {@code stateChangedAt}; for non-{@code ERROR}
      * transitions {@code lastErrorMessage} is cleared, for {@code ERROR} transitions the
-     * provided message is recorded. Intended for M4 lifecycle callers.
+     * provided message is recorded. Intended for lifecycle callers.
      *
      * @param id instance id
      * @param newState target state
@@ -84,7 +84,7 @@ public interface HubInstanceService {
 
     /**
      * Internal database-only delete. Does not delete any instance directory; that capability
-     * is owned by the M4 lifecycle layer.
+     * is owned by the lifecycle layer.
      */
     void deleteById(String id);
 

@@ -268,7 +268,7 @@ class HubInstanceServiceImplTest {
 
     @Test
     void shouldBindContextIdAndDetectConflict() {
-        // Internal context binding (used by M4 lifecycle) must reject a context already
+        // Internal context binding used by lifecycle operations must reject a context already
         // bound to another instance.
         HubInstance existing = newInstance("1", "code");
         existing.setContextId("old");
@@ -296,7 +296,7 @@ class HubInstanceServiceImplTest {
 
     @Test
     void shouldDeleteExistingInstance() {
-        // deleteById is the database-only delete path used by M4 lifecycle.
+        // deleteById is the database-only delete path used by lifecycle operations.
         HubInstance existing = newInstance("1", "code");
         doReturn(existing).when(repository).findById("1");
         doReturn(true).when(repository).deleteById("1");
@@ -308,7 +308,7 @@ class HubInstanceServiceImplTest {
 
     @Test
     void shouldMakeDeleteIdempotentWhenInstanceMissing() {
-        // Missing row must be treated as no-op so M4 retries are safe.
+        // Missing row must be treated as no-op so lifecycle retries are safe.
         doReturn(null).when(repository).findById(anyString());
 
         service.deleteById("404");

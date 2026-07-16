@@ -18,7 +18,7 @@ import org.springframework.stereotype.Service;
  * Pure data implementation of {@link HubInstanceService}: validation, persistence and
  * state bookkeeping only.
  *
- * <p>No browser / VNC / extension processes are touched here. M4 lifecycle code consumes
+ * <p>No browser / VNC / extension processes are touched here. Lifecycle code consumes
  * this service as its persistence boundary and is responsible for the runtime side effects.
  *
  * @author fengwk

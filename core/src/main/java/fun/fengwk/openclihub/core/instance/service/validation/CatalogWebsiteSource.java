@@ -8,8 +8,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Spring adapter that exposes the catalog website set to validators while tolerating the
- * absence of an {@link OpenCliCommandCatalog} bean (the M1 catalog implementation is
- * delivered in parallel and is not required for the M3 data layer).
+ * absence of an {@link OpenCliCommandCatalog} bean in isolated data-layer tests.
  *
  * <p>If the catalog bean is missing, {@link #knownWebsites()} returns an empty set so that
  * {@link HubInstanceValidator} fails loudly on website validation rather than silently

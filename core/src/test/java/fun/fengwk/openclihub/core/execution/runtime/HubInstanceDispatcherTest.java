@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Unit tests for the {@link HubInstanceDispatcher} deadline-aware enqueue path and the
  * idle-only shutdown guard. Pure unit: no real OS processes are launched.
  *
- * <p>Covers the M5 acceptance criteria §20.4 / §22.2:
+ * <p>Covers the dispatcher acceptance criteria in design §20.4 / §22.2:
  * <ul>
  *   <li>{@link #shouldRunTasksSeriallyThroughTheSingleWorker()},</li>
  *   <li>{@link #shouldRejectWhenPendingQueueIsFull()},</li>

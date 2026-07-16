@@ -2,6 +2,7 @@ package fun.fengwk.openclihub.core.instance.runtime;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import lombok.extern.slf4j.Slf4j;
 
@@ -29,8 +30,12 @@ public class ProfileSingletonCleaner {
      * @return count of files removed
      */
     public int cleanStaleSingletons(Path profileDir) {
-        if (profileDir == null || !Files.exists(profileDir)) {
+        if (profileDir == null || !Files.exists(profileDir, LinkOption.NOFOLLOW_LINKS)) {
             return 0;
+        }
+        if (Files.isSymbolicLink(profileDir)
+            || !Files.isDirectory(profileDir, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalArgumentException("profileDir must be a real directory: " + profileDir);
         }
         int removed = 0;
         for (String name : VOLATILE_FILES) {

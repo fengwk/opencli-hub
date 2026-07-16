@@ -56,6 +56,19 @@ public class HubInstanceRuntimeRegistry {
         return lifecycleLocks.size();
     }
 
+    /**
+     * Drops a lifecycle lock after its persisted instance was permanently deleted.
+     *
+     * <p>The caller must unlock first. Queued callers retain their original lock reference
+     * and reload the row after acquisition, while new requests cannot allocate a replacement
+     * lock because the row no longer exists.
+     */
+    void removeLifecycleLock(String instanceId, ReentrantLock lock) {
+        if (lock != null) {
+            lifecycleLocks.remove(instanceId, lock);
+        }
+    }
+
     /** Records a runtime under the registry and rejects duplicate live registrations. */
     public void register(HubInstanceRuntime runtime) {
         HubInstanceRuntime existing = runtimes.putIfAbsent(runtime.getInstanceId(), runtime);

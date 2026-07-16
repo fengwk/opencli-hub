@@ -17,7 +17,7 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * Single-threaded bounded execution queue for one instance. Mirrors the design contract in
  * {@code docs/technical-design.md §20.4} — one active worker, finite pending queue, idle-only
- * shutdown, and a deadline-aware submit path used by the M5 execution service to enforce
+ * shutdown, and a deadline-aware submit path used by the execution service to enforce
  * end-to-end timeouts.
  *
  * <p>Submit is performed via the standard {@link ThreadPoolExecutor#execute(Runnable)}
@@ -91,7 +91,7 @@ public class HubInstanceDispatcher {
     /**
      * Synchronous dispatch with an unbounded deadline. Throws the same domain exceptions
      * as {@link #dispatch(Callable, long)}; carried over only for backward compatibility
-     * with the M4 caller path.
+     * with legacy callers.
      */
     public <T> T dispatch(Callable<T> task) {
         return dispatch(task, Long.MAX_VALUE);

@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 
 /**
  * Filtering and pagination knobs for browsing a day's resources. Mirrors the minimum set of
- * features required by the technical design so the M6 controller can stay thin.
+ * features required by the technical design so the web controller can stay thin.
  *
  * @author fengwk
  */

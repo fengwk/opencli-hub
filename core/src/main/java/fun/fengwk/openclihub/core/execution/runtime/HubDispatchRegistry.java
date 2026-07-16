@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 /**
  * Dispatcher registry shared by routing and lifecycle management.
  *
- * <p>The registry cooperates with the M5 execution service and the M4 lifecycle layer:
+ * <p>The registry cooperates with the execution service and lifecycle layer:
  * <ul>
  *   <li>{@link #register(HubInstance)} is called by the lifecycle {@code start/create}
  *       path once the runtime has been registered,</li>

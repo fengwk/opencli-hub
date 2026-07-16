@@ -100,6 +100,23 @@ class HubLogServiceTest {
                 .isEqualTo(HubErrorCodes.INSTANCE_LOG_SOURCE_INVALID.getCode()));
     }
 
+    /** A symlinked Instance root must not expose a fixed log path outside the Hub data directory. */
+    @Test
+    void shouldRejectSymlinkedInstancesRootWithoutReadingExternalLog() throws IOException {
+        Path outside = Files.createDirectories(dataDir.resolve("outside-instances/41/logs"));
+        Path externalLog = Files.writeString(
+            outside.resolve(HubInstanceDirectoryLayout.LOG_CHROME), "external-only\n");
+        Path rootLink = Files.createSymbolicLink(dataDir.resolve("instances"), outside.getParent().getParent());
+
+        assertThatThrownBy(() -> logService.tailInstance("41", HubLogSource.CHROME, 1))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(error -> assertThat(((ThrowableConventionErrorCode) error).getCode())
+                .isEqualTo(HubErrorCodes.LOG_FILE_NOT_FOUND.getCode()));
+
+        assertThat(Files.isSymbolicLink(rootLink)).isTrue();
+        assertThat(externalLog).hasContent("external-only\n");
+    }
+
     /** Fixed downloads expose exact bytes and missing managed files retain the Hub 404 code. */
     @Test
     void shouldStreamFixedLogAndMapMissingFile() throws IOException {
