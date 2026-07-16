@@ -17,7 +17,8 @@ H2 profile 每次启动都会幂等执行 `schema-h2.sql`。脚本会删除存�
 
 ## MySQL 5.7
 
-MySQL Runtime 设置 `spring.sql.init.mode=never`，已有数据库不会自动执行 DDL。必须安排停机窗口手工执行
+MySQL profile 每次启动都会通过 Spring SQL initialization 执行当前 `schema-mysql.sql` 和 `data-mysql.sql`，但
+`CREATE TABLE IF NOT EXISTS` 不能修改已有 `hub_execution` 的旧索引。必须安排停机窗口手工执行
 [`scripts/migrate-mysql-execution-indexes.sql`](../scripts/migrate-mysql-execution-indexes.sql)：
 
 1. 停止所有连接目标数据库的 Hub 进程，确认没有 Execution 正在运行；

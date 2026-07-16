@@ -30,7 +30,7 @@
 - 资源上传、OpenCLI 输出收集、在线预览、下载和管理员手工删除；
 - Java WebSocket 到本地 VNC TCP 的代理；
 - 系统日志和 Instance 进程日志查看；
-- 本地 H2 自动初始化、远程 MySQL 手工初始化；
+- H2 和 MySQL 都通过 Spring SQL initialization 自动初始化当前 schema/data；旧 MySQL schema 使用显式迁移；
 - Docker 镜像中安装正式 Google Chrome、OpenCLI CLI 和固定版本 extension。
 
 ### 2.2 MVP 不包含
@@ -55,7 +55,7 @@
 |---|---|
 | Java 模块 | `share + core + web`，移除 `infra` |
 | 数据库 | 生产 MySQL，本地 H2 MySQL compatibility mode |
-| SQL | MyBatis Auto Mapper 生成常规 SQL；H2 自动初始化；MySQL 手工执行 SQL |
+| SQL | MyBatis Auto Mapper 生成常规 SQL；H2/MySQL 通过 Spring SQL initialization 幂等初始化当前 schema/data；旧 MySQL schema 手工迁移 |
 | 浏览器 | 正式 `google-chrome-stable`，非 Chromium/Chrome for Testing |
 | extension | 固定 1.0.22；构建期打包固定签名 CRX3，运行时通过 Linux managed policy + loopback update server 强制安装 |
 | OpenCLI | 原版 CLI，通过 `ProcessBuilder` 调用，不改 OpenCLI 源码 |
@@ -629,8 +629,8 @@ core/src/main/resources/
 ```
 
 - `schema-h2.sql`、`data-h2.sql` 由 H2 profile 每次启动幂等执行，并自动把旧 BIGINT ID 转为 `VARCHAR(36)`；
-- 新 MySQL 数据库执行 `schema-mysql.sql`、`data-mysql.sql`；已有数据库按变更内容在停机备份后执行
-  `scripts/migrate-mysql-uuid-ids.sql` 和 `scripts/migrate-mysql-execution-indexes.sql`；
+- MySQL profile 每次启动通过 Spring SQL initialization 执行 `schema-mysql.sql`、`data-mysql.sql`；已有旧 schema
+  按变更内容在停机备份后执行 `scripts/migrate-mysql-uuid-ids.sql` 和 `scripts/migrate-mysql-execution-indexes.sql`；
 - 迁移流程见 `docs/uuid-id-migration.md` 和 `docs/execution-index-migration.md`；
 - Service、Repository 和 Mapper 不负责建表；
 - 删除当前 `Repository.init()`、`Mapper.createTableIfNotExists()` 链路。
@@ -1930,7 +1930,7 @@ Release 版本应保持以下边界：
 
 - 仓库只保留 `share/core/web` 三个 Maven module；
 - Maven test suite、frontend build/test 和 Docker 镜像构建可重复执行；
-- H2 启动自动建表和初始化规则，MySQL SQL 可手工执行；
+- H2/MySQL profile 均通过 Spring SQL initialization 自动应用当前建表和初始化规则；既有 MySQL schema 使用版本化手工迁移；
 - 正式 Chrome 通过 managed policy 加载构建期签名的 extension，并能发现和绑定 `contextId`；
 - Instance 支持创建、重启恢复、VNC 登录、编辑 websites 和彻底删除；
 - Execute API 安全校验 argv，完成路由、排队、超时、持久 affinity 和资源处理；

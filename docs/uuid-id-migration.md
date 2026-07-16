@@ -32,7 +32,7 @@ opencli-hub 新建的 Instance、Execution、命令黑名单和输出规则使�
 
 ## MySQL 5.7
 
-MySQL profile 设置了 `spring.sql.init.mode=never`。新 volume 由 MySQL 官方 entrypoint 执行当前 `schema-mysql.sql`；已有数据库不会自动迁移，必须在停机窗口手工执行 [`scripts/migrate-mysql-uuid-ids.sql`](../scripts/migrate-mysql-uuid-ids.sql)。
+MySQL profile 每次启动都会通过 Spring SQL initialization 执行当前 `schema-mysql.sql` 和 `data-mysql.sql`。它不能把已有 BIGINT 列改为 UUID schema，因此旧数据库仍必须在停机窗口手工执行 [`scripts/migrate-mysql-uuid-ids.sql`](../scripts/migrate-mysql-uuid-ids.sql)。
 
 建议流程：
 

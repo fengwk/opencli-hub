@@ -93,7 +93,9 @@ docker compose -f compose.h2.yml ps
 
 ## 4. MySQL 5.7 部署
 
-`compose.yml` 仅为新 MySQL volume 初始化 schema/data。它使用：
+`compose.yml` 使用 MySQL 官方 entrypoint 在新 volume 首次启动时创建数据库和应用账号；待 MySQL health
+通过后，Hub 的 `mysql` profile 会通过 Spring SQL initialization 在每次启动时幂等执行 classpath
+`schema-mysql.sql` 和 `data-mysql.sql`。它使用：
 
 ```text
 mysql:5.7.44
@@ -108,7 +110,7 @@ docker compose -f compose.yml up --build -d
 curl --fail --show-error http://127.0.0.1:8080/actuator/health
 ```
 
-MySQL 5.7 已 EOL。该选择仅为了既有兼容性：部署方应将数据库网络隔离、限制账户权限、监控 CVE，并规划受控升级路线。应用使用 `mysql_native_password`；不要修改为 MySQL 8 专属认证或 SQL 特性。
+MySQL 5.7 已 EOL。该选择仅为了既有兼容性：部署方应将数据库网络隔离、限制账户权限、监控 CVE，并规划受控升级路线。应用使用 `mysql_native_password`；不要修改为 MySQL 8 专属认证或 SQL 特性。Spring 初始化只适用于当前 schema/data；对既有旧 schema 的结构升级仍须停止 Hub、备份并执行版本化迁移。
 
 ## 5. 备份与恢复
 
