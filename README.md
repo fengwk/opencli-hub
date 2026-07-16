@@ -1,12 +1,37 @@
 # opencli-hub
 
-`opencli-hub` 是一个单机部署的 OpenCLI Browser Bridge 管理平台。它管理多套相互隔离的正式 Google Chrome Profile，并把经验证的 OpenCLI 命令同步路由到已登录、空闲的浏览器 Instance。
+`opencli-hub` 是一个单机部署的 OpenCLI Browser Bridge 管理平台。它管理多套相互隔离的正式 Google Chrome Profile，并把受控、经过验证的 OpenCLI 命令路由到已登录的浏览器 Instance。
 
-它面向需要集中维护网站登录态、以 API 调用 OpenCLI 浏览器命令的内部平台；不是通用浏览器自动化平台，也不替代 OpenCLI、Chrome 或上游 API Gateway。
+## 一句话了解项目
 
-> Hub 不提供认证、授权、JWT、Session 或 VNC 密码。生产部署必须由 SCG Gateway 或等价反向代理提供 TLS、认证、授权、限流和审计。
+将浏览器登录态集中保存在 Hub 管理的 Chrome Profile 中；业务系统通过 API 请求 Hub，由 Hub 将合法的 OpenCLI 命令在指定 Instance 中执行并返回结果。它适用于内部浏览器能力平台，不是通用浏览器自动化框架，也不替代 OpenCLI、Chrome 或上游 API Gateway。
 
-## 能力与边界
+## 是否适合使用
+
+适合：需要集中维护多个站点登录态，并通过 API 稳定调用 OpenCLI 浏览器命令的单机内部服务。
+
+不适合：需要多节点调度、远程 Agent、Kubernetes、Redis/MQ、WebDriver/Selenium/Playwright，或希望 Hub 自身提供用户认证、授权和会话管理的场景。
+
+## 选择部署方式
+
+| 目标 | 使用方式 | 数据库前置条件 |
+|---|---|---|
+| 演示、小规模单机或持久化 H2 | `compose.h2.yml` | 无外部数据库；首次启动由 H2 profile 初始化。 |
+| 新建独立 MySQL 5.7.44 | `compose.yml` | MySQL 官方 entrypoint 在新 volume 创建数据库和应用账号。 |
+| 接入已有/托管 MySQL | 设置 `mysql` profile 与 JDBC 环境变量 | 数据库维护者先手工创建空 `opencli_hub` 数据库；Hub 随后初始化当前表和基础数据。 |
+
+无论选择哪种方式，先准备稳定、受保护的 CRX signing key，然后阅读下方对应的 H2 或 MySQL 启动步骤。完整部署、备份和升级流程见[部署与运维](docs/deployment-and-operations.md)。
+
+## 必须接受的安全边界
+
+- Hub 不提供认证、授权、JWT、Session 或 VNC 密码。生产入口必须通过 SCG Gateway 或等价反向代理提供 TLS、认证、授权、限流和审计。
+- 不要把 Hub HTTP 或 VNC TCP 直接暴露给不受信任网络；VNC 仅通过同源 Hub WebSocket 和 Gateway 访问。
+- Chrome Profile、Cookie、资源、日志和数据库都可能包含敏感数据，持久卷与备份必须受限访问并加密保护。
+- CRX signing key 是部署身份的一部分；它只能通过 BuildKit secret 提供，绝不能进入 Git、Docker context、镜像层、运行时文件系统或日志。
+
+详见[安全说明](docs/security.md)。
+
+## 核心能力与产品边界
 
 - 每个 Instance 独占 Chrome Profile、Xvfb、openbox、x11vnc 和 Browser Bridge `contextId`。
 - Hub 共享一个 OpenCLI daemon，并按受控 Command Catalog 校验参数和重建 argv；不接受任意 shell/CLI 透传。
@@ -14,8 +39,6 @@
 - 提供 Instance 生命周期、VNC WebSocket、执行历史、资源、日志、命令黑名单/输出规则和浏览器代理设置。
 - 支持持久化 H2 单容器与 MySQL 5.7.44。两个 profile 都通过 Spring SQL initialization 幂等应用当前 schema/data；旧 MySQL schema 的结构升级仍须显式迁移。
 - 后端 ID 是不透明字符串：新记录使用 UUID，旧正 BIGINT ID 保留为十进制字符串。集成方不得将 ID 转为 JavaScript `Number`。
-
-不在范围内：多节点调度、远程 Agent、Kubernetes、Redis/MQ、Hub 自身认证、WebDriver/Selenium/Playwright，以及修改 OpenCLI adapter/runtime。
 
 ## 架构
 
