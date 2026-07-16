@@ -128,14 +128,24 @@ public class HubLogService {
         if (!HubIds.isSupported(instanceId)) {
             throw HubErrorCodes.LOG_FILE_NOT_FOUND.asThrowable();
         }
-        Path path = switch (source) {
-            case CHROME -> HubInstanceDirectoryLayout.chromeLog(properties.getDataDir(), instanceId);
-            case XVFB -> HubInstanceDirectoryLayout.xvfbLog(properties.getDataDir(), instanceId);
-            case OPENBOX -> HubInstanceDirectoryLayout.openboxLog(properties.getDataDir(), instanceId);
-            case X11VNC -> HubInstanceDirectoryLayout.x11vncLog(properties.getDataDir(), instanceId);
-            case SYSTEM -> throw HubErrorCodes.INSTANCE_LOG_SOURCE_INVALID.asThrowable();
-        };
-        return new ResolvedLog(path, source, instanceId);
+        try {
+            Path instancesRoot = HubInstanceDirectoryLayout.requireRealInstancesRoot(
+                properties.getDataDir());
+            Path instanceDir = HubInstanceDirectoryLayout.requireRealInstanceDirectory(
+                instancesRoot, instanceId);
+            Path logsDir = HubInstanceDirectoryLayout.requireRealInstanceChildDirectory(
+                instanceDir, HubInstanceDirectoryLayout.DIR_LOGS);
+            Path path = switch (source) {
+                case CHROME -> logsDir.resolve(HubInstanceDirectoryLayout.LOG_CHROME);
+                case XVFB -> logsDir.resolve(HubInstanceDirectoryLayout.LOG_XVFB);
+                case OPENBOX -> logsDir.resolve(HubInstanceDirectoryLayout.LOG_OPENBOX);
+                case X11VNC -> logsDir.resolve(HubInstanceDirectoryLayout.LOG_X11VNC);
+                case SYSTEM -> throw HubErrorCodes.INSTANCE_LOG_SOURCE_INVALID.asThrowable();
+            };
+            return new ResolvedLog(path, source, instanceId);
+        } catch (IOException ex) {
+            throw HubErrorCodes.LOG_FILE_NOT_FOUND.asThrowable(ex);
+        }
     }
 
     private static Path requireRegularFile(Path path) {

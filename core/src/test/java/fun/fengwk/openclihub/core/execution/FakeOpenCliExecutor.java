@@ -20,7 +20,7 @@ import java.util.function.Supplier;
  *
  * <p>A {@link #spawnProcessFactory} alternative is also available for tests that need to
  * exercise the real ProcessBuilder path against a small shell script — see
- * {@link #spawnProcessFactory} for usage. Both modes are useful so the M5 tests can pin
+ * {@link #spawnProcessFactory} for usage. Both modes are useful so execution tests can pin
  * behaviour without depending on a real OpenCLI binary.
  *
  * @author fengwk
@@ -123,7 +123,7 @@ public class FakeOpenCliExecutor implements OpenCliExecutor {
 
     /**
      * Configurable behaviour applied per invocation. Built-ins below cover the
-     * success/non-zero/invalid-JSON/long-running/throw patterns the M5 acceptance
+     * success/non-zero/invalid-JSON/long-running/throw patterns the execution acceptance
      * criteria require.
      */
     public static final class Behaviour {

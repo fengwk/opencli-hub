@@ -155,7 +155,7 @@ public class HubInstanceValidator {
      *
      * <p>If the catalog source reports an empty website set, validation fails explicitly.
      * This guarantees the validator cannot silently accept arbitrary websites when the
-     * M1 Command Catalog has not yet been wired in.
+     * OpenCLI command catalog is not available.
      */
     public List<String> validateWebsites(List<String> websites) {
         if (websites == null || websites.isEmpty()) {

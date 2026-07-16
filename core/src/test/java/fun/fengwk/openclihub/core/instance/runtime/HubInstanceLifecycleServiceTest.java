@@ -35,7 +35,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * End-to-end tests for the M4 runtime lifecycle. Uses fake launcher + fake daemon so no
+ * End-to-end tests for the runtime lifecycle. Uses fake launcher + fake daemon so no
  * real OS process or HTTP server is needed.
  *
  * <p>Coverage maps to docs/technical-design.md §16.2-19.5 and §17-18.
@@ -341,6 +341,49 @@ class HubInstanceLifecycleServiceTest {
             .isEqualTo(chromeLaunches);
     }
 
+    /** A symlinked instances root must fail before lifecycle creation can write outside dataDir. */
+    @Test
+    void shouldRejectSymlinkInstancesRootBeforeCreatingExternalDirectory() throws IOException {
+        Path outside = Files.createDirectories(dataDir.resolve("outside-root"));
+        Path sentinel = Files.writeString(outside.resolve("sentinel"), "kept");
+        Path rootLink = Files.createSymbolicLink(dataDir.resolve("instances"), outside);
+
+        assertThatThrownBy(() -> lifecycle.create(createDto("bilibili-unsafe-root")))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_START_FAILED));
+
+        assertThat(Files.isSymbolicLink(rootLink)).isTrue();
+        assertThat(sentinel).hasContent("kept");
+        assertThat(instanceService.list()).isEmpty();
+        for (HubInstanceRuntime.HubInstanceProcessKind kind
+            : HubInstanceRuntime.HubInstanceProcessKind.values()) {
+            assertThat(launcher.launchCount(kind)).isZero();
+        }
+    }
+
+    /** Broken symlinks and regular files are unsafe roots even though they have no directory target. */
+    @Test
+    void shouldRejectBrokenSymlinkAndRegularFileInstancesRoots() throws IOException {
+        Path missingTarget = dataDir.resolve("missing-instances-root");
+        Path rootLink = Files.createSymbolicLink(dataDir.resolve("instances"), missingTarget);
+
+        assertThatThrownBy(() -> lifecycle.create(createDto("bilibili-broken-root")))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_START_FAILED));
+        assertThat(Files.isSymbolicLink(rootLink)).isTrue();
+        assertThat(Files.exists(missingTarget)).isFalse();
+
+        Files.delete(rootLink);
+        Path rootFile = Files.writeString(dataDir.resolve("instances"), "not a directory");
+        assertThatThrownBy(() -> lifecycle.create(createDto("bilibili-file-root")))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_START_FAILED));
+        assertThat(rootFile).hasContent("not a directory");
+    }
+
     @Test
     void shouldCleanCreateDirectoryWhenDaemonStartupFails() throws IOException {
         daemon.failEnsureWith(new fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonException(
@@ -509,6 +552,25 @@ class HubInstanceLifecycleServiceTest {
         HubInstanceRuntime runtime = registry.get(id);
         assertThat(runtime).isNotNull();
         assertThat(runtime.getContextId()).isEqualTo("ctx-existing");
+    }
+
+    /** Existing Instance directories must not be replaced with symlinks before a restart. */
+    @Test
+    void shouldRejectSymlinkedInstanceDirectoryBeforeStarting() throws IOException {
+        String id = seedPersistedInstance("bilibili-instance-link", "ctx-instance-link");
+        Path instancesRoot = Files.createDirectories(dataDir.resolve("instances"));
+        Path outside = Files.createDirectories(dataDir.resolve("outside-instance"));
+        Path sentinel = Files.writeString(outside.resolve("sentinel"), "kept");
+        Path instanceLink = Files.createSymbolicLink(instancesRoot.resolve(id), outside);
+
+        assertThatThrownBy(() -> lifecycle.start(id))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_START_FAILED));
+
+        assertThat(Files.isSymbolicLink(instanceLink)).isTrue();
+        assertThat(sentinel).hasContent("kept");
+        assertThat(instanceService.get(id).getState()).isEqualTo(HubInstanceState.STOPPED);
     }
 
     @Test
@@ -695,6 +757,7 @@ class HubInstanceLifecycleServiceTest {
         String id = seedPersistedInstance("bilibili-delete", "ctx-delete");
         daemon.addConnectedContextAfterFetch("ctx-delete", 2);
         lifecycle.start(id);
+        assertThat(registry.lifecycleLockCount()).isOne();
 
         Path dir = dataDir.resolve("instances").resolve(id);
         // Create a symlink inside the instance dir; delete must not follow it.
@@ -714,6 +777,25 @@ class HubInstanceLifecycleServiceTest {
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .extracting("code")
             .isEqualTo(prefixed(HubErrorCodes.INSTANCE_NOT_FOUND));
+        assertThat(registry.lifecycleLockCount()).isZero();
+    }
+
+    /** Delete must validate the root before changing state, unregistering dispatch, or deleting rows. */
+    @Test
+    void shouldRejectSymlinkInstancesRootBeforeDeletingExternalDirectory() throws IOException {
+        String id = seedPersistedInstance("bilibili-delete-unsafe-root", "ctx-delete-unsafe-root");
+        Path outside = Files.createDirectories(dataDir.resolve("outside-delete-root").resolve(id));
+        Path sentinel = Files.writeString(outside.resolve("sentinel"), "kept");
+        Path rootLink = Files.createSymbolicLink(dataDir.resolve("instances"), outside.getParent());
+
+        assertThatThrownBy(() -> lifecycle.delete(id))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_DELETE_FAILED));
+
+        assertThat(Files.isSymbolicLink(rootLink)).isTrue();
+        assertThat(sentinel).hasContent("kept");
+        assertThat(instanceService.get(id).getState()).isEqualTo(HubInstanceState.STOPPED);
     }
 
     // ---------------------------------------------------------------------------------
@@ -891,6 +973,18 @@ class HubInstanceLifecycleServiceTest {
 
         assertThat(removed).isEqualTo(3);
         assertThat(Files.exists(profile.resolve("Cookies"))).isTrue();
+    }
+
+    /** A profile directory symlink must not redirect singleton cleanup to an external profile. */
+    @Test
+    void shouldRejectSymlinkedProfileDirectory() throws IOException {
+        Path externalProfile = Files.createDirectories(dataDir.resolve("external-profile"));
+        Path singleton = Files.createFile(externalProfile.resolve("SingletonLock"));
+        Path profileLink = Files.createSymbolicLink(dataDir.resolve("profile-link"), externalProfile);
+
+        assertThatThrownBy(() -> new ProfileSingletonCleaner().cleanStaleSingletons(profileLink))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(singleton).exists();
     }
 
     // ---------------------------------------------------------------------------------

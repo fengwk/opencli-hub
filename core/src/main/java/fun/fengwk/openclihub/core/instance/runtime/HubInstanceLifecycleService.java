@@ -187,8 +187,10 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
      */
     public void delete(String instanceId) {
         ReentrantLock lock = lockExistingInstance(instanceId);
+        boolean rowDeleted = false;
         try {
             loadInstance(instanceId);
+            requireSafeInstanceDirectory(instanceId, HubErrorCodes.INSTANCE_DELETE_FAILED);
             HubInstanceRuntimeSnapshot snapshot = dispatchRegistry.getSnapshot(instanceId);
             if (!snapshot.isIdle()) {
                 throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
@@ -209,9 +211,13 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
                 registry.unregister(instanceId);
             }
             instanceService.deleteById(instanceId);
+            rowDeleted = true;
             deleteInstanceDirectory(instanceId);
         } finally {
             lock.unlock();
+            if (rowDeleted) {
+                registry.removeLifecycleLock(instanceId, lock);
+            }
         }
     }
 
@@ -324,6 +330,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
                 "instance already has a runtime: " + instanceId);
         }
+        requireSafeInstanceDirectory(instanceId, HubErrorCodes.INSTANCE_START_FAILED);
         HubInstanceRuntime runtime = null;
         boolean registeredRuntime = false;
         try {
@@ -390,12 +397,11 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         shadow.setState(HubInstanceState.STARTING);
         shadow.setStateChangedAt(LocalDateTime.now());
 
-        Path dir = HubInstanceDirectoryLayout.instanceDir(properties.getDataDir(), id);
+        InstanceDirectories directories;
         try {
-            Files.createDirectories(dir.resolve(HubInstanceDirectoryLayout.DIR_CHROME));
-            Files.createDirectories(dir.resolve(HubInstanceDirectoryLayout.DIR_LOGS));
-            Files.createDirectories(dir.resolve(HubInstanceDirectoryLayout.DIR_RUNTIME));
-            Files.createFile(HubInstanceDirectoryLayout.creatingMarker(properties.getDataDir(), id));
+            directories = ensureInstanceDirectories(id);
+            Files.createFile(
+                directories.instanceDir().resolve(HubInstanceDirectoryLayout.MARKER_CREATING));
         } catch (IOException ex) {
             cleanupCreateFailureArtifacts(id);
             throw HubErrorCodes.INSTANCE_START_FAILED.asThrowable(
@@ -423,8 +429,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             // race create rollback by trying to mark a non-existent instance ERROR.
             registry.unexpectedExitListener().watch(id, runtime);
             try {
-                Files.deleteIfExists(
-                    HubInstanceDirectoryLayout.creatingMarker(properties.getDataDir(), id));
+                deleteCreatingMarker(id);
             } catch (IOException ex) {
                 log.warn("Failed to delete .creating for instance {}: {}", id, ex.getMessage());
             }
@@ -470,7 +475,6 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     }
 
     private HubInstanceRuntime startRuntime(HubInstance descriptor) {
-        String dataDir = properties.getDataDir();
         String id = descriptor.getId();
         HubInstanceAllocationService.Allocation allocation = registry.allocationService().allocate();
         HubInstanceRuntime runtime = new HubInstanceRuntime();
@@ -478,44 +482,34 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         runtime.setInstanceCode(descriptor.getCode());
         runtime.setDisplayNumber(allocation.displayNumber);
         runtime.setVncPort(allocation.vncPort);
-        runtime.setInstanceDir(HubInstanceDirectoryLayout.instanceDir(dataDir, id).toString());
-
-        Path chromeDir = HubInstanceDirectoryLayout.chromeDir(dataDir, id);
-        Path logsDir = HubInstanceDirectoryLayout.logsDir(dataDir, id);
-        Path runtimeDir = HubInstanceDirectoryLayout.runtimeDir(dataDir, id);
-        Path xvfbLog = HubInstanceDirectoryLayout.xvfbLog(dataDir, id);
-        Path openboxLog = HubInstanceDirectoryLayout.openboxLog(dataDir, id);
-        Path x11vncLog = HubInstanceDirectoryLayout.x11vncLog(dataDir, id);
-        Path chromeLog = HubInstanceDirectoryLayout.chromeLog(dataDir, id);
         try {
-            Files.createDirectories(chromeDir);
-            Files.createDirectories(logsDir);
-            Files.createDirectories(runtimeDir);
-            resetLog(xvfbLog);
-            resetLog(openboxLog);
-            resetLog(x11vncLog);
-            resetLog(chromeLog);
-            singletonCleaner.cleanStaleSingletons(chromeDir);
+            InstanceDirectories directories = ensureInstanceDirectories(id);
+            runtime.setInstanceDir(directories.instanceDir().toString());
+            resetLog(directories.xvfbLog());
+            resetLog(directories.openboxLog());
+            resetLog(directories.x11vncLog());
+            resetLog(directories.chromeLog());
+            singletonCleaner.cleanStaleSingletons(directories.chromeDir());
 
             Map<String, String> displayEnv = Map.of("DISPLAY", ":" + allocation.displayNumber);
             InstanceProcessLauncher.LaunchedProcess xvfb = launcher.launchXvfb(
-                allocation.displayNumber, xvfbLog);
+                allocation.displayNumber, directories.xvfbLog());
             recordHandle(runtime, HubInstanceProcessKind.XVFB, xvfb);
             waitForXvfbReady(allocation.displayNumber, xvfb.process);
 
             InstanceProcessLauncher.LaunchedProcess openbox = launcher.launchOpenbox(
-                allocation.displayNumber, openboxLog);
+                allocation.displayNumber, directories.openboxLog());
             recordHandle(runtime, HubInstanceProcessKind.OPENBOX, openbox);
             sleepQuietly(properties.getRuntime().getReadinessPollMillis());
             ensureProcessesAlive(runtime);
 
             InstanceProcessLauncher.LaunchedProcess x11vnc = launcher.launchX11vnc(
-                allocation.displayNumber, allocation.vncPort, x11vncLog);
+                allocation.displayNumber, allocation.vncPort, directories.x11vncLog());
             recordHandle(runtime, HubInstanceProcessKind.X11VNC, x11vnc);
             waitForVncReady(allocation.vncPort, x11vnc.process);
 
             InstanceProcessLauncher.LaunchedProcess chrome = launcher.launchChrome(
-                chromeArgs(dataDir, descriptor), displayEnv, chromeLog);
+                chromeArgs(directories.chromeDir(), descriptor), displayEnv, directories.chromeLog());
             recordHandle(runtime, HubInstanceProcessKind.CHROME, chrome);
             runtime.setStartedAtMillis(System.currentTimeMillis());
             return runtime;
@@ -546,8 +540,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         }
     }
 
-    private List<String> chromeArgs(String dataDir, HubInstance instance) {
-        Path chromeDir = HubInstanceDirectoryLayout.chromeDir(dataDir, instance.getId());
+    private List<String> chromeArgs(Path chromeDir, HubInstance instance) {
         ProxyConfiguration proxy = resolveProxy(instance);
         List<String> args = new ArrayList<>();
         args.add("--user-data-dir=" + chromeDir.toString());
@@ -737,8 +730,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
 
     private void cleanupCreateFailureArtifacts(String instanceId) {
         try {
-            Files.deleteIfExists(
-                HubInstanceDirectoryLayout.creatingMarker(properties.getDataDir(), instanceId));
+            deleteCreatingMarker(instanceId);
         } catch (IOException ex) {
             log.warn("failed to remove .creating marker for instance {}: {}",
                 instanceId, ex.getMessage());
@@ -752,16 +744,62 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     }
 
     private void deleteInstanceDirectory(String instanceId) {
-        Path dir = HubInstanceDirectoryLayout.instanceDir(properties.getDataDir(), instanceId);
-        if (!Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) {
-            return;
-        }
         try {
+            Path instancesRoot = HubInstanceDirectoryLayout.requireRealInstancesRoot(
+                properties.getDataDir());
+            Path dir = HubInstanceDirectoryLayout.requireRealInstanceDirectory(
+                instancesRoot, instanceId);
+            if (!Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) {
+                return;
+            }
             deleteRecursively(dir);
         } catch (IOException ex) {
             throw HubErrorCodes.INSTANCE_DELETE_FAILED.asThrowable(
                 ex, "delete instance directory failed: " + ex.getMessage());
         }
+    }
+
+    private InstanceDirectories ensureInstanceDirectories(String instanceId) throws IOException {
+        Path instancesRoot = HubInstanceDirectoryLayout.ensureRealInstancesRoot(properties.getDataDir());
+        Path instanceDir = HubInstanceDirectoryLayout.ensureRealInstanceDirectory(instancesRoot, instanceId);
+        Path chromeDir = HubInstanceDirectoryLayout.ensureRealInstanceChildDirectory(
+            instanceDir, HubInstanceDirectoryLayout.DIR_CHROME);
+        Path logsDir = HubInstanceDirectoryLayout.ensureRealInstanceChildDirectory(
+            instanceDir, HubInstanceDirectoryLayout.DIR_LOGS);
+        Path runtimeDir = HubInstanceDirectoryLayout.ensureRealInstanceChildDirectory(
+            instanceDir, HubInstanceDirectoryLayout.DIR_RUNTIME);
+        return new InstanceDirectories(
+            instanceDir,
+            chromeDir,
+            logsDir.resolve(HubInstanceDirectoryLayout.LOG_XVFB),
+            logsDir.resolve(HubInstanceDirectoryLayout.LOG_OPENBOX),
+            logsDir.resolve(HubInstanceDirectoryLayout.LOG_X11VNC),
+            logsDir.resolve(HubInstanceDirectoryLayout.LOG_CHROME));
+    }
+
+    private void requireSafeInstanceDirectory(String instanceId, HubErrorCodes errorCode) {
+        try {
+            Path instancesRoot = HubInstanceDirectoryLayout.requireRealInstancesRoot(
+                properties.getDataDir());
+            Path instanceDir = HubInstanceDirectoryLayout.requireRealInstanceDirectory(
+                instancesRoot, instanceId);
+            HubInstanceDirectoryLayout.requireRealInstanceChildDirectory(
+                instanceDir, HubInstanceDirectoryLayout.DIR_CHROME);
+            HubInstanceDirectoryLayout.requireRealInstanceChildDirectory(
+                instanceDir, HubInstanceDirectoryLayout.DIR_LOGS);
+            HubInstanceDirectoryLayout.requireRealInstanceChildDirectory(
+                instanceDir, HubInstanceDirectoryLayout.DIR_RUNTIME);
+        } catch (IOException ex) {
+            throw errorCode.asThrowable(ex, "unsafe instance directory: " + ex.getMessage());
+        }
+    }
+
+    private void deleteCreatingMarker(String instanceId) throws IOException {
+        Path instancesRoot = HubInstanceDirectoryLayout.requireRealInstancesRoot(
+            properties.getDataDir());
+        Path instanceDir = HubInstanceDirectoryLayout.requireRealInstanceDirectory(
+            instancesRoot, instanceId);
+        Files.deleteIfExists(instanceDir.resolve(HubInstanceDirectoryLayout.MARKER_CREATING));
     }
 
     private static void deleteRecursively(Path root) throws IOException {
@@ -807,6 +845,15 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             throw HubErrorCodes.INSTANCE_START_FAILED.asThrowable(
                 ex, "instance startup interrupted");
         }
+    }
+
+    private record InstanceDirectories(
+        Path instanceDir,
+        Path chromeDir,
+        Path xvfbLog,
+        Path openboxLog,
+        Path x11vncLog,
+        Path chromeLog) {
     }
 
 }

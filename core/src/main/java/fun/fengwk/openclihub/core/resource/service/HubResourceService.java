@@ -44,7 +44,7 @@ import java.util.regex.Pattern;
  * Stateless service fronting the file-system resource center. Backed by
  * {@link OpenCliHubProperties.Resource} which governs the root directory and the per-file
  * and per-request size budgets. The service deliberately exposes core-level operations
- * only; the M6 web controller is responsible for translating multipart streams into
+ * only; the web controller is responsible for translating multipart streams into
  * {@link HubResourceUploadRequest}.
  *
  * @author fengwk
@@ -752,7 +752,7 @@ public class HubResourceService {
 
     /**
      * Result of a successful upload. Wraps the freshly created group and the list of files
-     * that landed inside it. The group identity is exposed so the M6 controller can return a
+     * that landed inside it. The group identity is exposed so the web controller can return a
      * single object to the frontend.
      */
     public static final class UploadResult {

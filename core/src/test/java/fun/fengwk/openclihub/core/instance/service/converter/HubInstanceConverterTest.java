@@ -25,7 +25,7 @@ class HubInstanceConverterTest {
 
     @Test
     void shouldReturnAbsentRuntimeWhenSnapshotMissing() {
-        // The "no runtime" branch is the most common path pre-M4: counters must be 0 and
+        // The "no runtime" branch is the most common path: counters must be 0 and
         // not fabricate any registered=true state.
         HubInstance domain = sampleDomain();
         var dto = converter.toDTO(domain, null);
@@ -41,7 +41,7 @@ class HubInstanceConverterTest {
     @Test
     void shouldMergeSnapshotWhenProvided() {
         // When a snapshot exists the converter must mirror its fields verbatim; this is the
-        // extension point M4 will use to expose display/vnc port and queue depth.
+        // extension point that exposes display/vnc port and queue depth.
         HubInstance domain = sampleDomain();
         HubInstanceRuntimeSnapshot snapshot = new HubInstanceRuntimeSnapshot(
             true, 7, 5900, 2, 3);

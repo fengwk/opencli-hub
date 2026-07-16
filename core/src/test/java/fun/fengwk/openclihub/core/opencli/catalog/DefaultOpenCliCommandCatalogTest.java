@@ -56,13 +56,13 @@ class DefaultOpenCliCommandCatalogTest {
     void shouldExposePersistentSiteSession() {
         OpenCliCommandCatalog catalog = newCatalog();
         // 12306/login declares siteSession=persistent in the pinned manifest, so the
-        // resolved command must surface PERSISTENT to M5 for routing decisions.
+        // resolved command must surface PERSISTENT to the routing layer.
         assertThat(catalog.findPublicCommand("12306", "login"))
             .isPresent()
             .get()
             .extracting(fun.fengwk.openclihub.core.command.catalog.OpenCliCommand::getSiteSession)
             .isEqualTo(SiteSessionMode.PERSISTENT);
-        // Commands without an explicit siteSession must resolve to null so M5 falls
+        // Commands without an explicit siteSession must resolve to null so routing falls
         // back to the OpenCLI default (ephemeral). Use Optional.isPresent plus a direct
         // null check on the unwrapped command because Optional.map() flattens null
         // mapped values back to Optional.empty().

@@ -14,7 +14,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Spring wiring for the M1 command subsystem.
+ * Spring wiring for the command subsystem.
  *
  * <p>The catalog default bean shells out to the pinned {@code opencli list -f json};
  * tests can override it with a {@link FileOpenCliCatalogSource} pointing at a local

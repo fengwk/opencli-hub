@@ -20,7 +20,7 @@ class HubExecutionConverterTest {
 
     /**
      * Confirms every domain field flows into the DTO, including the {@code reuseInstance}
-     * flag introduced by M5.
+     * flag exposed by the execution API.
      */
     @Test
     void shouldCopyAllFieldsAndResources() {
