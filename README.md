@@ -118,6 +118,18 @@ docker compose -f compose.yml up --build -d
 curl --fail --show-error http://127.0.0.1:8080/actuator/health
 ```
 
+接入已有或托管的 MySQL（包括 NAS 复用的 `vps-mysql`）时，Hub **不会创建数据库本身**。启动 Hub 前，
+由数据库维护者手工创建空库；Hub 启动后才会通过 Spring SQL initialization 创建当前表和基础数据：
+
+```sql
+CREATE DATABASE IF NOT EXISTS opencli_hub
+  DEFAULT CHARACTER SET utf8mb4
+  DEFAULT COLLATE utf8mb4_general_ci;
+```
+
+Hub 使用的数据库账号还必须具备该库的建表和写入初始化数据权限。既有 schema 的结构升级不属于初始化职责，
+仍须执行下文的版本化迁移。
+
 Hub JDBC 使用 `mysql_native_password`；`mysql` profile 设置 `spring.sql.init.mode=always` 并显式引用这两个
 MySQL SQL 资源。它只保证当前 schema/data 的幂等初始化，不能把旧版本表结构升级为当前版本。持久卷为
 `opencli-hub-mysql-data`、`opencli-hub-mysql-hub-data` 与 `opencli-hub-mysql-home`；MySQL 8.x volume 不可直接
