@@ -9,6 +9,7 @@ logs
 runtime
 *.log
 *.pid
+*.jar
 README.md
 .secrets
 **/*.pem

@@ -38,7 +38,7 @@ MySQL profile 设置了 `spring.sql.init.mode=never`。新 volume 由 MySQL 官�
 
 1. 停止所有连接该数据库的 Hub 进程；
 2. 备份数据库，并单独备份 Hub 数据目录；
-3. 记录四张表的行数和关键 Instance ID；
+3. 记录受迁移的四张表的行数和关键 Instance ID；
 4. 连接目标 `opencli_hub` 数据库并执行迁移脚本；
 5. 确认脚本列出的五个列均为 `varchar(36)`，且 `execution_instance_id_too_long=0`；
 6. 对比迁移前后的表行数和关键 ID；
@@ -50,8 +50,9 @@ MySQL profile 设置了 `spring.sql.init.mode=never`。新 volume 由 MySQL 官�
 ```bash
 mysql --host "$OPENCLI_HUB_MYSQL_HOST" \
   --user "$OPENCLI_HUB_MYSQL_USERNAME" \
-  --password \
-  opencli_hub < scripts/migrate-mysql-uuid-ids.sql
+  --password --database=opencli_hub < scripts/migrate-mysql-uuid-ids.sql
 ```
+
+`--password` 会交互式读取密码，避免在命令行或环境变量中传递密码。运行前将 host 和 user 变量设置为目标数据库的连接信息。
 
 MySQL DDL 会隐式提交。迁移后如果已经写入 UUID，不能安全地直接改回 BIGINT；回滚应停止 Hub 并恢复迁移前备份。

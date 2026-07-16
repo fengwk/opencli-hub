@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component;
 /**
  * Pure-function validator for instance editable properties and website bindings.
  *
- * <p>Validation rules (per docs/technical-design.md §8.1 and implementation-plan.md §M3):
+ * <p>Validation rules are defined by docs/technical-design.md §8.1:
  * <ul>
  *   <li>{@code code} must match the stable format and have a configurable length (1..64).</li>
  *   <li>{@code displayName} must be non-blank and within 128 chars after trim.</li>
@@ -27,8 +27,8 @@ import org.springframework.stereotype.Component;
  * </ul>
  *
  * <p>The {@link OpenCliCommandCatalog} is queried through {@link CatalogWebsiteSource} so the
- * validator can be unit tested without Spring context. If the catalog is not yet supplied by
- * M1, validation must fail loudly with {@link HubErrorCodes#INSTANCE_ARGUMENT_INVALID} rather
+ * validator can be unit tested without Spring context. If the catalog is unavailable,
+ * validation must fail loudly with {@link HubErrorCodes#INSTANCE_ARGUMENT_INVALID} rather
  * than silently accepting any website.
  *
  * @author fengwk

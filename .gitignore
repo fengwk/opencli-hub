@@ -106,8 +106,6 @@ dist
 
 *.pid
 
-!scripts/*.jar
-
 # Local agent workspaces
 .workspace/
 

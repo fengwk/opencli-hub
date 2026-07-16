@@ -1158,10 +1158,10 @@ block new routing
 -> remove runtime/dispatcher
 -> delete DB instance record
 -> delete entire instance directory
--> return 204
+-> return 200
 ```
 
-Instance 根目录由 Hub 独占。若数据库删除成功但目录删除失败，接口返回 `INSTANCE_DELETE_FAILED`；应用下次启动时扫描名称为纯数字、但数据库中不存在对应记录的孤儿 Instance 目录并删除。非数字目录不会自动删除。
+Instance 根目录由 Hub 独占。若数据库删除成功但目录删除失败，接口返回 `INSTANCE_DELETE_FAILED`；应用下次启动时扫描名称为规范 UUID 或正 `long` 旧数字 ID、但数据库中不存在对应记录的孤儿 Instance 目录并删除。根目录、子条目符号链接和不受 Hub 管理的名称不会自动删除，而是告警并保留。
 
 彻底删除：
 
@@ -1184,7 +1184,7 @@ UI 必须显示不可恢复的二次确认。
 
 ```java
 public class HubInstanceRuntime {
-    private long instanceId;
+    private String instanceId;
     private String instanceCode;
     private int displayNumber;
     private int vncPort;
