@@ -348,6 +348,13 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             registry.unexpectedExitListener().watch(instanceId, runtime);
             ensureProcessesAlive(runtime);
             instanceService.updateState(instanceId, HubInstanceState.RUNNING, null);
+            log.info(
+                "Instance started id={} code={} contextId={} display={} vncPort={}",
+                instanceId,
+                current.getCode(),
+                runtime.getContextId(),
+                runtime.getDisplayNumber(),
+                runtime.getVncPort());
             return instanceService.get(instanceId);
         } catch (RuntimeException ex) {
             handleStartFailure(instanceId, runtime, registeredRuntime, ex);
@@ -378,6 +385,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             }
         } finally {
             instanceService.updateState(instanceId, HubInstanceState.STOPPED, null);
+            log.info("Instance stopped id={}", instanceId);
         }
     }
 

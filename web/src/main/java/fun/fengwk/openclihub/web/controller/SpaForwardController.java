@@ -20,6 +20,7 @@ public class SpaForwardController {
         "/commands",
         "/resources",
         "/settings",
+        "/plugins",
         "/logs"
     })
     public String forwardToIndex() {

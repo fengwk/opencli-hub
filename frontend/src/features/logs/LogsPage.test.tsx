@@ -143,6 +143,39 @@ describe('LogsPage', () => {
     )
   })
 
+  it('pauses auto-scroll once the user leaves the bottom threshold and resumes when near the bottom', async () => {
+    // Auto-follow only while near the bottom so operators can read older lines without the view jumping.
+    const longContent = Array.from({ length: 80 }, (_, index) => `[INFO] line ${index + 1}`).join('\n')
+    vi.mocked(apiClient.get).mockResolvedValue({ ...log, content: longContent })
+
+    renderPage()
+    const output = await screen.findByLabelText('日志内容') as HTMLElement & { _scrollTop?: number }
+    Object.defineProperty(output, 'scrollHeight', { configurable: true, value: 2000 })
+    Object.defineProperty(output, 'clientHeight', { configurable: true, value: 400 })
+    Object.defineProperty(output, 'scrollTop', {
+      configurable: true,
+      get() {
+        return output._scrollTop ?? 0
+      },
+      set(value: number) {
+        output._scrollTop = value
+      },
+    })
+
+    expect(output).toHaveAttribute('data-stick-to-bottom', 'true')
+    expect(screen.getByText(/自动滚动已开启/)).toBeInTheDocument()
+
+    output.scrollTop = 100
+    fireEvent.scroll(output)
+    expect(output).toHaveAttribute('data-stick-to-bottom', 'false')
+    expect(screen.getByText(/自动滚动已暂停/)).toBeInTheDocument()
+
+    output.scrollTop = 1960
+    fireEvent.scroll(output)
+    expect(output).toHaveAttribute('data-stick-to-bottom', 'true')
+    expect(screen.getByText(/自动滚动已开启/)).toBeInTheDocument()
+  })
+
   it('rejects blank Instance IDs and invalid line counts without issuing a request', async () => {
     // UI and API validation prevent blank IDs, out-of-range lines, and arbitrary sources from forming paths.
     const user = userEvent.setup()
