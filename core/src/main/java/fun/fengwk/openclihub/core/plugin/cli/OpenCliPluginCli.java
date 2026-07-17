@@ -9,6 +9,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,9 +59,18 @@ public class OpenCliPluginCli {
             throw HubErrorCodes.PLUGIN_CLI_FAILED.asThrowable(ex, "Failed to start opencli plugin CLI");
         }
 
+        ExecutorService ioPool = Executors.newFixedThreadPool(2, runnable -> {
+            Thread thread = new Thread(runnable, "opencli-hub-plugin-cli-io");
+            thread.setDaemon(true);
+            return thread;
+        });
         try {
-            String stdout = readFully(process.getInputStream());
-            String stderr = readFully(process.getErrorStream());
+            // Read stdout/stderr concurrently to avoid pipe-buffer deadlock.
+            CompletableFuture<String> stdoutFuture = CompletableFuture.supplyAsync(
+                () -> readFullyUnchecked(process.getInputStream()), ioPool);
+            CompletableFuture<String> stderrFuture = CompletableFuture.supplyAsync(
+                () -> readFullyUnchecked(process.getErrorStream()), ioPool);
+
             boolean finished = process.waitFor(DEFAULT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
@@ -65,6 +78,9 @@ public class OpenCliPluginCli {
                 throw HubErrorCodes.PLUGIN_CLI_FAILED.asThrowable(
                     "opencli plugin CLI timed out after " + DEFAULT_TIMEOUT_SECONDS + "s");
             }
+
+            String stdout = stdoutFuture.get(5, TimeUnit.SECONDS);
+            String stderr = stderrFuture.get(5, TimeUnit.SECONDS);
             int exitCode = process.exitValue();
             log.info(
                 "OpenCLI plugin CLI finished exitCode={} stdoutChars={} stderrChars={}",
@@ -79,9 +95,19 @@ public class OpenCliPluginCli {
             process.destroyForcibly();
             Thread.currentThread().interrupt();
             throw HubErrorCodes.PLUGIN_CLI_FAILED.asThrowable(ex, "Interrupted while running opencli plugin CLI");
-        } catch (IOException ex) {
+        } catch (ExecutionException | java.util.concurrent.TimeoutException ex) {
             process.destroyForcibly();
             throw HubErrorCodes.PLUGIN_CLI_FAILED.asThrowable(ex, "Failed to read opencli plugin CLI output");
+        } finally {
+            ioPool.shutdownNow();
+        }
+    }
+
+    private static String readFullyUnchecked(InputStream input) {
+        try {
+            return readFully(input);
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to drain plugin CLI stream", ex);
         }
     }
 

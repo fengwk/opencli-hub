@@ -11,6 +11,10 @@
   - 同步执行、路由、persistent affinity、队列和超时
   - 资源中心、VNC、日志、代理和前端
   - MySQL/H2、MyBatis Auto Mapper、API、错误码和测试
+- [OpenCLI 插件维护](plugins.md)
+  - 复用官方 `opencli plugin` 的配置/同步模型
+  - monorepo 子插件、Catalog 刷新与安全边界
+  - 管理 API、页面与故障排查
 
 ## 运维与迁移
 

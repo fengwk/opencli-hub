@@ -37,6 +37,7 @@ Hub 自身默认只把 HTTP 发布到宿主 `127.0.0.1`。不要把容器 `8080`
 - 单个 Instance 串行执行。Hub 不会自动对写命令 failover 或重试，避免重复副作用。
 - 资源服务拒绝 traversal、分隔符、控制字符和已存在 symlink，使用 virtual path 暴露文件；调用方应使用 API 返回的 URL，而非自行拼接路径。
 - Instance Profile、Cookie、extension storage、资源、执行输出和日志可能包含登录态或业务数据。`/data/opencli-hub`、`/var/lib/opencli`、MySQL 数据卷及其备份必须按敏感数据保护。
+- OpenCLI 插件源由管理 API 配置，实际安装走官方 `opencli plugin`。插件代码会在已登录浏览器上下文中运行，**只应安装可信仓库**；插件管理 API 与其它管理接口一样没有内建认证，必须放在 Gateway 后。
 
 资源路径检查无法消除同权限恶意本地进程在检查和文件操作之间替换目录项的极窄 TOCTOU 窗口。容器和宿主隔离、卷权限和最小化本地访问仍是部署方责任。
 

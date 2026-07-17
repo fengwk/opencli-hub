@@ -22,7 +22,12 @@ export function deletePluginSource(id: string): Promise<void> {
 }
 
 export function syncPluginSource(id: string): Promise<HubPluginSource> {
-  return apiClient.post<HubPluginSource>(`/plugins/sources/${encodeURIComponent(id)}/sync`)
+  // opencli plugin install/update may clone and npm-install for several minutes.
+  return apiClient.post<HubPluginSource>(
+    `/plugins/sources/${encodeURIComponent(id)}/sync`,
+    undefined,
+    { timeout: 320_000 },
+  )
 }
 
 export function listInstalledPlugins(): Promise<HubInstalledPlugin[]> {

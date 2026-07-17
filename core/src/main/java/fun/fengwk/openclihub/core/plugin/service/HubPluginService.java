@@ -83,7 +83,7 @@ public class HubPluginService {
         updated.setCreateTime(existing.getCreateTime());
         updated.setVersion(existing.getVersion());
         if (!repository.update(updated)) {
-            throw HubErrorCodes.PLUGIN_SOURCE_ARGUMENT_INVALID.asThrowable(
+            throw HubErrorCodes.PLUGIN_SOURCE_UPDATE_CONFLICT.asThrowable(
                 "plugin source changed concurrently: " + id);
         }
         log.info("Updated plugin source id={} name={} source={}", id, updated.getName(), updated.getSource());
@@ -124,14 +124,11 @@ public class HubPluginService {
                 OpenCliPluginCli.CliResult install = pluginCli.run(List.of("install", source.getSource()));
                 commands.add(summarize("install " + source.getSource(), install));
                 if (install.exitCode() != 0) {
-                    return failSync(source, commands, install.stderr());
+                    return failSync(source, commands, firstNonBlank(install.stderr(), install.stdout()));
                 }
             } else {
                 for (String pluginName : desired) {
-                    String installSource = source.getSource().contains("/") && !source.getSource().startsWith("http")
-                        && !source.getSource().startsWith("file:") && countSlashes(source.getSource()) >= 2
-                        ? source.getSource()
-                        : source.getSource() + "/" + pluginName;
+                    String installSource = joinSourceAndPlugin(source.getSource(), pluginName);
                     // Prefer update when already present; fall back to install.
                     OpenCliPluginCli.CliResult update = pluginCli.run(List.of("update", pluginName));
                     if (update.exitCode() == 0) {
@@ -141,7 +138,7 @@ public class HubPluginService {
                     OpenCliPluginCli.CliResult install = pluginCli.run(List.of("install", installSource));
                     commands.add(summarize("install " + installSource, install));
                     if (install.exitCode() != 0) {
-                        return failSync(source, commands, install.stderr());
+                        return failSync(source, commands, firstNonBlank(install.stderr(), install.stdout()));
                     }
                 }
             }
@@ -273,20 +270,40 @@ public class HubPluginService {
         return new ArrayList<>(normalized);
     }
 
-    private static int countSlashes(String value) {
-        int count = 0;
-        for (int i = 0; i < value.length(); i++) {
-            if (value.charAt(i) == '/') {
-                count++;
-            }
+    /**
+     * Builds the official install source for one monorepo/sub-plugin target.
+     * Examples:
+     * <ul>
+     *   <li>{@code github:acme/plugins + weather -> github:acme/plugins/weather}</li>
+     *   <li>{@code github:acme/plugins/weather + weather -> github:acme/plugins/weather}</li>
+     * </ul>
+     */
+    static String joinSourceAndPlugin(String source, String pluginName) {
+        if (source == null || pluginName == null || pluginName.isBlank()) {
+            throw HubErrorCodes.PLUGIN_SOURCE_ARGUMENT_INVALID.asThrowable("source/plugin name is required");
         }
-        return count;
+        String trimmedSource = source.trim();
+        String trimmedPlugin = pluginName.trim();
+        if (trimmedSource.endsWith("/" + trimmedPlugin) || trimmedSource.endsWith(":" + trimmedPlugin)) {
+            return trimmedSource;
+        }
+        if (trimmedSource.endsWith("/")) {
+            return trimmedSource + trimmedPlugin;
+        }
+        return trimmedSource + "/" + trimmedPlugin;
+    }
+
+    private static String firstNonBlank(String primary, String fallback) {
+        if (primary != null && !primary.isBlank()) {
+            return primary;
+        }
+        return fallback;
     }
 
     private static String summarize(String action, OpenCliPluginCli.CliResult result) {
+        String detail = firstNonBlank(result.stderr(), result.stdout());
         return action + " -> exit=" + result.exitCode()
-            + (result.stderr() == null || result.stderr().isBlank()
-                ? "" : " stderr=" + result.stderr().trim());
+            + (detail == null || detail.isBlank() ? "" : " output=" + detail.trim());
     }
 
     private HubPluginSourceDTO toDTO(HubPluginSource source) {

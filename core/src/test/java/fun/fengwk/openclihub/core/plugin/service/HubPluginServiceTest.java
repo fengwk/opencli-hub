@@ -29,6 +29,17 @@ class HubPluginServiceTest {
             .hasMessageContaining("source must be");
     }
 
+    /** Monorepo install sources must append the sub-plugin once and keep already-qualified sources stable. */
+    @Test
+    void shouldJoinSourceAndPluginNamesIdempotently() {
+        assertThat(HubPluginService.joinSourceAndPlugin("github:acme/plugins", "weather"))
+            .isEqualTo("github:acme/plugins/weather");
+        assertThat(HubPluginService.joinSourceAndPlugin("github:acme/plugins/weather", "weather"))
+            .isEqualTo("github:acme/plugins/weather");
+        assertThat(HubPluginService.joinSourceAndPlugin("https://git.example.com/team/plugins.git", "crm"))
+            .isEqualTo("https://git.example.com/team/plugins.git/crm");
+    }
+
     /** Desired plugin names are normalized and empty entries are dropped. */
     @Test
     void shouldNormalizeDesiredPluginNames() {

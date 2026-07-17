@@ -192,6 +192,24 @@ curl --fail --show-error 'http://127.0.0.1:8080/api/logs/system?lines=200'
 - CRX loopback server 仅容器内部可用；
 - 日志、资源、Profile 和数据库备份按保留策略执行。
 
+### 7.1 插件维护
+
+Hub 可通过管理页 `/plugins` 或 `/api/plugins/*` 配置插件源，并调用官方：
+
+```bash
+opencli plugin install|update|list
+```
+
+要点：
+
+- 插件文件落在 `/var/lib/opencli/.opencli/`，随 opencli 数据卷持久化；
+- 同步成功后会自动刷新 Command Catalog；也可 `POST /api/plugins/reload-catalog`；
+- 同步可能耗时数分钟（clone/npm/transpile），Gateway timeout 需覆盖；
+- `autoUpdate` 目前只是配置标记，启动时不会自动拉取；
+- 删除插件源配置默认**不会** uninstall 已安装插件。
+
+细节见 [OpenCLI 插件维护](plugins.md)。
+
 ## 8. 故障处理
 
 | 问题 | 处理顺序 |
@@ -203,6 +221,8 @@ curl --fail --show-error 'http://127.0.0.1:8080/api/logs/system?lines=200'
 | VNC WebSocket 失败 | 查询 VNC status；确认 Gateway 转发 Upgrade；不要映射 x11vnc TCP 端口到外部。 |
 | CUSTOM proxy 无法访问 | 从容器网络检查 DNS/路由；确认 URI 无凭据且有端口；bridge 下宿主 loopback 不可直接使用。 |
 | 执行长时间等待 | 检查 Instance 排队数、Gateway timeout 和 command timeout；不要用自动重试写命令代替业务幂等。 |
+| 插件 sync 失败 | 查看源 `lastError`、容器网络/git 可达性、`opencli plugin list` 与 `/var/lib/opencli/.opencli` 权限。 |
+| 插件已装但命令不可见 | 调用 `POST /api/plugins/reload-catalog`；确认命令为 public 且 Instance websites 已启用对应 site。 |
 
 ## 9. 发布验证
 
