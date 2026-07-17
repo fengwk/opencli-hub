@@ -1,5 +1,7 @@
 package fun.fengwk.openclihub.core.property;
 
+import java.util.ArrayList;
+import java.util.List;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -44,6 +46,7 @@ public class OpenCliHubProperties {
     public static class Vnc {
 
         private long startupTimeoutMillis = 10000L;
+        private List<String> allowedOrigins = new ArrayList<>();
 
     }
 

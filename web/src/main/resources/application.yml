@@ -65,6 +65,7 @@ opencli:
       startup-timeout-millis: 60000
     vnc:
       startup-timeout-millis: 10000
+      allowed-origins: ${OPENCLI_HUB_VNC_ALLOWED_ORIGINS:}
     runtime:
       startup-recovery-enabled: ${OPENCLI_HUB_STARTUP_RECOVERY_ENABLED:true}
       display-base: ${OPENCLI_HUB_DISPLAY_BASE:99}

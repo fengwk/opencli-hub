@@ -217,6 +217,16 @@ curl --fail --show-error "$HUB_URL/api/executions?instanceId=$INSTANCE_ID&pageNu
 ws(s)://<hub-host>/api/instances/{id}/vnc
 ```
 
+若 HTTPS 由 Gateway/反向代理终止而 Hub 使用内部 HTTP，部署必须将浏览器的精确 Origin 注入
+`OPENCLI_HUB_VNC_ALLOWED_ORIGINS`，例如：
+
+```text
+OPENCLI_HUB_VNC_ALLOWED_ORIGINS=https://opencli-hub.example.com
+```
+
+多个 Origin 使用逗号分隔。值必须是 `scheme://host[:port]`，不包含路径或末尾 `/`，且不得使用 `*`。
+未配置时 Hub 保持严格同源校验并拒绝该类经 HTTPS 代理的 VNC Upgrade。
+
 不要直接暴露或连接 `5900-5999`；运行时 VNC TCP 只绑定容器 loopback。日志 API 示例：
 
 ```bash

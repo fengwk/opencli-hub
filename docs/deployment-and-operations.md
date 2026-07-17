@@ -12,6 +12,16 @@
 
 Hub 容器和 Chrome 以 UID/GID `1000:1000` 运行。若改用 bind mount，宿主目录必须允许该用户读写。
 
+若 TLS 在 Gateway/反向代理终止而 Gateway 通过内部 HTTP 访问 Hub，必须将浏览器的精确 Origin 注入
+`OPENCLI_HUB_VNC_ALLOWED_ORIGINS`，例如：
+
+```text
+OPENCLI_HUB_VNC_ALLOWED_ORIGINS=https://opencli-hub.example.com
+```
+
+多个 Origin 使用逗号分隔。仅允许 `scheme://host[:port]` 形式的精确 Origin；不要使用 `*`。
+该配置仅放开 Hub VNC WebSocket 的 Origin 校验，不替代 Gateway 的认证、授权、限流和审计。
+
 ## 2. CRX signing key
 
 Browser Bridge 的 CRX 由构建期的 RSA key 签名。Chrome extension identity 由该 key 的公钥导出，因此它是部署身份的一部分，不是临时构建输入。

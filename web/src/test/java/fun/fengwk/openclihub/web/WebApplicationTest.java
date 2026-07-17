@@ -18,7 +18,8 @@ import org.springframework.test.context.ActiveProfiles;
 @ActiveProfiles("local-h2")
 @SpringBootTest(properties = {
     "OPENCLI_HUB_RESOURCE_MAX_FILE_SIZE=12345",
-    "OPENCLI_HUB_RESOURCE_MAX_REQUEST_SIZE=67890"
+    "OPENCLI_HUB_RESOURCE_MAX_REQUEST_SIZE=67890",
+    "OPENCLI_HUB_VNC_ALLOWED_ORIGINS=https://opencli.example,https://admin.example"
 })
 class WebApplicationTest {
 
@@ -39,6 +40,13 @@ class WebApplicationTest {
         assertThat(hubProperties.getResource().getMaxRequestSize()).isEqualTo(67890L);
         assertThat(multipartProperties.getMaxFileSize().toBytes()).isEqualTo(12345L);
         assertThat(multipartProperties.getMaxRequestSize().toBytes()).isEqualTo(67890L);
+    }
+
+    /** Comma-separated deployment origins must bind as exact list entries for the VNC endpoint. */
+    @Test
+    void shouldBindMultipleVncAllowedOrigins() {
+        assertThat(hubProperties.getVnc().getAllowedOrigins())
+            .containsExactly("https://opencli.example", "https://admin.example");
     }
 
 }
