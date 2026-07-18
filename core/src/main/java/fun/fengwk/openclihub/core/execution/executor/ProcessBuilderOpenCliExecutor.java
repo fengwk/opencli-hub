@@ -59,18 +59,31 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
                 instance.getCode() == null ? "" : instance.getCode());
         }
         Process process;
+        String instanceId = instance == null ? null : instance.getId();
+        log.info(
+            "Starting OpenCLI process instanceId={} timeoutMillis={} argvSize={} binary={}",
+            instanceId,
+            timeoutMillis,
+            hubManagedArgv == null ? 0 : hubManagedArgv.size(),
+            properties.getOpencli().getBinary());
         try {
             process = processBuilder.start();
         } catch (IOException ex) {
-            log.error("Failed to start OpenCLI for instance {}", instance == null ? null : instance.getId(), ex);
+            log.error("Failed to start OpenCLI for instance {}", instanceId, ex);
             throw HubErrorCodes.OPENCLI_EXECUTION_FAILED.asThrowable(
                 ex, "Failed to start OpenCLI process");
         }
+        log.info("OpenCLI process started instanceId={} pid={}", instanceId, process.pid());
         CaptureGroup captures = capture(process);
         try {
             boolean finished = waitFor(process, deadlineNanos);
             if (!finished) {
                 cleanup(process, captures);
+                log.warn(
+                    "OpenCLI process deadline exceeded instanceId={} pid={} timeoutMillis={}",
+                    instanceId,
+                    process.pid(),
+                    timeoutMillis);
                 return result(
                     captures,
                     true,
@@ -80,6 +93,11 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
 
             if (!captures.awaitUntil(deadlineNanos)) {
                 cleanup(process, captures);
+                log.warn(
+                    "OpenCLI process exited but streams incomplete instanceId={} pid={} timeoutMillis={}",
+                    instanceId,
+                    process.pid(),
+                    timeoutMillis);
                 return result(
                     captures,
                     true,
@@ -88,17 +106,27 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
                         + timeoutMillis + " ms");
             }
 
+            int exitCode = process.exitValue();
+            if (exitCode == 0) {
+                log.info("OpenCLI process completed instanceId={} pid={} exitCode=0", instanceId, process.pid());
+            } else {
+                log.warn(
+                    "OpenCLI process completed with failure instanceId={} pid={} exitCode={}",
+                    instanceId,
+                    process.pid(),
+                    exitCode);
+            }
             return result(
                 captures,
                 false,
-                process.exitValue(),
-                process.exitValue() == 0
-                    ? null : "OpenCLI exited with code " + process.exitValue());
+                exitCode,
+                exitCode == 0 ? null : "OpenCLI exited with code " + exitCode);
         } catch (InterruptedException ex) {
             // Caller-side interrupt. Kill the process we just spawned before propagating
             // the interrupt status so we never leak an orphan OpenCLI/Chrome.
             cleanup(process, captures);
             Thread.currentThread().interrupt();
+            log.warn("OpenCLI process interrupted instanceId={} pid={}", instanceId, process.pid());
             throw new IllegalStateException("Interrupted while running OpenCLI", ex);
         }
     }

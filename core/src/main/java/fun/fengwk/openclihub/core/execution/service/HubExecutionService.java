@@ -101,6 +101,15 @@ public class HubExecutionService {
 
         HubExecution execution = newExecution(request, normalized, instance, timeoutMillis);
         persistAdd(execution);
+        log.info(
+            "Execution accepted id={} command={} site={} instanceId={} instanceCode={} timeoutMillis={} reuseInstance={}",
+            execution.getId(),
+            execution.getCommandKey(),
+            execution.getSite(),
+            instance.getId(),
+            instance.getCode(),
+            timeoutMillis,
+            execution.isReuseInstance());
 
         ExecutionOutcome outcome;
         try {
@@ -112,8 +121,22 @@ public class HubExecutionService {
             if (isError(ex, HubErrorCodes.EXECUTION_PERSIST_FAILED)) {
                 throw ex;
             }
+            log.warn(
+                "Execution dispatch failed id={} command={} instanceId={} error={}",
+                execution.getId(),
+                execution.getCommandKey(),
+                instance.getId(),
+                ex.getMessage());
             return terminalAfterDispatchFailure(execution, ex);
         }
+        log.info(
+            "Execution finished id={} command={} instanceId={} status={} exitCode={} durationMillis={}",
+            execution.getId(),
+            execution.getCommandKey(),
+            instance.getId(),
+            execution.getStatus(),
+            execution.getExitCode(),
+            execution.getDurationMillis());
         return converter.toDTO(execution, outcome.resources());
     }
 

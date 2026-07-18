@@ -95,3 +95,24 @@ create table if not exists hub_command_output_rule (
 );
 
 alter table hub_command_output_rule alter column id varchar(36) not null;
+
+create table if not exists hub_plugin_source (
+    id varchar(36) not null,
+    name varchar(128) not null,
+    source varchar(1024) not null,
+    desired_plugins_json clob not null,
+    enabled boolean not null default true,
+    auto_update boolean not null default false,
+    last_status varchar(32) not null,
+    last_error clob null,
+    last_synced_at timestamp(3) null,
+    last_result_json clob null,
+    gmt_create timestamp(3) not null default current_timestamp(3),
+    gmt_modified timestamp(3) not null default current_timestamp(3),
+    version bigint not null default 0,
+    primary key (id),
+    constraint uk_hub_plugin_source_name unique (name)
+);
+
+alter table hub_plugin_source alter column id varchar(36) not null;
+create index if not exists idx_hub_plugin_source_enabled on hub_plugin_source (enabled);

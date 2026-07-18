@@ -38,7 +38,7 @@ supported.
 src/
 ├── app/                 # App, providers (QueryClient + Router), route table
 ├── platform/shell/      # Responsive AppShell + navigation
-├── features/            # instances, executions, commands, resources, logs, not-found
+├── features/            # instances, executions, commands, resources, plugins, settings, logs, not-found
 └── shared/
     ├── api/             # axios client, convention4j Result unwrap, ApiError, resource url
     └── components/      # Loading, Empty, ErrorState, StatusBadge, ConfirmDialog, FeaturePlaceholder

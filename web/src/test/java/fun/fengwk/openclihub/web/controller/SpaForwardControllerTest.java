@@ -30,6 +30,7 @@ class SpaForwardControllerTest {
         "/commands",
         "/resources",
         "/settings",
+        "/plugins",
         "/logs"
     })
     void shouldForwardKnownSpaRoutes(String path) throws Exception {

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { FormEvent, UIEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { getLogDownloadUrl, getLogs, maximumLogLines } from '@/features/logs/logs-api'
@@ -11,6 +11,8 @@ import type { BackendDateTime, BackendId } from '@/shared/api/contracts'
 
 const defaultLineCount = 500
 const logLevels: LogLevel[] = ['ALL', 'TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR']
+/** Distance from the bottom under which we still treat the view as "pinned" for auto-scroll. */
+const autoScrollBottomThresholdPx = 48
 
 type LogMode = LogRequest['mode']
 
@@ -29,13 +31,14 @@ function parseLineCount(value: string): number | undefined {
 }
 
 function formatDateTime(value: BackendDateTime): string {
-  if (value === null) return '—'
+  if (value === null || value === undefined || value === '') return '—'
   if (typeof value === 'string') return value.replace('T', ' ')
+  if (!Array.isArray(value)) return '—'
 
   const [year, month, day, hour = 0, minute = 0, second = 0] = value
   if (year === undefined || month === undefined || day === undefined) return '—'
   const date = [year, month, day].map((part) => String(part).padStart(2, '0')).join('-')
-  const time = [hour, minute, second].map((part) => String(part).padStart(2, '0')).join(':')
+  const time = [hour, minute, second].map((part) => String(Math.trunc(Number(part))).padStart(2, '0')).join(':')
   return `${date} ${time}`
 }
 
@@ -63,6 +66,10 @@ function requestFor(mode: LogMode, instanceInput: string, source: InstanceLogSou
 
   const instanceId = parseInstanceId(instanceInput)
   return instanceId === undefined ? undefined : { mode, instanceId, source, lines }
+}
+
+function distanceFromBottom(element: HTMLElement): number {
+  return element.scrollHeight - element.scrollTop - element.clientHeight
 }
 
 function LogMetadata({ log }: { log: HubLogContent }) {
@@ -94,6 +101,8 @@ export function LogsPage() {
   const [keyword, setKeyword] = useState('')
   const [autoRefresh, setAutoRefresh] = useState(false)
   const [configurationError, setConfigurationError] = useState<string | null>(null)
+  const [stickToBottom, setStickToBottom] = useState(true)
+  const logOutputRef = useRef<HTMLPreElement | null>(null)
 
   const logsQuery = useQuery({
     queryKey: ['logs', activeRequest],
@@ -107,6 +116,19 @@ export function LogsPage() {
     [keyword, level, logsQuery.data?.content],
   )
   const hasLogContent = (logsQuery.data?.content.length ?? 0) > 0
+  const logText = filteredLines.join('\n')
+
+  useEffect(() => {
+    const element = logOutputRef.current
+    if (!element || !stickToBottom) return
+    element.scrollTop = element.scrollHeight
+  }, [logText, stickToBottom, logsQuery.dataUpdatedAt])
+
+  function handleLogScroll(event: UIEvent<HTMLPreElement>) {
+    const element = event.currentTarget
+    const nearBottom = distanceFromBottom(element) <= autoScrollBottomThresholdPx
+    setStickToBottom(nearBottom)
+  }
 
   function submitConfiguration(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -121,6 +143,7 @@ export function LogsPage() {
     }
 
     setConfigurationError(null)
+    setStickToBottom(true)
     setActiveRequest(nextRequest)
   }
 
@@ -224,7 +247,22 @@ export function LogsPage() {
       {logsQuery.isSuccess && !hasLogContent ? <Empty title="暂无日志" description="当前读取范围内没有日志内容。" /> : null}
       {logsQuery.isSuccess && hasLogContent && filteredLines.length === 0 ? <Empty title="没有匹配的日志行" description="请调整级别或关键词过滤条件。" /> : null}
       {logsQuery.isSuccess && filteredLines.length > 0 ? (
-        <pre className="logs-output" aria-label="日志内容">{filteredLines.join('\n')}</pre>
+        <>
+          <pre
+            ref={logOutputRef}
+            className="logs-output"
+            aria-label="日志内容"
+            data-stick-to-bottom={stickToBottom ? 'true' : 'false'}
+            onScroll={handleLogScroll}
+          >
+            {logText}
+          </pre>
+          <p className="logs-scroll-hint" aria-live="polite">
+            {stickToBottom
+              ? '自动滚动已开启：滚动条保持在底部以跟随新日志。'
+              : '自动滚动已暂停：滚动条已离开底部。回到底部附近后会重新跟随。'}
+          </p>
+        </>
       ) : null}
     </div>
   )

@@ -85,3 +85,22 @@ create table if not exists hub_command_output_rule (
     primary key (id),
     unique key uk_hub_command_output_rule_command_key (command_key)
 ) engine=InnoDB default charset=utf8mb4 comment='Managed OpenCLI resource output rules';
+
+create table if not exists hub_plugin_source (
+    id varchar(36) not null,
+    name varchar(128) not null,
+    source varchar(1024) not null,
+    desired_plugins_json text not null,
+    enabled tinyint(1) not null default 1,
+    auto_update tinyint(1) not null default 0,
+    last_status varchar(32) not null,
+    last_error text null,
+    last_synced_at timestamp(3) null,
+    last_result_json mediumtext null,
+    gmt_create timestamp(3) not null default current_timestamp(3),
+    gmt_modified timestamp(3) not null default current_timestamp(3),
+    version bigint not null default 0,
+    primary key (id),
+    unique key uk_hub_plugin_source_name (name),
+    key idx_hub_plugin_source_enabled (enabled)
+) engine=InnoDB default charset=utf8mb4 comment='Configured OpenCLI plugin sources managed via official plugin CLI';

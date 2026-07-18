@@ -21,4 +21,11 @@ public interface OpenCliCommandCatalog {
         return website != null && listWebsites().contains(website);
     }
 
+    /**
+     * Reloads the in-memory catalog from its backing source. Default is a no-op so
+     * lightweight test doubles do not need a reload implementation.
+     */
+    default void reload() {
+    }
+
 }

@@ -6,6 +6,7 @@ import { InstanceDetailPage } from '@/features/instances/InstanceDetailPage'
 import { InstancesPage } from '@/features/instances/InstancesPage'
 import { LogsPage } from '@/features/logs/LogsPage'
 import { NotFoundPage } from '@/features/not-found/NotFoundPage'
+import { PluginsPage } from '@/features/plugins/PluginsPage'
 import { ResourcesPage } from '@/features/resources/ResourcesPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 
@@ -20,6 +21,7 @@ export function AppRouter() {
       <Route path="/commands" element={<CommandsPage />} />
       <Route path="/resources" element={<ResourcesPage />} />
       <Route path="/settings" element={<SettingsPage />} />
+      <Route path="/plugins" element={<PluginsPage />} />
       <Route path="/logs" element={<LogsPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
