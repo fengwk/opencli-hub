@@ -1,5 +1,7 @@
 package fun.fengwk.openclihub.core.plugin.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandCatalog;
 import fun.fengwk.openclihub.core.plugin.cli.OpenCliPluginCli;
 import fun.fengwk.openclihub.core.plugin.repo.HubPluginSourceRepository;
@@ -31,8 +33,12 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class HubPluginService {
 
+    private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
     private static final Pattern SOURCE_PATTERN = Pattern.compile(
         "^(github:[\\w.-]+/[\\w.-]+(?:/[\\w.-]+)?|https?://\\S+|file://\\S+|/[\\w./-]+)$",
+        Pattern.CASE_INSENSITIVE);
+    private static final Pattern GITHUB_REPOSITORY_URL_PATTERN = Pattern.compile(
+        "^https?://github\\.com/([\\w.-]+)/([\\w.-]+)/?$",
         Pattern.CASE_INSENSITIVE);
     private static final Pattern PLUGIN_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$");
 
@@ -107,6 +113,7 @@ public class HubPluginService {
         if (!syncLock.tryLock()) {
             throw HubErrorCodes.PLUGIN_SYNC_BUSY.asThrowable("another plugin sync is running");
         }
+        List<String> commands = new ArrayList<>();
         try {
             source.setLastStatus(HubPluginSourceStatus.SYNCING);
             source.setLastError(null);
@@ -118,7 +125,6 @@ public class HubPluginService {
                 source.getSource(),
                 source.getDesiredPlugins());
 
-            List<String> commands = new ArrayList<>();
             List<String> desired = source.getDesiredPlugins();
             if (desired == null || desired.isEmpty()) {
                 OpenCliPluginCli.CliResult install = pluginCli.run(List.of("install", source.getSource()));
@@ -155,29 +161,40 @@ public class HubPluginService {
             repository.update(latest);
             log.info("Plugin sync succeeded id={} name={}", id, latest.getName());
             return toDTO(repository.findById(id));
+        } catch (RuntimeException ex) {
+            throw recordUnexpectedSyncFailure(source, commands, ex);
         } finally {
             syncLock.unlock();
         }
     }
 
     public List<HubInstalledPluginDTO> listInstalled() {
-        OpenCliPluginCli.CliResult list = pluginCli.run(List.of("list"));
+        OpenCliPluginCli.CliResult list = pluginCli.run(List.of("list", "-f", "json"));
         if (list.exitCode() != 0) {
             throw HubErrorCodes.PLUGIN_CLI_FAILED.asThrowable(
-                "opencli plugin list failed: " + list.stderr());
+                "opencli plugin list failed: " + firstNonBlank(list.stderr(), list.stdout()));
         }
-        List<HubInstalledPluginDTO> result = new ArrayList<>();
-        for (String line : list.stdout().split("\\R")) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) {
-                continue;
+        try {
+            JsonNode plugins = JSON_MAPPER.readTree(list.stdout());
+            if (plugins == null || !plugins.isArray()) {
+                throw new IllegalArgumentException("expected JSON array");
             }
-            HubInstalledPluginDTO item = new HubInstalledPluginDTO();
-            item.setRaw(trimmed);
-            item.setName(trimmed.split("\\s+")[0]);
-            result.add(item);
+            List<HubInstalledPluginDTO> result = new ArrayList<>();
+            for (JsonNode plugin : plugins) {
+                String name = text(plugin, "name");
+                if (name.isBlank()) {
+                    throw new IllegalArgumentException("plugin entry is missing name");
+                }
+                HubInstalledPluginDTO item = new HubInstalledPluginDTO();
+                item.setName(name);
+                item.setRaw(summarizeInstalledPlugin(plugin, name));
+                result.add(item);
+            }
+            return result;
+        } catch (Exception ex) {
+            throw HubErrorCodes.PLUGIN_CLI_FAILED.asThrowable(
+                ex, "Failed to parse opencli plugin list JSON");
         }
-        return result;
     }
 
     public void reloadCatalog() {
@@ -200,6 +217,33 @@ public class HubPluginService {
         throw HubErrorCodes.PLUGIN_SYNC_FAILED.asThrowable(latest.getLastError());
     }
 
+    private RuntimeException recordUnexpectedSyncFailure(
+        HubPluginSource source,
+        List<String> commands,
+        RuntimeException failure) {
+        HubPluginSource latest = repository.findById(source.getId());
+        if (latest == null || latest.getLastStatus() != HubPluginSourceStatus.SYNCING) {
+            return failure;
+        }
+
+        String error = firstNonBlank(failure.getMessage(), failure.getClass().getSimpleName());
+        latest.setLastStatus(HubPluginSourceStatus.FAILED);
+        latest.setLastError(error);
+        latest.setLastSyncedAt(LocalDateTime.now());
+        latest.setLastResult(String.join("\n", commands));
+        try {
+            if (!repository.update(latest)) {
+                log.error("Failed to persist unexpected plugin sync failure id={} error={}", source.getId(), error);
+            }
+        } catch (RuntimeException persistenceFailure) {
+            failure.addSuppressed(persistenceFailure);
+            log.error("Failed to persist unexpected plugin sync failure id={}", source.getId(), persistenceFailure);
+        }
+        log.error("Plugin sync failed unexpectedly id={} name={} error={}",
+            source.getId(), source.getName(), error, failure);
+        return HubErrorCodes.PLUGIN_SYNC_FAILED.asThrowable(failure, error);
+    }
+
     private HubPluginSource requireSource(String id) {
         if (!HubIds.isSupported(id)) {
             throw HubErrorCodes.PLUGIN_SOURCE_NOT_FOUND.asThrowable("plugin source not found: " + id);
@@ -218,6 +262,9 @@ public class HubPluginService {
         String name = normalizeName(request.getName());
         String source = normalizeSource(request.getSource());
         List<String> desired = normalizeDesiredPlugins(request.getDesiredPlugins());
+        for (String pluginName : desired) {
+            joinSourceAndPlugin(source, pluginName);
+        }
 
         HubPluginSource target = existing == null ? new HubPluginSource() : existing;
         target.setName(name);
@@ -275,6 +322,7 @@ public class HubPluginService {
      * Examples:
      * <ul>
      *   <li>{@code github:acme/plugins + weather -> github:acme/plugins/weather}</li>
+     *   <li>{@code https://github.com/acme/plugins + weather -> github:acme/plugins/weather}</li>
      *   <li>{@code github:acme/plugins/weather + weather -> github:acme/plugins/weather}</li>
      * </ul>
      */
@@ -284,13 +332,29 @@ public class HubPluginService {
         }
         String trimmedSource = source.trim();
         String trimmedPlugin = pluginName.trim();
-        if (trimmedSource.endsWith("/" + trimmedPlugin) || trimmedSource.endsWith(":" + trimmedPlugin)) {
+        var githubUrlMatcher = GITHUB_REPOSITORY_URL_PATTERN.matcher(trimmedSource);
+        if (githubUrlMatcher.matches()) {
+            String repository = githubUrlMatcher.group(2);
+            if (repository.endsWith(".git")) {
+                repository = repository.substring(0, repository.length() - ".git".length());
+            }
+            return "github:" + githubUrlMatcher.group(1) + "/" + repository + "/" + trimmedPlugin;
+        }
+
+        if (!trimmedSource.startsWith("github:")) {
+            throw HubErrorCodes.PLUGIN_SOURCE_ARGUMENT_INVALID.asThrowable(
+                "desiredPlugins requires github:owner/repo or https://github.com/owner/repo source");
+        }
+
+        String[] sourceParts = trimmedSource.substring("github:".length()).split("/");
+        if (sourceParts.length == 2) {
+            return trimmedSource + "/" + trimmedPlugin;
+        }
+        if (sourceParts.length == 3 && sourceParts[2].equals(trimmedPlugin)) {
             return trimmedSource;
         }
-        if (trimmedSource.endsWith("/")) {
-            return trimmedSource + trimmedPlugin;
-        }
-        return trimmedSource + "/" + trimmedPlugin;
+        throw HubErrorCodes.PLUGIN_SOURCE_ARGUMENT_INVALID.asThrowable(
+            "source targets a different sub-plugin: " + trimmedSource);
     }
 
     private static String firstNonBlank(String primary, String fallback) {
@@ -298,6 +362,36 @@ public class HubPluginService {
             return primary;
         }
         return fallback;
+    }
+
+    private static String text(JsonNode node, String field) {
+        JsonNode value = node == null ? null : node.get(field);
+        return value != null && value.isTextual() ? value.asText().trim() : "";
+    }
+
+    private static String summarizeInstalledPlugin(JsonNode plugin, String name) {
+        StringBuilder result = new StringBuilder(name);
+        String version = text(plugin, "version");
+        if (!version.isBlank()) {
+            result.append(" @").append(version);
+        }
+        String description = text(plugin, "description");
+        if (!description.isBlank()) {
+            result.append(" — ").append(description);
+        }
+        JsonNode commands = plugin.get("commands");
+        if (commands != null && commands.isArray()) {
+            List<String> names = new ArrayList<>();
+            for (JsonNode command : commands) {
+                if (command.isTextual() && !command.asText().isBlank()) {
+                    names.add(command.asText().trim());
+                }
+            }
+            if (!names.isEmpty()) {
+                result.append(" (").append(String.join(", ", names)).append(")");
+            }
+        }
+        return result.toString();
     }
 
     private static String summarize(String action, OpenCliPluginCli.CliResult result) {

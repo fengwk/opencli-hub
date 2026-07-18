@@ -76,7 +76,7 @@ Hub 配置的 `desiredPlugins` 是**子插件名**（如 `crm`），不是任意
 | PUT | `/api/plugins/sources/{id}` | 更新源 |
 | DELETE | `/api/plugins/sources/{id}` | 删除**配置**（默认不卸载已装插件） |
 | POST | `/api/plugins/sources/{id}/sync` | 同步该源 |
-| GET | `/api/plugins/installed` | 包装 `opencli plugin list` |
+| GET | `/api/plugins/installed` | 包装 `opencli plugin list -f json`，仅返回真实插件条目 |
 | POST | `/api/plugins/reload-catalog` | 仅刷新 Hub Command Catalog |
 
 管理端页面：`/plugins`。
@@ -87,7 +87,7 @@ Hub 配置的 `desiredPlugins` 是**子插件名**（如 `crm`），不是任意
 |---|---|
 | `name` | 展示名，唯一 |
 | `source` | 官方 source：`github:org/repo`、`github:org/repo/sub`、`https://...`、`file://...` |
-| `desiredPlugins` | 子插件名列表；空表示 `opencli plugin install <source>` 的默认集合 |
+| `desiredPlugins` | 子插件名列表；空表示 `opencli plugin install <source>` 的默认集合。非空时仅支持 `github:org/repo` 或规范 GitHub URL `https://github.com/org/repo[.git]`，Hub 会转换为官方 `github:org/repo/sub` 语法。 |
 | `enabled` | 是否允许同步 |
 | `autoUpdate` | 配置标记；MVP **不会**在启动时自动拉取 |
 
@@ -100,7 +100,8 @@ desired 为空:
 desired 非空:
   对每个 name:
     opencli plugin update <name>   # 已装则更新
-    失败则 opencli plugin install <source>/<name>
+    失败则 opencli plugin install github:<org>/<repo>/<name>
+      # github: source 直接使用；规范 github.com URL 会先转换为该语法
 
 然后:
   opencli plugin list
@@ -167,12 +168,38 @@ curl -sS -X POST "$HUB_URL/api/plugins/sources" \
   }'
 ```
 
+### `my-opencli/chatgpt-agent`
+
+管理页 `/plugins` 中新增源：
+
+```text
+名称: my-opencli
+Source: https://github.com/fengwk/my-opencli
+Desired plugins: chatgpt-agent
+Enabled: true
+Auto update: false
+```
+
+保存后点击同步，首次安装等价于：
+
+```bash
+opencli plugin install github:fengwk/my-opencli/chatgpt-agent
+```
+
+同步成功会自动 reload Catalog。随后还需确保目标 Instance 的 `websites` 包含
+`chatgpt-agent`，并在该 Instance 的 Chrome Profile 中完成 ChatGPT 登录，才能执行
+`chatgpt-agent/*` 命令。
+
+仓库已发布 `v0.1.2`，但当前 OpenCLI plugin installer 尚不支持 `#tag` / `#commit`
+pin；远程首次安装和后续 update 仍使用仓库默认分支。`plugins.lock.json` 会记录当前
+实际安装 commit。
+
 ## 6. 故障排查
 
 | 现象 | 检查 |
 |---|---|
 | sync 失败 | 源 URL、网络、`lastError`、容器内 `opencli plugin list` |
-| 命令仍不可见 | 是否 reload Catalog；插件是否 public command |
+| 命令仍不可见 | 是否 reload Catalog；插件命令是否为 browser command |
 | execute 拒绝 website | Instance `websites` 是否包含新 site |
 | 前端 sync 超时 | Gateway/浏览器 timeout；后端默认 CLI 超时 300s |
 | 容器重建后插件还在 | 确认 `/var/lib/opencli` 卷未丢 |

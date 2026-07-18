@@ -4,6 +4,7 @@ import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CancellationException;
@@ -45,7 +46,8 @@ public class ProcessBuilderOpenCliCatalogSource implements OpenCliCatalogSource 
     public InputStream open() throws IOException {
         long deadlineNanos = deadlineAfterMillis(timeoutMillis);
         Process process = null;
-        OutputCapture outputCapture = null;
+        OutputCapture stdoutCapture = null;
+        OutputCapture stderrCapture = null;
         try {
             List<String> command = List.of(
                 properties.getOpencli().getBinary(),
@@ -57,26 +59,33 @@ public class ProcessBuilderOpenCliCatalogSource implements OpenCliCatalogSource 
             if (workdir != null && !workdir.isBlank()) {
                 builder.directory(Path.of(workdir).toFile());
             }
-            builder.redirectErrorStream(true);
+            builder.redirectErrorStream(false);
             process = builder.start();
-            outputCapture = new OutputCapture(process);
-            outputCapture.start();
+            stdoutCapture = new OutputCapture(
+                process.getInputStream(), "opencli-catalog-output-" + process.pid());
+            stderrCapture = new OutputCapture(
+                process.getErrorStream(), "opencli-catalog-error-" + process.pid());
+            stdoutCapture.start();
+            stderrCapture.start();
 
             if (!waitFor(process, deadlineNanos)) {
                 throw processTimeoutException();
             }
-            byte[] output = awaitOutput(outputCapture, deadlineNanos);
+            byte[] stdout = awaitOutput(stdoutCapture, deadlineNanos);
+            byte[] stderr = awaitOutput(stderrCapture, deadlineNanos);
             int exit = process.exitValue();
             if (exit != 0) {
-                throw new IOException("`opencli list -f json` exited with code " + exit);
+                String detail = firstNonBlank(decode(stderr), decode(stdout));
+                throw new IOException("`opencli list -f json` exited with code " + exit
+                    + (detail.isBlank() ? "" : ": " + abbreviate(detail)));
             }
-            return new ByteArrayInputStream(output);
+            return new ByteArrayInputStream(stdout);
         } catch (InterruptedException ex) {
-            cleanup(process, outputCapture);
+            cleanup(process, stdoutCapture, stderrCapture);
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted while loading OpenCLI catalog", ex);
         } catch (IOException ex) {
-            cleanup(process, outputCapture);
+            cleanup(process, stdoutCapture, stderrCapture);
             throw ex;
         }
     }
@@ -135,29 +144,48 @@ public class ProcessBuilderOpenCliCatalogSource implements OpenCliCatalogSource 
         }
     }
 
-    private static void cleanup(Process process, OutputCapture outputCapture) {
+    private static void cleanup(Process process, OutputCapture... outputCaptures) {
         if (process == null) {
             return;
         }
         long cleanupDeadlineNanos = deadlineAfterMillis(PROCESS_TERMINATION_TIMEOUT_MILLIS);
-        Thread inputCloser = null;
-        if (outputCapture != null) {
-            outputCapture.cancel();
-            inputCloser = outputCapture.closeInputAsync();
+        Thread[] inputClosers = new Thread[outputCaptures.length];
+        for (int i = 0; i < outputCaptures.length; i++) {
+            OutputCapture outputCapture = outputCaptures[i];
+            if (outputCapture != null) {
+                outputCapture.cancel();
+                inputClosers[i] = outputCapture.closeInputAsync();
+            }
         }
         boolean interrupted = terminateProcess(process, cleanupDeadlineNanos);
-        if (outputCapture != null) {
-            long readerCleanupDeadlineNanos = deadlineAfterMillis(OUTPUT_READER_CLEANUP_TIMEOUT_MILLIS);
-            try {
-                outputCapture.awaitReaderUntil(readerCleanupDeadlineNanos);
-                awaitThreadUntil(inputCloser, readerCleanupDeadlineNanos);
-            } catch (InterruptedException ex) {
-                interrupted = true;
+        long readerCleanupDeadlineNanos = deadlineAfterMillis(OUTPUT_READER_CLEANUP_TIMEOUT_MILLIS);
+        try {
+            for (OutputCapture outputCapture : outputCaptures) {
+                if (outputCapture != null) {
+                    outputCapture.awaitReaderUntil(readerCleanupDeadlineNanos);
+                }
             }
+            for (Thread inputCloser : inputClosers) {
+                awaitThreadUntil(inputCloser, readerCleanupDeadlineNanos);
+            }
+        } catch (InterruptedException ex) {
+            interrupted = true;
         }
         if (interrupted) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    private static String decode(byte[] output) {
+        return output == null ? "" : new String(output, StandardCharsets.UTF_8).trim();
+    }
+
+    private static String firstNonBlank(String primary, String fallback) {
+        return primary == null || primary.isBlank() ? fallback == null ? "" : fallback : primary;
+    }
+
+    private static String abbreviate(String value) {
+        return value.length() <= 1000 ? value : value.substring(0, 1000) + "...";
     }
 
     private static long deadlineAfterMillis(long timeoutMillis) {
@@ -189,17 +217,17 @@ public class ProcessBuilderOpenCliCatalogSource implements OpenCliCatalogSource 
         private final InputStream inputStream;
         private final FutureTask<byte[]> outputTask;
         private final Thread outputReader;
-        private final long processId;
+        private final String readerName;
 
-        private OutputCapture(Process process) {
-            inputStream = process.getInputStream();
+        private OutputCapture(InputStream inputStream, String readerName) {
+            this.inputStream = inputStream;
             outputTask = new FutureTask<>(() -> {
                 try (InputStream stream = inputStream) {
                     return stream.readAllBytes();
                 }
             });
-            processId = process.pid();
-            outputReader = new Thread(outputTask, "opencli-catalog-output-" + processId);
+            this.readerName = readerName;
+            outputReader = new Thread(outputTask, readerName);
             outputReader.setDaemon(true);
         }
 
@@ -223,7 +251,7 @@ public class ProcessBuilderOpenCliCatalogSource implements OpenCliCatalogSource 
                 } catch (IOException ignored) {
                     // Best effort: process-tree cleanup and both waits remain bounded.
                 }
-            }, "opencli-catalog-output-close-" + processId);
+            }, readerName + "-close");
             inputCloser.setDaemon(true);
             inputCloser.start();
             return inputCloser;

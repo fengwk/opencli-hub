@@ -55,6 +55,24 @@ class ProcessBuilderOpenCliCatalogSourceTest {
     }
 
     @Test
+    void shouldKeepStderrOutOfSuccessfulJsonOutput() throws Exception {
+        // Plugin discovery may emit diagnostics (including non-UTF-8 bytes) on stderr;
+        // catalog JSON must remain a stdout-only protocol.
+        Path binary = executable("stderr-diagnostic.sh", """
+            #!/bin/sh
+            printf '\\232plugin diagnostic\\n' >&2
+            printf '[{"name":"demo"}]'
+            """);
+        ProcessBuilderOpenCliCatalogSource source = new ProcessBuilderOpenCliCatalogSource(
+            properties(binary), 2000L);
+
+        try (var inputStream = source.open()) {
+            assertEquals("[{\"name\":\"demo\"}]",
+                new String(inputStream.readAllBytes(), StandardCharsets.UTF_8));
+        }
+    }
+
+    @Test
     void shouldDrainLargeOutputWhileProcessIsRunning() throws Exception {
         // Output larger than a normal OS pipe proves the source cannot wait before draining stdout.
         Path binary = executable("large-output.sh", """
@@ -70,11 +88,27 @@ class ProcessBuilderOpenCliCatalogSourceTest {
     }
 
     @Test
+    void shouldDrainLargeStderrWhileProcessIsRunning() throws Exception {
+        // Stderr must be drained independently or plugin diagnostics can fill the pipe and block JSON output.
+        Path binary = executable("large-stderr.sh", """
+            #!/bin/sh
+            head -c 262144 /dev/zero | tr '\\000' e >&2
+            printf '[]'
+            """);
+        ProcessBuilderOpenCliCatalogSource source = new ProcessBuilderOpenCliCatalogSource(
+            properties(binary), 5000L);
+
+        try (var inputStream = source.open()) {
+            assertEquals("[]", new String(inputStream.readAllBytes(), StandardCharsets.UTF_8));
+        }
+    }
+
+    @Test
     void shouldRejectNonZeroExitCode() throws Exception {
-        // A completed reader must not change the existing non-zero process exit contract.
+        // Non-zero failures should preserve bounded stderr detail without mixing it into JSON.
         Path binary = executable("non-zero.sh", """
             #!/bin/sh
-            printf 'failure'
+            printf 'failure detail' >&2
             exit 7
             """);
         ProcessBuilderOpenCliCatalogSource source = new ProcessBuilderOpenCliCatalogSource(
@@ -82,6 +116,7 @@ class ProcessBuilderOpenCliCatalogSourceTest {
 
         IOException exception = assertThrows(IOException.class, source::open);
         assertTrue(exception.getMessage().contains("exited with code 7"));
+        assertTrue(exception.getMessage().contains("failure detail"));
     }
 
     @Test

@@ -69,7 +69,7 @@ function SourceForm({
         <input
           value={source}
           disabled={busy}
-          placeholder="github:org/repo 或 github:org/repo/subplugin"
+          placeholder="github:org/repo 或 https://github.com/org/repo"
           onChange={(event) => setSource(event.target.value)}
         />
       </label>
@@ -201,7 +201,7 @@ export function PluginsPage() {
         <ErrorState title="无法加载插件源" description={errorMessage(sourcesQuery.error)} onRetry={() => void sourcesQuery.refetch()} />
       ) : null}
       {sourcesQuery.isSuccess && sources.length === 0 ? (
-        <Empty title="还没有插件源" description="添加 github:org/repo 或 monorepo 子插件源后即可同步。" />
+        <Empty title="还没有插件源" description="添加 GitHub 插件源或 monorepo 子插件源后即可同步。" />
       ) : null}
 
       {sources.map((source) => (
@@ -244,7 +244,7 @@ export function PluginsPage() {
       ))}
 
       <section className="execution-section">
-        <h2>当前已安装插件（opencli plugin list）</h2>
+        <h2>当前已安装插件（opencli plugin list -f json）</h2>
         {installedQuery.isPending ? <Loading label="正在读取已安装插件…" /> : null}
         {installedQuery.isError ? (
           <ErrorState title="无法读取已安装插件" description={errorMessage(installedQuery.error)} onRetry={() => void installedQuery.refetch()} />

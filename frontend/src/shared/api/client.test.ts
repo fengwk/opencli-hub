@@ -95,13 +95,13 @@ describe('apiClient', () => {
     await expect(apiClient.get('/instances', { params: { pageNumber: 1 } })).resolves.toEqual({
       ok: true,
     })
-    await expect(apiClient.post('/instances', { code: 'a' })).resolves.toEqual({ created: true })
-    await expect(apiClient.put('/instances/1', { name: 'b' })).resolves.toEqual({ updated: true })
+    await expect(apiClient.post('/instances', { code: 'a' }, { timeout: 320000 })).resolves.toEqual({ created: true })
+    await expect(apiClient.put('/instances/1', { name: 'b' }, { timeout: 30000 })).resolves.toEqual({ updated: true })
     await expect(apiClient.delete('/instances/1')).resolves.toBeUndefined()
 
     expect(axiosMock.client.get).toHaveBeenCalledWith('/instances', { params: { pageNumber: 1 } })
-    expect(axiosMock.client.post).toHaveBeenCalledWith('/instances', { code: 'a' })
-    expect(axiosMock.client.put).toHaveBeenCalledWith('/instances/1', { name: 'b' })
+    expect(axiosMock.client.post).toHaveBeenCalledWith('/instances', { code: 'a' }, { timeout: 320000 })
+    expect(axiosMock.client.put).toHaveBeenCalledWith('/instances/1', { name: 'b' }, { timeout: 30000 })
     expect(axiosMock.client.delete).toHaveBeenCalledWith('/instances/1')
   })
 })

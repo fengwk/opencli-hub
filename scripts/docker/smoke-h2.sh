@@ -68,6 +68,7 @@ run_compose exec -T "${service}" sh -ec '
     actual="$(opencli --version | head -n1 | tr -d "[:space:]")"
     test -n "${expected}"
     test "${actual}" = "${expected}"
+    test "$(git config --system --get http.version)" = "HTTP/1.1"
 '
 run_compose exec -T "${service}" curl --fail --silent http://127.0.0.1:18181/healthz | grep -Fxq 'ok'
 printf 'H2 smoke passed (project=%s, host-port=%s). No Chrome E2E was run.\n' \

@@ -71,14 +71,17 @@ RUN set -eux; \
     apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         /tmp/google-chrome-stable.deb \
         nodejs=${NODE_MAJOR}.* \
-        tini xvfb x11vnc openbox iproute2 jq \
+        tini xvfb x11vnc openbox iproute2 jq git \
         fonts-liberation fonts-noto-cjk \
         libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 \
         libdbus-1-3 libgbm1 libglib2.0-0 libgtk-3-0 libnss3 libnspr4 libpango-1.0-0 \
         libx11-xcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 procps; \
     rm -f /tmp/google-chrome-stable.deb /etc/apt/sources.list.d/nodesource.list /etc/apt/keyrings/nodesource.gpg; \
     apt-get purge -y --auto-remove gnupg xz-utils; \
-    npm --version; node --version; google-chrome-stable --version; \
+    git config --system http.version HTTP/1.1; \
+    npm --version; node --version; git --version; \
+    test "$(git config --system --get http.version)" = "HTTP/1.1"; \
+    google-chrome-stable --version; \
     apt-get clean; rm -rf /var/lib/apt/lists/*
 
 FROM runtime-base AS opencli-assets
@@ -218,6 +221,7 @@ COPY --from=opencli-assets --chown=root:root /etc/opt/chrome/policies/managed/op
 COPY --from=hub-artifact --chown=openclihub:openclihub /artifact/opencli-hub.jar /opt/opencli-hub/opencli-hub.jar
 COPY --chown=root:root --chmod=0755 scripts/docker/hub-entrypoint.sh scripts/docker/crx-http-server.mjs /opt/opencli/scripts/
 RUN test -s /opt/opencli-hub/opencli-hub.jar \
+ && git --version \
  && test -r /opt/opencli/crx/extension.crx \
  && test -r /opt/opencli/artifact-build-info.json \
  && test -r /etc/opt/chrome/policies/managed/opencli-hub-extension.json \
