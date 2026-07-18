@@ -66,11 +66,59 @@ VNC TCP 只监听容器 loopback；客户端只通过同源 WebSocket `/api/inst
 | Java | 17 |
 | 前端构建 | Node.js 20 + npm lockfile |
 | Google Chrome | `150.0.7871.114-1`，仅 `linux/amd64` |
-| OpenCLI | `1.8.6` |
-| Browser Bridge extension | `1.0.22` |
+| OpenCLI | 见 `scripts/docker/opencli-artifact.lock.env`（当前官方基线 `1.8.6`） |
+| Browser Bridge extension | 见同一 lock（当前官方基线 `1.0.22`） |
 | MySQL | `5.7.44`（已 EOL） |
 
 Docker 部署要求 Docker Engine 支持 BuildKit 和 Compose `build.secrets`。Compose 固定 `shm_size: 2gb` 与 `seccomp=unconfined`；上线前必须验证宿主 Docker/seccomp 策略允许 Chrome sandbox 正常运行。
+
+### OpenCLI artifact lock
+
+Hub 镜像构建通过单一锁文件固定 CLI 与 Browser Bridge extension 产物：
+
+```text
+scripts/docker/opencli-artifact.lock.env
+```
+
+`docker build`、Compose、`scripts/docker/build-local.sh` 和 CI 默认都读取该文件，因此日常升级只需编辑这一处并重新构建。锁文件同时记录 package/version、CLI tarball URL/SHA256、source revision、extension version/URL/SHA256。镜像内会生成可读的
+`/opt/opencli/artifact-build-info.json`，smoke 用其中的 CLI 版本与 `opencli --version` 对照，不再硬编码版本号。
+
+运行时镜像固定 `OPENCLI_DISABLE_UPDATE_CHECK=1`：官方 baseline 与未来 fork CLI 都只通过编辑
+`scripts/docker/opencli-artifact.lock.env` 并重建镜像升级，不依赖 OpenCLI 运行时 updater 提示或联网版本检查。
+
+升级规则：
+
+1. **成对升级**：CLI 与 extension 必须来自同一 OpenCLI Release，不要只改一侧。
+2. **校验和必填**：任何远程 CLI tarball / extension zip 都必须写入对应 SHA256；构建会先校验再安装。
+3. **默认 lock 只指向已发布资产**：仓库默认继续钉官方 npm/GitHub baseline；不要把未发布的本地 fork 产物 URL 提交进默认 lock。
+4. **切换到已发布 fork Release 时只改 lock**，例如：
+
+```bash
+# scripts/docker/opencli-artifact.lock.env 示例（fork 已发布后）
+OPENCLI_PACKAGE=@jackwener/opencli
+OPENCLI_VERSION=1.8.7-fengwk.1
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.1/jackwener-opencli-1.8.7-fengwk.1.tgz
+OPENCLI_CLI_SHA256=<64-hex-sha256-of-cli-tarball>
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@fork-v1.8.7-fengwk.1
+EXTENSION_VERSION=1.0.23
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.1/opencli-extension-v1.0.23.zip
+OPENCLI_EXTENSION_SHA256=<64-hex-sha256-of-extension-zip>
+```
+
+可选 build-arg 覆盖范围（仅当前构建生效，不改仓库默认 pin）：
+
+| Build arg | 作用 |
+|---|---|
+| `OPENCLI_PACKAGE` / `OPENCLI_VERSION` | 覆盖 CLI package 与期望版本 |
+| `OPENCLI_CLI_URL` / `OPENCLI_CLI_SHA256` | 覆盖 CLI tarball 与校验和；二者必须成对覆盖，不可只改一侧 |
+| `OPENCLI_SOURCE_REVISION` | 覆盖写入 `artifact-build-info.json` 的来源修订 |
+| `EXTENSION_VERSION` | 覆盖 extension 版本（CRX 打包也使用解析后的值） |
+| `OPENCLI_EXTENSION_URL` / `OPENCLI_EXTENSION_SHA256` | 覆盖 extension zip 与校验和；二者必须成对覆盖 |
+
+```bash
+scripts/docker/validate-opencli-artifact-lock.sh
+scripts/docker/test-install-opencli.sh
+```
 
 ### 生成并保护 CRX signing key
 
@@ -293,6 +341,8 @@ env JAVA_HOME="$JAVA_HOME" mvn -B -ntp clean test
 OPENCLI_HUB_MYSQL_PASSWORD=dummy MYSQL_ROOT_PASSWORD=dummy docker compose -f compose.yml config
 docker compose -f compose.h2.yml config
 find scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+scripts/docker/validate-opencli-artifact-lock.sh
+scripts/docker/test-install-opencli.sh
 git diff --check
 ```
 

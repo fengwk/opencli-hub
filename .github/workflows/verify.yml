@@ -51,6 +51,8 @@ jobs:
           docker compose -f compose.yml config
           docker compose -f compose.h2.yml config
           find scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+          scripts/docker/validate-opencli-artifact-lock.sh
+          scripts/docker/test-install-opencli.sh
           git diff --check
       - name: Reject private key material and retired extension identity
         shell: bash

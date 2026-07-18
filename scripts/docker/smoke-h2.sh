@@ -63,7 +63,12 @@ for _ in $(seq 1 60); do
 done
 curl --fail --silent --show-error "${base_url}/actuator/health" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"UP"'
 curl --fail --silent --show-error "${base_url}/api/instances" >/dev/null
-run_compose exec -T "${service}" opencli --version | grep -Fq '1.8.6'
+run_compose exec -T "${service}" sh -ec '
+    expected="$(jq -er ".cli.version" /opt/opencli/artifact-build-info.json)"
+    actual="$(opencli --version | head -n1 | tr -d "[:space:]")"
+    test -n "${expected}"
+    test "${actual}" = "${expected}"
+'
 run_compose exec -T "${service}" curl --fail --silent http://127.0.0.1:18181/healthz | grep -Fxq 'ok'
 printf 'H2 smoke passed (project=%s, host-port=%s). No Chrome E2E was run.\n' \
     "${compose_project}" "${host_port}"

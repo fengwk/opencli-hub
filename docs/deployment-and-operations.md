@@ -166,7 +166,69 @@ mysqldump --host "$OPENCLI_HUB_MYSQL_HOST" --user "$OPENCLI_HUB_MYSQL_USERNAME" 
 4. 用相同 key 构建新镜像，启动相同 volume。
 5. 检查 health、Instance Runtime、VNC、历史 Execution、资源和登录态。
 
-### 6.2 既有 MySQL schema
+### 6.2 OpenCLI CLI / extension artifact lock
+
+Hub 镜像默认从 `scripts/docker/opencli-artifact.lock.env` 读取 OpenCLI CLI 与 Browser Bridge
+extension 固定版本。`Dockerfile`、Compose、`scripts/docker/build-local.sh` 和 GitHub
+workflow 共用该文件，因此官方 baseline 与已发布 fork Release 的切换都应优先编辑这一处。
+
+最终镜像设置 `OPENCLI_DISABLE_UPDATE_CHECK=1`，关闭 OpenCLI 运行时 updater 提示与联网版本检查。
+无论官方 baseline 还是 fork CLI，升级路径都是改 lock 后重建镜像，而不是容器内自动更新。
+
+当前仓库默认仍钉官方已发布基线：
+
+```text
+package=@jackwener/opencli
+CLI version=1.8.6
+extension version=1.0.22
+source revision=jackwener/OpenCLI@v1.8.6
+```
+
+升级或切换 fork 时：
+
+1. **成对升级**：CLI 与 extension 必须来自同一 OpenCLI Release；不要只更新 CLI 或只更新 extension。
+2. **校验和强制**：CLI tarball 与 extension zip 都必须写入准确的 SHA256。`install-opencli.sh` /
+   `install-extension.sh` 会在安装前校验；URL 模式缺少或错误 SHA 会直接失败。
+3. **不要把未发布资产写入默认 lock**：本地试验可用 build-arg；提交到仓库的默认 lock 只能指向
+   已公开发布的 npm tarball / GitHub Release 资产。
+4. 构建后确认镜像内 `/opt/opencli/artifact-build-info.json` 反映解析结果；smoke 会比较
+   `opencli --version` 与该文件中的 `cli.version`。
+
+已发布 fork Release 示例（tag `fork-v1.8.7-fengwk.1`，CLI `1.8.7-fengwk.1` + extension `1.0.23`）：
+
+```bash
+# scripts/docker/opencli-artifact.lock.env
+OPENCLI_PACKAGE=@jackwener/opencli
+OPENCLI_VERSION=1.8.7-fengwk.1
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.1/jackwener-opencli-1.8.7-fengwk.1.tgz
+OPENCLI_CLI_SHA256=<64-hex-sha256-of-cli-tarball>
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@fork-v1.8.7-fengwk.1
+EXTENSION_VERSION=1.0.23
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.1/opencli-extension-v1.0.23.zip
+OPENCLI_EXTENSION_SHA256=<64-hex-sha256-of-extension-zip>
+```
+
+可选 build-arg 仅覆盖**单次构建**，不改变仓库默认 pin：
+
+| Build arg | 覆盖内容 |
+|---|---|
+| `OPENCLI_PACKAGE` | npm package 名 |
+| `OPENCLI_VERSION` | CLI 期望版本（安装后 `opencli --version` 必须精确匹配） |
+| `OPENCLI_CLI_URL` | CLI tarball URL；与 SHA 必须成对覆盖，不可只改一侧 |
+| `OPENCLI_CLI_SHA256` | CLI tarball SHA256；与 URL 必须成对覆盖 |
+| `OPENCLI_SOURCE_REVISION` | 写入 `artifact-build-info.json` 的来源修订 |
+| `EXTENSION_VERSION` | extension 版本；CRX 打包也使用解析后的值 |
+| `OPENCLI_EXTENSION_URL` | extension zip URL；与 SHA 必须成对覆盖 |
+| `OPENCLI_EXTENSION_SHA256` | extension zip SHA256；与 URL 必须成对覆盖 |
+
+静态校验：
+
+```bash
+scripts/docker/validate-opencli-artifact-lock.sh
+scripts/docker/test-install-opencli.sh
+```
+
+### 6.3 既有 MySQL schema
 
 对于旧版本数据库，必须在停机窗口按此顺序执行：
 
@@ -215,7 +277,10 @@ env JAVA_HOME="$JAVA_HOME" mvn -B -ntp clean test
 OPENCLI_HUB_MYSQL_PASSWORD=dummy MYSQL_ROOT_PASSWORD=dummy docker compose -f compose.yml config
 docker compose -f compose.h2.yml config
 find scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+scripts/docker/validate-opencli-artifact-lock.sh
+scripts/docker/test-install-opencli.sh
 git diff --check
 ```
 
-准备好 signing key 后，再运行 `scripts/docker/smoke-h2.sh`。它验证镜像、health、Hub API、OpenCLI 版本和 CRX loopback health；不会创建 Instance 或覆盖 Chrome 登录态 E2E。
+准备好 signing key 后，再运行 `scripts/docker/smoke-h2.sh`。它验证镜像、health、Hub API、OpenCLI 版本（对照
+`/opt/opencli/artifact-build-info.json`）和 CRX loopback health；不会创建 Instance 或覆盖 Chrome 登录态 E2E。
