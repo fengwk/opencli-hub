@@ -117,9 +117,31 @@ class HubPluginServiceTest {
         assertThat(installed.get(0).getRaw()).isEqualTo("chatgpt-agent @0.1.2 — Protocol stream (ask)");
     }
 
-    /** The official CLI prints this exact human message instead of JSON for an empty list. */
+    /** The official CLI prints these exact human layouts instead of JSON for an empty list. */
     @Test
-    void shouldTreatOfficialEmptyPluginListMessageAsEmptyList() {
+    void shouldTreatOfficialEmptyPluginListMessagesAsEmptyList() {
+        OpenCliPluginCli pluginCli = mock(OpenCliPluginCli.class);
+        HubPluginService service = new HubPluginService(
+            mock(HubPluginSourceRepository.class),
+            pluginCli,
+            mock(OpenCliCommandCatalog.class));
+        when(pluginCli.run(List.of("list", "-f", "json"))).thenReturn(
+            new OpenCliPluginCli.CliResult(
+                0,
+                "No plugins installed.\nInstall one with: opencli plugin install github:user/repo\n",
+                ""),
+            new OpenCliPluginCli.CliResult(
+                0,
+                "  No plugins installed.\n  Install one with: opencli plugin install github:user/repo\n",
+                ""));
+
+        assertThat(service.listInstalled()).isEmpty();
+        assertThat(service.listInstalled()).isEmpty();
+    }
+
+    /** A near match must remain rejected so unrelated successful text cannot be treated as an empty list. */
+    @Test
+    void shouldRejectNearMatchForOfficialEmptyPluginListMessage() {
         OpenCliPluginCli pluginCli = mock(OpenCliPluginCli.class);
         HubPluginService service = new HubPluginService(
             mock(HubPluginSourceRepository.class),
@@ -127,10 +149,11 @@ class HubPluginServiceTest {
             mock(OpenCliCommandCatalog.class));
         when(pluginCli.run(List.of("list", "-f", "json"))).thenReturn(new OpenCliPluginCli.CliResult(
             0,
-            "No plugins installed.\nInstall one with: opencli plugin install github:user/repo\n",
+            "No plugins installed.\n Install one with: opencli plugin install github:user/repo\n",
             ""));
 
-        assertThat(service.listInstalled()).isEmpty();
+        assertThatThrownBy(service::listInstalled)
+            .hasMessageContaining("Failed to parse opencli plugin list JSON");
     }
 
     /** A malformed successful CLI payload must fail closed rather than appearing as fabricated plugins. */

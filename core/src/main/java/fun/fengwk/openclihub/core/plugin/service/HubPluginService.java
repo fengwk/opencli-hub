@@ -41,9 +41,13 @@ public class HubPluginService {
         "^https?://github\\.com/([\\w.-]+)/([\\w.-]+)/?$",
         Pattern.CASE_INSENSITIVE);
     private static final Pattern PLUGIN_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$");
-    private static final String EMPTY_PLUGIN_LIST_MESSAGE = """
-        No plugins installed.
-        Install one with: opencli plugin install github:user/repo""";
+    private static final List<String> OFFICIAL_EMPTY_PLUGIN_LIST_OUTPUTS = List.of(
+        """
+            No plugins installed.
+            Install one with: opencli plugin install github:user/repo""",
+        """
+            No plugins installed.
+              Install one with: opencli plugin install github:user/repo""");
 
     private final HubPluginSourceRepository repository;
     private final OpenCliPluginCli pluginCli;
@@ -374,7 +378,7 @@ public class HubPluginService {
             return false;
         }
         String normalized = stdout.trim().replace("\r\n", "\n").replace('\r', '\n');
-        return EMPTY_PLUGIN_LIST_MESSAGE.equals(normalized);
+        return OFFICIAL_EMPTY_PLUGIN_LIST_OUTPUTS.contains(normalized);
     }
 
     private static String text(JsonNode node, String field) {
