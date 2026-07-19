@@ -180,14 +180,23 @@ class HubInstanceDispatcherTest {
         }));
         worker.setDaemon(true);
         worker.start();
-        assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
-        assertThat(dispatcher.shutdownIfIdle())
-            .as("active worker prevents shutdown")
-            .isFalse();
-        worker.join(2000);
-        assertThat(dispatcher.shutdownIfIdle())
-            .as("no work left permits shutdown")
-            .isTrue();
+        try {
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(dispatcher.shutdownIfIdle())
+                .as("active worker prevents shutdown")
+                .isFalse();
+            worker.join(2000);
+            // Future.get() may return just before ThreadPoolExecutor decrements its active
+            // worker count. Wait for the dispatcher's actual idle condition, not merely the
+            // caller thread's completion, before asserting that idle shutdown succeeds.
+            assertThat(awaitIdle(dispatcher, 2_000L)).isTrue();
+            assertThat(dispatcher.shutdownIfIdle())
+                .as("no work left permits shutdown")
+                .isTrue();
+        } finally {
+            dispatcher.shutdownNow();
+            worker.join(2000);
+        }
     }
 
     /**
@@ -291,6 +300,18 @@ class HubInstanceDispatcherTest {
             release.countDown();
             dispatcher.shutdownNow();
         }
+    }
+
+    private static boolean awaitIdle(HubInstanceDispatcher dispatcher, long timeoutMillis)
+        throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while (System.nanoTime() < deadline) {
+            if (dispatcher.activeCount() == 0 && dispatcher.pendingCount() == 0) {
+                return true;
+            }
+            Thread.sleep(5L);
+        }
+        return dispatcher.activeCount() == 0 && dispatcher.pendingCount() == 0;
     }
 
 }
