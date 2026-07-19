@@ -12,8 +12,8 @@ import {
   uploadResources,
 } from '@/features/resources/resources-api'
 import type { ResourceFilters, ResourceItem } from '@/features/resources/types'
+import { formatBackendByteSize } from '@/shared/api/backend-byte-size'
 import { formatBackendDateTime } from '@/shared/api/backend-date-time'
-import type { BackendLong } from '@/shared/api/contracts'
 import { ConfirmDialog, Empty, ErrorState, Loading, StatusBadge } from '@/shared/components'
 import { buildResourceUrl } from '@/shared/api/resource-url'
 
@@ -30,15 +30,6 @@ const defaultFilters: ResourceFilters = {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '请求失败，请稍后重试。'
-}
-
-function formatSize(size: BackendLong): string {
-  const numericSize = typeof size === 'number' ? size : Number(size)
-  if (!Number.isFinite(numericSize) || numericSize < 0) return '—'
-  if (numericSize < 1024) return `${numericSize} B`
-  if (numericSize < 1024 * 1024) return `${(numericSize / 1024).toFixed(1)} KB`
-  if (numericSize < 1024 * 1024 * 1024) return `${(numericSize / (1024 * 1024)).toFixed(1)} MB`
-  return `${(numericSize / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
 function deleteDescription(target: DeleteTarget): string {
@@ -179,7 +170,7 @@ export function ResourcesPage() {
               <div className={`date-summary ${summary.date === selectedDate ? 'selected' : ''}`} key={summary.date}>
                 <button type="button" className="date-select" aria-pressed={summary.date === selectedDate} onClick={() => selectDate(summary.date)}>
                   <strong>{summary.date}</strong>
-                  <span>{summary.groupCount} 组 · {summary.fileCount} 文件 · {formatSize(summary.totalSize)}</span>
+                  <span>{summary.groupCount} 组 · {summary.fileCount} 文件 · {formatBackendByteSize(summary.totalSize)}</span>
                 </button>
                 <button type="button" className="btn btn-danger compact-button" aria-label={`删除日期 ${summary.date}`} disabled={actionPending} onClick={() => setDeleteTarget({ kind: 'date', date: summary.date })}>删除</button>
               </div>
@@ -230,7 +221,7 @@ export function ResourcesPage() {
                       <li className="resource-item" key={item.resourcePath}>
                         <div className="resource-item-details">
                           <strong>{item.relativePath || item.fileName}</strong>
-                          <span>{item.mimeType} · {formatSize(item.size)} · {formatBackendDateTime(item.modifiedAt)}</span>
+                          <span>{item.mimeType} · {formatBackendByteSize(item.size)} · {formatBackendDateTime(item.modifiedAt)}</span>
                         </div>
                         <StatusBadge status={item.source} tone={item.source === 'UPLOAD' ? 'info' : 'success'} />
                         <div className="resource-actions">

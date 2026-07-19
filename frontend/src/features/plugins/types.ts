@@ -1,3 +1,5 @@
+import type { BackendDateTime, BackendLong } from '@/shared/api/contracts'
+
 export type HubPluginSourceStatus = 'IDLE' | 'SYNCING' | 'SUCCEEDED' | 'FAILED'
 
 export interface HubPluginSource {
@@ -9,9 +11,9 @@ export interface HubPluginSource {
   autoUpdate: boolean
   lastStatus: HubPluginSourceStatus
   lastError: string | null
-  lastSyncedAt: string | number[] | null
+  lastSyncedAt: BackendDateTime
   lastResult: string | null
-  version: number | string
+  version: BackendLong
 }
 
 export interface HubPluginSourceUpsert {

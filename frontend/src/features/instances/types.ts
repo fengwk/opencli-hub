@@ -1,4 +1,4 @@
-import type { BackendId } from '@/shared/api/contracts'
+import type { BackendDateTime, BackendId } from '@/shared/api/contracts'
 
 export type HubInstanceState = 'STARTING' | 'RUNNING' | 'STOPPING' | 'STOPPED' | 'ERROR'
 export type InstanceProxyMode = 'INHERIT' | 'DIRECT' | 'CUSTOM'
@@ -22,10 +22,10 @@ export interface HubInstance {
   proxyMode: InstanceProxyMode
   proxyServer: string | null
   lastErrorMessage: string | null
-  stateChangedAt: string | number[] | null
+  stateChangedAt: BackendDateTime
   runtime: HubInstanceRuntime | null
-  createTime: string | number[] | null
-  updateTime: string | number[] | null
+  createTime: BackendDateTime
+  updateTime: BackendDateTime
 }
 
 export interface InstanceEditableProperties {

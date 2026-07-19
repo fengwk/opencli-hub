@@ -19,7 +19,9 @@ import fun.fengwk.openclihub.core.command.service.HubCommandQueryService;
 import fun.fengwk.openclihub.core.command.service.OpenCliCommandPolicyException;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.command.HubCommandDTO;
+import fun.fengwk.openclihub.share.model.command.HubCommandOutputRuleDTO;
 import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
+import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -67,11 +69,21 @@ class HubCommandControllerTest {
     /** Catalog listing supports both the full set and an optional website filter. */
     @Test
     void shouldListCommands() throws Exception {
+        HubCommandOutputRuleDTO outputRule = new HubCommandOutputRuleDTO();
+        outputRule.setId("rule-1");
+        outputRule.setCommandKey(command.getCommandKey());
+        outputRule.setArgumentName("output");
+        outputRule.setTargetType(HubCommandOutputTargetType.FILE);
+        outputRule.setCreateTime(LocalDateTime.of(2026, 7, 13, 10, 0));
+        outputRule.setUpdateTime(LocalDateTime.of(2026, 7, 13, 10, 1));
+        command.setOutputRule(outputRule);
         when(queryService.listPublicCommands()).thenReturn(List.of(command));
 
         mockMvc.perform(get("/api/opencli/commands"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data[0].commandKey").value("bilibili/hot"));
+            .andExpect(jsonPath("$.data[0].commandKey").value("bilibili/hot"))
+            .andExpect(jsonPath("$.data[0].outputRule.createTime").exists())
+            .andExpect(jsonPath("$.data[0].outputRule.updateTime").exists());
         mockMvc.perform(get("/api/opencli/commands").param("website", "bilibili"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data[0].site").value("bilibili"));

@@ -5,9 +5,11 @@ import { useSearchParams } from 'react-router-dom'
 import { getLogDownloadUrl, getLogs, maximumLogLines } from '@/features/logs/logs-api'
 import { instanceLogSources } from '@/features/logs/types'
 import type { HubLogContent, InstanceLogSource, LogLevel, LogRequest } from '@/features/logs/types'
+import { formatBackendByteSize } from '@/shared/api/backend-byte-size'
+import { formatBackendDateTime } from '@/shared/api/backend-date-time'
 import { Empty, ErrorState, Loading, StatusBadge } from '@/shared/components'
 import { parseBackendId } from '@/shared/api/backend-id'
-import type { BackendDateTime, BackendId } from '@/shared/api/contracts'
+import type { BackendId } from '@/shared/api/contracts'
 
 const defaultLineCount = 500
 const logLevels: LogLevel[] = ['ALL', 'TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR']
@@ -28,25 +30,6 @@ function parseLineCount(value: string): number | undefined {
   if (!/^[1-9]\d*$/.test(value.trim())) return undefined
   const lines = Number(value)
   return Number.isSafeInteger(lines) && lines <= maximumLogLines ? lines : undefined
-}
-
-function formatDateTime(value: BackendDateTime): string {
-  if (value === null || value === undefined || value === '') return '—'
-  if (typeof value === 'string') return value.replace('T', ' ')
-  if (!Array.isArray(value)) return '—'
-
-  const [year, month, day, hour = 0, minute = 0, second = 0] = value
-  if (year === undefined || month === undefined || day === undefined) return '—'
-  const date = [year, month, day].map((part) => String(part).padStart(2, '0')).join('-')
-  const time = [hour, minute, second].map((part) => String(Math.trunc(Number(part))).padStart(2, '0')).join(':')
-  return `${date} ${time}`
-}
-
-function formatFileSize(fileSize: number): string {
-  if (fileSize < 1024) return `${fileSize} B`
-  if (fileSize < 1024 * 1024) return `${(fileSize / 1024).toFixed(1)} KB`
-  if (fileSize < 1024 * 1024 * 1024) return `${(fileSize / (1024 * 1024)).toFixed(1)} MB`
-  return `${(fileSize / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
 function filterLogLines(content: string, level: LogLevel, keyword: string): string[] {
@@ -77,8 +60,8 @@ function LogMetadata({ log }: { log: HubLogContent }) {
     <dl className="metadata-grid logs-metadata">
       <div><dt>来源</dt><dd>{log.source}</dd></div>
       <div><dt>Instance ID</dt><dd>{log.instanceId ?? '系统日志'}</dd></div>
-      <div><dt>文件大小</dt><dd>{formatFileSize(log.fileSize)}</dd></div>
-      <div><dt>更新时间</dt><dd>{formatDateTime(log.modifiedAt)}</dd></div>
+      <div><dt>文件大小</dt><dd>{formatBackendByteSize(log.fileSize)}</dd></div>
+      <div><dt>更新时间</dt><dd>{formatBackendDateTime(log.modifiedAt)}</dd></div>
       <div><dt>读取状态</dt><dd><StatusBadge status={log.truncated ? '已截断' : '完整'} tone={log.truncated ? 'warning' : 'success'} /></dd></div>
     </dl>
   )

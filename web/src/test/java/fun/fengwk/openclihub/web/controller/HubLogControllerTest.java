@@ -21,6 +21,7 @@ import fun.fengwk.openclihub.share.model.log.HubLogSource;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,7 +53,9 @@ class HubLogControllerTest {
 
         mockMvc.perform(get("/api/logs/system"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.source").value("SYSTEM"));
+            .andExpect(jsonPath("$.data.source").value("SYSTEM"))
+            .andExpect(jsonPath("$.data.fileSize").value("1536"))
+            .andExpect(jsonPath("$.data.modifiedAt").exists());
         mockMvc.perform(get("/api/instances/19/logs").param("source", "chrome").param("lines", "2"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.source").value("CHROME"));
@@ -122,6 +125,8 @@ class HubLogControllerTest {
         HubLogContentDTO content = new HubLogContentDTO();
         content.setSource(source);
         content.setContent("line\n");
+        content.setFileSize(1_536L);
+        content.setModifiedAt(LocalDateTime.of(2026, 7, 13, 10, 0));
         return content;
     }
 

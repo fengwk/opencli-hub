@@ -1,4 +1,4 @@
-import type { BackendDateTime, BackendId } from '@/shared/api/contracts'
+import type { BackendDateTime, BackendId, BackendLong } from '@/shared/api/contracts'
 
 export const instanceLogSources = ['CHROME', 'XVFB', 'OPENBOX', 'X11VNC'] as const
 
@@ -11,7 +11,7 @@ export interface HubLogContent {
   instanceId: BackendId | null
   content: string
   truncated: boolean
-  fileSize: number
+  fileSize: BackendLong
   modifiedAt: BackendDateTime
 }
 

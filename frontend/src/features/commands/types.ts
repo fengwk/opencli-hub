@@ -1,4 +1,4 @@
-import type { BackendId } from '@/shared/api/contracts'
+import type { BackendDateTime, BackendId } from '@/shared/api/contracts'
 
 export type CommandAccess = 'READ' | 'WRITE'
 export type SiteSessionMode = 'EPHEMERAL' | 'PERSISTENT'
@@ -21,8 +21,8 @@ export interface CommandOutputRule {
   argumentName: string
   targetType: OutputTargetType
   fileName: string | null
-  createTime: string
-  updateTime: string
+  createTime: BackendDateTime
+  updateTime: BackendDateTime
 }
 
 export interface HubCommand {

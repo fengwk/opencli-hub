@@ -25,8 +25,8 @@ const log: HubLogContent = {
   instanceId: null,
   content: '[INFO] first line\n[ERROR] second line',
   truncated: false,
-  fileSize: 31,
-  modifiedAt: '2026-07-13T10:00:00',
+  fileSize: '1536',
+  modifiedAt: [2026, 7, 13, 10, 0, 0],
 }
 
 function renderPage(initialEntry = '/logs') {
@@ -54,6 +54,8 @@ describe('LogsPage', () => {
 
     await screen.findByLabelText('日志内容')
     expect(apiClient.get).toHaveBeenCalledWith('/logs/system', { params: { lines: 500 } })
+    expect(screen.getByText('1.5 KB')).toBeInTheDocument()
+    expect(screen.getByText('2026-07-13 10:00:00')).toBeInTheDocument()
   })
 
   it('initializes Instance mode from the query parameter and preserves the opaque ID', async () => {
