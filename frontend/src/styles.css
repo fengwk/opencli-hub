@@ -670,6 +670,7 @@ input[type='file']::file-selector-button:hover {
 
 .card-description {
   margin: 6px 0 0;
+  overflow-wrap: anywhere;
   color: var(--color-text-muted);
   font-size: 13px;
   line-height: 1.5;
@@ -1588,6 +1589,8 @@ input[type='file']::file-selector-button:hover {
 }
 
 .command-card {
+  /* Allow a scrollable curl template to shrink within the command-list grid. */
+  min-width: 0;
   padding: 15px;
 }
 
@@ -2076,6 +2079,14 @@ input[type='file']::file-selector-button:hover {
 
   .page-header-actions > .btn {
     width: 100%;
+  }
+
+  .command-card-header {
+    align-items: stretch;
+  }
+
+  .command-card-header > div {
+    min-width: 0;
   }
 
   .page-title {
