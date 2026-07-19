@@ -18,9 +18,9 @@ vi.mock('@/shared/api/client', () => ({
 
 const dateSummary: ResourceDateSummary = {
   date: '2026-07-13',
-  groupCount: 1,
-  fileCount: 1,
-  totalSize: 1536,
+  groupCount: '1',
+  fileCount: '1',
+  totalSize: '1536',
 }
 
 const resource: ResourceItem = {
@@ -31,8 +31,8 @@ const resource: ResourceItem = {
   fileName: 'photo one.png',
   source: 'UPLOAD',
   mimeType: 'image/png',
-  size: 1536,
-  modifiedAt: '2026-07-13T10:00:00',
+  size: '1536',
+  modifiedAt: [2026, 7, 13, 10, 0, 0],
   contentUrl: '/api/resources/unused',
   downloadUrl: '/api/resources/unused',
 }
@@ -66,6 +66,8 @@ describe('ResourcesPage', () => {
 
     expect(await screen.findByRole('button', { name: /^2026-07-13/ })).toBeInTheDocument()
     expect(await screen.findByText('nested/photo one.png')).toBeInTheDocument()
+    expect(screen.getByText('1 组 · 1 文件 · 1.5 KB')).toBeInTheDocument()
+    expect(screen.getByText('image/png · 1.5 KB · 2026-07-13 10:00:00')).toBeInTheDocument()
     expect(screen.getByText('UPLOAD', { selector: '.badge' })).toBeInTheDocument()
     expect(apiClient.get).toHaveBeenCalledWith('/resources', {
       params: {

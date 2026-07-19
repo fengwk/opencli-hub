@@ -12,6 +12,8 @@ import {
   uploadResources,
 } from '@/features/resources/resources-api'
 import type { ResourceFilters, ResourceItem } from '@/features/resources/types'
+import { formatBackendDateTime } from '@/shared/api/backend-date-time'
+import type { BackendLong } from '@/shared/api/contracts'
 import { ConfirmDialog, Empty, ErrorState, Loading, StatusBadge } from '@/shared/components'
 import { buildResourceUrl } from '@/shared/api/resource-url'
 
@@ -30,11 +32,13 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '请求失败，请稍后重试。'
 }
 
-function formatSize(size: number): string {
-  if (size < 1024) return `${size} B`
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
-  if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`
-  return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`
+function formatSize(size: BackendLong): string {
+  const numericSize = typeof size === 'number' ? size : Number(size)
+  if (!Number.isFinite(numericSize) || numericSize < 0) return '—'
+  if (numericSize < 1024) return `${numericSize} B`
+  if (numericSize < 1024 * 1024) return `${(numericSize / 1024).toFixed(1)} KB`
+  if (numericSize < 1024 * 1024 * 1024) return `${(numericSize / (1024 * 1024)).toFixed(1)} MB`
+  return `${(numericSize / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
 function deleteDescription(target: DeleteTarget): string {
@@ -226,7 +230,7 @@ export function ResourcesPage() {
                       <li className="resource-item" key={item.resourcePath}>
                         <div className="resource-item-details">
                           <strong>{item.relativePath || item.fileName}</strong>
-                          <span>{item.mimeType} · {formatSize(item.size)} · {item.modifiedAt}</span>
+                          <span>{item.mimeType} · {formatSize(item.size)} · {formatBackendDateTime(item.modifiedAt)}</span>
                         </div>
                         <StatusBadge status={item.source} tone={item.source === 'UPLOAD' ? 'info' : 'success'} />
                         <div className="resource-actions">

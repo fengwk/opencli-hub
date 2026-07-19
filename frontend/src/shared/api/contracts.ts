@@ -18,12 +18,15 @@ export interface ResultEnvelope<T> {
 export interface PageResult<T> {
   pageNumber: number
   pageSize: number
-  totalCount: number | string
+  totalCount: BackendLong
   results: T[]
 }
 
 /** Backend identifiers are opaque strings; callers must not parse or coerce them to numbers. */
 export type BackendId = string
+
+/** convention4j serializes Java long values as strings to preserve JavaScript precision. */
+export type BackendLong = number | string
 
 /**
  * Backend `LocalDateTime` values are serialized either as ISO strings or, under

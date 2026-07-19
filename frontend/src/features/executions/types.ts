@@ -1,4 +1,4 @@
-import type { BackendDateTime, BackendId } from '@/shared/api/contracts'
+import type { BackendDateTime, BackendId, BackendLong } from '@/shared/api/contracts'
 
 export type HubExecutionStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT'
 export type SiteSessionMode = 'EPHEMERAL' | 'PERSISTENT'
@@ -11,7 +11,7 @@ export interface ExecutionResource {
   fileName: string
   source: 'UPLOAD' | 'EXECUTION'
   mimeType: string
-  size: number
+  size: BackendLong
   modifiedAt: BackendDateTime
   contentUrl: string
   downloadUrl: string
@@ -34,13 +34,13 @@ export interface HubExecution {
   stderr: string | null
   stderrTruncated: boolean
   errorMessage: string | null
-  timeoutMillis: number
-  queuedMillis: number
-  durationMillis: number
+  timeoutMillis: BackendLong
+  queuedMillis: BackendLong
+  durationMillis: BackendLong
   resources: ExecutionResource[] | null
   queuedAt: BackendDateTime
-  startedAt: BackendDateTime
-  finishedAt: BackendDateTime
+  startedAt?: BackendDateTime
+  finishedAt?: BackendDateTime
 }
 
 export interface ExecutionListQuery {

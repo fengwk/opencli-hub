@@ -121,4 +121,27 @@ describe('ExecutionDetailPage', () => {
     expect(screen.getByRole('heading', { name: '错误输出' })).toBeInTheDocument()
     expect(screen.getByText('标准错误已截断')).toBeInTheDocument()
   })
+
+  it('renders convention4j stringified durations when lifecycle timestamps are omitted', async () => {
+    // Queued executions omit null lifecycle timestamps under convention4j NON_NULL serialization.
+    const pendingExecution: HubExecution = {
+      ...execution,
+      status: 'PENDING',
+      timeoutMillis: '30000',
+      queuedMillis: '0',
+      durationMillis: '0',
+      queuedAt: [2026, 7, 13, 10, 0, 0],
+    }
+    delete pendingExecution.startedAt
+    delete pendingExecution.finishedAt
+    vi.mocked(apiClient.get).mockResolvedValue(pendingExecution)
+
+    renderDetail()
+
+    await screen.findByRole('heading', { name: `执行记录 #${executionId}` })
+    expect(screen.getByText('超时').parentElement).toHaveTextContent('30000 ms')
+    expect(screen.getByText('入队时间').parentElement).toHaveTextContent('2026-07-13 10:00:00')
+    expect(screen.getByText('开始时间').parentElement).toHaveTextContent('—')
+    expect(screen.getByText('结束时间').parentElement).toHaveTextContent('—')
+  })
 })

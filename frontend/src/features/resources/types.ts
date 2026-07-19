@@ -1,11 +1,13 @@
+import type { BackendDateTime, BackendLong } from '@/shared/api/contracts'
+
 export type ResourceSource = 'UPLOAD' | 'EXECUTION'
 export type ResourceSort = 'MODIFIED_DESC' | 'MODIFIED_ASC' | 'SIZE_DESC' | 'SIZE_ASC' | 'NAME_ASC' | 'NAME_DESC'
 
 export interface ResourceDateSummary {
   date: string
-  groupCount: number
-  fileCount: number
-  totalSize: number
+  groupCount: BackendLong
+  fileCount: BackendLong
+  totalSize: BackendLong
 }
 
 export interface ResourceItem {
@@ -16,8 +18,8 @@ export interface ResourceItem {
   fileName: string
   source: ResourceSource
   mimeType: string
-  size: number
-  modifiedAt: string
+  size: BackendLong
+  modifiedAt: BackendDateTime
   contentUrl: string
   downloadUrl: string
 }

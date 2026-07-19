@@ -21,6 +21,7 @@ import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionDTO;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionRequestDTO;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionStatus;
+import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -150,6 +151,26 @@ class HubExecutionControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.id").value("103"))
             .andExpect(jsonPath("$.data.status").value("SUCCEEDED"));
+    }
+
+    /** The frontend contract must match convention4j long and null serialization exactly. */
+    @Test
+    void shouldSerializeExecutionWireContract() throws Exception {
+        HubExecutionDTO execution = execution("wire-contract", HubExecutionStatus.PENDING);
+        execution.setTimeoutMillis(1_800_000L);
+        execution.setQueuedMillis(125L);
+        execution.setDurationMillis(0L);
+        execution.setQueuedAt(LocalDateTime.of(2026, 7, 19, 18, 0));
+        when(executionService.getById("wire-contract")).thenReturn(execution);
+
+        mockMvc.perform(get("/api/executions/wire-contract"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.timeoutMillis").value("1800000"))
+            .andExpect(jsonPath("$.data.queuedMillis").value("125"))
+            .andExpect(jsonPath("$.data.durationMillis").value("0"))
+            .andExpect(jsonPath("$.data.queuedAt").exists())
+            .andExpect(jsonPath("$.data.startedAt").doesNotExist())
+            .andExpect(jsonPath("$.data.finishedAt").doesNotExist());
     }
 
     /** Missing execution details use a dedicated stable 404 code. */

@@ -28,6 +28,7 @@ import java.io.ByteArrayInputStream;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
@@ -94,17 +95,28 @@ class HubResourceControllerTest {
     void shouldBrowse() throws Exception {
         HubResourceDateSummaryDTO summary = new HubResourceDateSummaryDTO();
         summary.setDate("2026-07-13");
+        summary.setGroupCount(2L);
+        summary.setFileCount(3L);
+        summary.setTotalSize(1_536L);
+        HubResourceItemDTO resource = item("hello.txt");
+        resource.setSize(1_536L);
+        resource.setModifiedAt(LocalDateTime.of(2026, 7, 13, 10, 0));
         when(resourceService.listDateSummaries()).thenReturn(List.of(summary));
-        when(resourceService.listDay(any())).thenReturn(List.of(item("hello.txt")));
+        when(resourceService.listDay(any())).thenReturn(List.of(resource));
 
         mockMvc.perform(get("/api/resources/dates"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data[0].date").value("2026-07-13"));
+            .andExpect(jsonPath("$.data[0].date").value("2026-07-13"))
+            .andExpect(jsonPath("$.data[0].groupCount").value("2"))
+            .andExpect(jsonPath("$.data[0].fileCount").value("3"))
+            .andExpect(jsonPath("$.data[0].totalSize").value("1536"));
         mockMvc.perform(get("/api/resources").param("date", "2026-07-13")
                 .param("source", "UPLOAD").param("sort", "NAME_ASC")
                 .param("page", "1").param("pageSize", "20"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data[0].fileName").value("hello.txt"));
+            .andExpect(jsonPath("$.data[0].fileName").value("hello.txt"))
+            .andExpect(jsonPath("$.data[0].size").value("1536"))
+            .andExpect(jsonPath("$.data[0].modifiedAt").exists());
 
         ArgumentCaptor<HubResourceListRequest> captor =
             ArgumentCaptor.forClass(HubResourceListRequest.class);
