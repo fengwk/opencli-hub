@@ -267,7 +267,7 @@ opencli plugin install|update|list
 - 插件文件落在 `/var/lib/opencli/.opencli/`，随 opencli 数据卷持久化；
 - 同步成功后会自动刷新 Command Catalog；也可 `POST /api/plugins/reload-catalog`；
 - 同步可能耗时数分钟（clone/npm/transpile），Gateway timeout 需覆盖；
-- `autoUpdate` 目前只是配置标记，启动时不会自动拉取；
+- 新增/编辑 source 只保存配置；只有运维人员手动触发 source 操作才会运行官方 CLI；
 - 删除插件源配置默认**不会** uninstall 已安装插件。
 
 细节见 [OpenCLI 插件维护](plugins.md)。

@@ -1,6 +1,7 @@
-import { ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react'
+import { ChevronDown, ChevronUp, Copy, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
+import { buildCommandCurlTemplate } from '@/features/commands/curl-template'
 import { StatusBadge } from '@/shared/components'
 import type { HubCommand, OutputRuleUpdate, OutputTargetType } from '@/features/commands/types'
 
@@ -43,7 +44,10 @@ export function CommandCard({
   const [targetType, setTargetType] = useState<OutputTargetType>(command.outputRule?.targetType ?? 'DIRECTORY')
   const [fileName, setFileName] = useState(command.outputRule?.fileName ?? '')
   const [validationError, setValidationError] = useState<string | null>(null)
+  const [curlCopied, setCurlCopied] = useState(false)
+  const [curlCopyError, setCurlCopyError] = useState<string | null>(null)
   const detailsId = `command-details-${command.commandKey}`
+  const curlTemplate = buildCommandCurlTemplate(command)
 
   useEffect(() => {
     setBlacklistReason(command.blacklistReason ?? '')
@@ -51,6 +55,8 @@ export function CommandCard({
     setTargetType(command.outputRule?.targetType ?? 'DIRECTORY')
     setFileName(command.outputRule?.fileName ?? '')
     setValidationError(null)
+    setCurlCopied(false)
+    setCurlCopyError(null)
   }, [command])
 
   const outputRuleIsCompatible = hasCompatibleOutputRule(command)
@@ -87,6 +93,20 @@ export function CommandCard({
       fileName: targetType === 'FILE' ? normalizedFileName : null,
     })
     if (saved) setEditingOutputRule(false)
+  }
+
+  async function copyCurlTemplate() {
+    setCurlCopied(false)
+    setCurlCopyError(null)
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('浏览器不支持剪贴板写入，请使用 HTTPS 或 localhost。')
+      }
+      await navigator.clipboard.writeText(curlTemplate)
+      setCurlCopied(true)
+    } catch (error) {
+      setCurlCopyError(error instanceof Error ? error.message : '无法复制 curl 模板。')
+    }
   }
 
   return (
@@ -142,6 +162,19 @@ export function CommandCard({
               ))}
             </ul>
           ) : <p className="muted">该命令没有业务参数。</p>}
+        </section>
+
+        <section aria-label={`${command.commandKey} curl 模板`} className="command-section command-curl-section">
+          <div className="section-heading-row">
+            <h3>受控执行 curl</h3>
+            <button type="button" className="btn command-copy" onClick={() => void copyCurlTemplate()}>
+              <Copy aria-hidden="true" />{curlCopied ? '已复制' : '复制 curl 模板'}
+            </button>
+          </div>
+          <p className="muted">模板仅包含该命令的必填参数；替换尖括号占位符，并按 Gateway 配置补充认证。</p>
+          <pre className="command-curl-template"><code>{curlTemplate}</code></pre>
+          {curlCopyError ? <p className="inline-error" role="alert">{curlCopyError}</p> : null}
+          {curlCopied ? <p className="command-copy-notice" role="status">curl 模板已复制到本机剪贴板。</p> : null}
         </section>
 
         <section aria-label={`${command.commandKey} 黑名单`} className="command-section policy-section">

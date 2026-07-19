@@ -17,7 +17,7 @@ public interface HubPluginSourceMapper extends BaseMapper {
 
     @Select("""
         select id, name, source, desired_plugins_json as desiredPluginsJson,
-               enabled, auto_update as autoUpdate, last_status as lastStatus,
+               enabled, last_status as lastStatus,
                last_error as lastError, last_synced_at as lastSyncedAt,
                last_result_json as lastResultJson,
                gmt_create as createTime, gmt_modified as modifiedTime, version
@@ -28,7 +28,7 @@ public interface HubPluginSourceMapper extends BaseMapper {
 
     @Select("""
         select id, name, source, desired_plugins_json as desiredPluginsJson,
-               enabled, auto_update as autoUpdate, last_status as lastStatus,
+               enabled, last_status as lastStatus,
                last_error as lastError, last_synced_at as lastSyncedAt,
                last_result_json as lastResultJson,
                gmt_create as createTime, gmt_modified as modifiedTime, version
@@ -39,7 +39,7 @@ public interface HubPluginSourceMapper extends BaseMapper {
 
     @Select("""
         select id, name, source, desired_plugins_json as desiredPluginsJson,
-               enabled, auto_update as autoUpdate, last_status as lastStatus,
+               enabled, last_status as lastStatus,
                last_error as lastError, last_synced_at as lastSyncedAt,
                last_result_json as lastResultJson,
                gmt_create as createTime, gmt_modified as modifiedTime, version
@@ -50,10 +50,10 @@ public interface HubPluginSourceMapper extends BaseMapper {
 
     @Insert("""
         insert into hub_plugin_source
-        (id, name, source, desired_plugins_json, enabled, auto_update, last_status,
+        (id, name, source, desired_plugins_json, enabled, last_status,
          last_error, last_synced_at, last_result_json, gmt_create, gmt_modified, version)
         values
-        (#{id}, #{name}, #{source}, #{desiredPluginsJson}, #{enabled}, #{autoUpdate}, #{lastStatus},
+        (#{id}, #{name}, #{source}, #{desiredPluginsJson}, #{enabled}, #{lastStatus},
          #{lastError}, #{lastSyncedAt}, #{lastResultJson}, #{createTime}, #{modifiedTime}, #{version})
         """)
     int insert(HubPluginSourceDO source);
@@ -61,7 +61,7 @@ public interface HubPluginSourceMapper extends BaseMapper {
     @Update("""
         update hub_plugin_source
         set name = #{name}, source = #{source}, desired_plugins_json = #{desiredPluginsJson},
-            enabled = #{enabled}, auto_update = #{autoUpdate}, last_status = #{lastStatus},
+            enabled = #{enabled}, last_status = #{lastStatus},
             last_error = #{lastError}, last_synced_at = #{lastSyncedAt},
             last_result_json = #{lastResultJson}, gmt_modified = #{modifiedTime},
             version = version + 1

@@ -19,7 +19,6 @@ public class HubPluginSource {
     private String source;
     private List<String> desiredPlugins = new ArrayList<>();
     private boolean enabled = true;
-    private boolean autoUpdate;
     private HubPluginSourceStatus lastStatus = HubPluginSourceStatus.IDLE;
     private String lastError;
     private LocalDateTime lastSyncedAt;

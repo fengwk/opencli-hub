@@ -41,6 +41,9 @@ public class HubPluginService {
         "^https?://github\\.com/([\\w.-]+)/([\\w.-]+)/?$",
         Pattern.CASE_INSENSITIVE);
     private static final Pattern PLUGIN_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$");
+    private static final String EMPTY_PLUGIN_LIST_MESSAGE = """
+        No plugins installed.
+        Install one with: opencli plugin install github:user/repo""";
 
     private final HubPluginSourceRepository repository;
     private final OpenCliPluginCli pluginCli;
@@ -174,6 +177,9 @@ public class HubPluginService {
             throw HubErrorCodes.PLUGIN_CLI_FAILED.asThrowable(
                 "opencli plugin list failed: " + firstNonBlank(list.stderr(), list.stdout()));
         }
+        if (isOfficialEmptyPluginListOutput(list.stdout())) {
+            return List.of();
+        }
         try {
             JsonNode plugins = JSON_MAPPER.readTree(list.stdout());
             if (plugins == null || !plugins.isArray()) {
@@ -271,7 +277,6 @@ public class HubPluginService {
         target.setSource(source);
         target.setDesiredPlugins(desired);
         target.setEnabled(request.getEnabled() == null || Boolean.TRUE.equals(request.getEnabled()));
-        target.setAutoUpdate(Boolean.TRUE.equals(request.getAutoUpdate()));
         return target;
     }
 
@@ -364,6 +369,14 @@ public class HubPluginService {
         return fallback;
     }
 
+    private static boolean isOfficialEmptyPluginListOutput(String stdout) {
+        if (stdout == null) {
+            return false;
+        }
+        String normalized = stdout.trim().replace("\r\n", "\n").replace('\r', '\n');
+        return EMPTY_PLUGIN_LIST_MESSAGE.equals(normalized);
+    }
+
     private static String text(JsonNode node, String field) {
         JsonNode value = node == null ? null : node.get(field);
         return value != null && value.isTextual() ? value.asText().trim() : "";
@@ -410,7 +423,6 @@ public class HubPluginService {
         dto.setSource(source.getSource());
         dto.setDesiredPlugins(source.getDesiredPlugins());
         dto.setEnabled(source.isEnabled());
-        dto.setAutoUpdate(source.isAutoUpdate());
         dto.setLastStatus(source.getLastStatus());
         dto.setLastError(source.getLastError());
         dto.setLastSyncedAt(source.getLastSyncedAt());

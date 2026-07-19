@@ -8,7 +8,6 @@ export interface HubPluginSource {
   source: string
   desiredPlugins: string[] | null
   enabled: boolean
-  autoUpdate: boolean
   lastStatus: HubPluginSourceStatus
   lastError: string | null
   lastSyncedAt: BackendDateTime
@@ -21,7 +20,6 @@ export interface HubPluginSourceUpsert {
   source: string
   desiredPlugins: string[]
   enabled: boolean
-  autoUpdate: boolean
 }
 
 export interface HubInstalledPlugin {

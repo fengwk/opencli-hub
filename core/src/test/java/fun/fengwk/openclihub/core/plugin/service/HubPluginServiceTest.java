@@ -117,6 +117,22 @@ class HubPluginServiceTest {
         assertThat(installed.get(0).getRaw()).isEqualTo("chatgpt-agent @0.1.2 — Protocol stream (ask)");
     }
 
+    /** The official CLI prints this exact human message instead of JSON for an empty list. */
+    @Test
+    void shouldTreatOfficialEmptyPluginListMessageAsEmptyList() {
+        OpenCliPluginCli pluginCli = mock(OpenCliPluginCli.class);
+        HubPluginService service = new HubPluginService(
+            mock(HubPluginSourceRepository.class),
+            pluginCli,
+            mock(OpenCliCommandCatalog.class));
+        when(pluginCli.run(List.of("list", "-f", "json"))).thenReturn(new OpenCliPluginCli.CliResult(
+            0,
+            "No plugins installed.\nInstall one with: opencli plugin install github:user/repo\n",
+            ""));
+
+        assertThat(service.listInstalled()).isEmpty();
+    }
+
     /** A malformed successful CLI payload must fail closed rather than appearing as fabricated plugins. */
     @Test
     void shouldRejectMalformedInstalledPluginJson() {

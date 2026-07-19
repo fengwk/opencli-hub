@@ -24,6 +24,20 @@ function parseDesiredPlugins(value: string): string[] {
     .filter(Boolean)
 }
 
+function sourceStatusLabel(status: HubPluginSource['lastStatus']): string {
+  const labels: Record<HubPluginSource['lastStatus'], string> = {
+    IDLE: '尚未同步',
+    SYNCING: '同步中',
+    SUCCEEDED: '已同步',
+    FAILED: '同步失败',
+  }
+  return labels[status]
+}
+
+function sourceSyncActionLabel(source: HubPluginSource): string {
+  return (source.desiredPlugins ?? []).length ? '安装/更新已选子插件' : '安装默认集合'
+}
+
 function SourceForm({
   initial,
   busy,
@@ -39,7 +53,6 @@ function SourceForm({
   const [source, setSource] = useState(initial?.source ?? '')
   const [desiredPluginsText, setDesiredPluginsText] = useState((initial?.desiredPlugins ?? []).join('\n'))
   const [enabled, setEnabled] = useState(initial?.enabled ?? true)
-  const [autoUpdate, setAutoUpdate] = useState(initial?.autoUpdate ?? false)
   const [validationError, setValidationError] = useState<string | null>(null)
 
   async function handleSubmit(event: FormEvent) {
@@ -54,12 +67,11 @@ function SourceForm({
       source: source.trim(),
       desiredPlugins: parseDesiredPlugins(desiredPluginsText),
       enabled,
-      autoUpdate,
     })
   }
 
   return (
-    <form className="settings-form" noValidate onSubmit={(event) => void handleSubmit(event)}>
+    <form className="settings-form plugin-source-form" noValidate onSubmit={(event) => void handleSubmit(event)}>
       <label>
         名称
         <input value={name} disabled={busy} onChange={(event) => setName(event.target.value)} />
@@ -82,17 +94,14 @@ function SourceForm({
           onChange={(event) => setDesiredPluginsText(event.target.value)}
         />
       </label>
-      <label className="logs-auto-refresh">
+      <label className="plugin-source-toggle">
         <input type="checkbox" checked={enabled} disabled={busy} onChange={(event) => setEnabled(event.target.checked)} />
-        启用
+        <span>启用插件源</span>
       </label>
-      <label className="logs-auto-refresh">
-        <input type="checkbox" checked={autoUpdate} disabled={busy} onChange={(event) => setAutoUpdate(event.target.checked)} />
-        标记为可自动更新（MVP 仅保存配置）
-      </label>
+      <p className="plugin-source-form-help">保存只记录 source 配置；保存后手动执行 source 操作才会运行官方 OpenCLI plugin CLI。</p>
       {validationError ? <p className="page-error" role="alert">{validationError}</p> : null}
       <div className="logs-actions">
-        <button type="submit" className="btn btn-primary" disabled={busy}>{initial ? '保存' : '创建'}</button>
+        <button type="submit" className="btn btn-primary" disabled={busy}>保存配置</button>
         <button type="button" className="btn" disabled={busy} onClick={onCancel}>取消</button>
       </div>
     </form>
@@ -168,7 +177,7 @@ export function PluginsPage() {
         <p className="eyebrow">MAINTENANCE</p>
         <h1 className="page-title">插件维护</h1>
         <p className="page-subtitle">
-          配置 OpenCLI 插件源并通过官方 `opencli plugin install/update/list` 同步。Hub 只负责配置、触发与 Catalog 刷新。
+          保存 source 配置后，手动执行 source 操作，通过官方 `opencli plugin install/update/list` 同步。Hub 不执行后台自动更新。
         </p>
       </header>
 
@@ -208,7 +217,7 @@ export function PluginsPage() {
         <section className="execution-section" key={source.id}>
           <div className="section-heading-row">
             <h2>{source.name}</h2>
-            <StatusBadge status={source.lastStatus} />
+            <StatusBadge status={source.lastStatus} label={sourceStatusLabel(source.lastStatus)} />
           </div>
           {editingId === source.id ? (
             <SourceForm
@@ -223,13 +232,12 @@ export function PluginsPage() {
                 <div><dt>Source</dt><dd className="mono-value">{source.source}</dd></div>
                 <div><dt>子插件</dt><dd>{(source.desiredPlugins ?? []).length ? (source.desiredPlugins ?? []).join(', ') : '（默认集合）'}</dd></div>
                 <div><dt>启用</dt><dd>{source.enabled ? '是' : '否'}</dd></div>
-                <div><dt>自动更新标记</dt><dd>{source.autoUpdate ? '是' : '否'}</dd></div>
                 <div><dt>最近错误</dt><dd>{source.lastError || '—'}</dd></div>
               </dl>
               {source.lastResult ? <pre className="execution-output">{source.lastResult}</pre> : null}
               <div className="logs-actions">
                 <button type="button" className="btn btn-primary" disabled={busy || !source.enabled} onClick={() => syncMutation.mutate(source.id)}>
-                  同步
+                  {sourceSyncActionLabel(source)}
                 </button>
                 <button type="button" className="btn" disabled={busy} onClick={() => { setEditingId(source.id); setCreating(false) }}>
                   编辑
@@ -244,7 +252,8 @@ export function PluginsPage() {
       ))}
 
       <section className="execution-section">
-        <h2>当前已安装插件（opencli plugin list -f json）</h2>
+        <h2>当前已安装插件（运行时）</h2>
+        <p className="muted">此处只显示运行时实际安装的插件；仅保存 source 配置不会出现在列表中。</p>
         {installedQuery.isPending ? <Loading label="正在读取已安装插件…" /> : null}
         {installedQuery.isError ? (
           <ErrorState title="无法读取已安装插件" description={errorMessage(installedQuery.error)} onRetry={() => void installedQuery.refetch()} />

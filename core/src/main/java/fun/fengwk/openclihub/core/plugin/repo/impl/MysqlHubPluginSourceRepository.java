@@ -69,7 +69,6 @@ public class MysqlHubPluginSourceRepository implements HubPluginSourceRepository
         target.setSource(source.getSource());
         target.setDesiredPluginsJson(writeJson(source.getDesiredPlugins()));
         target.setEnabled(source.isEnabled());
-        target.setAutoUpdate(source.isAutoUpdate());
         target.setLastStatus(source.getLastStatus() == null
             ? HubPluginSourceStatus.IDLE.name() : source.getLastStatus().name());
         target.setLastError(source.getLastError());
@@ -91,7 +90,6 @@ public class MysqlHubPluginSourceRepository implements HubPluginSourceRepository
         target.setSource(source.getSource());
         target.setDesiredPlugins(readStringList(source.getDesiredPluginsJson()));
         target.setEnabled(Boolean.TRUE.equals(source.getEnabled()));
-        target.setAutoUpdate(Boolean.TRUE.equals(source.getAutoUpdate()));
         target.setLastStatus(source.getLastStatus() == null
             ? HubPluginSourceStatus.IDLE : HubPluginSourceStatus.valueOf(source.getLastStatus()));
         target.setLastError(source.getLastError());

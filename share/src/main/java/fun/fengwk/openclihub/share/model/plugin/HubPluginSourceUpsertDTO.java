@@ -25,6 +25,4 @@ public class HubPluginSourceUpsertDTO {
 
     private Boolean enabled;
 
-    private Boolean autoUpdate;
-
 }

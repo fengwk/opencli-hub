@@ -89,9 +89,10 @@ Hub 配置的 `desiredPlugins` 是**子插件名**（如 `crm`），不是任意
 | `source` | 官方 source：`github:org/repo`、`github:org/repo/sub`、`https://...`、`file://...` |
 | `desiredPlugins` | 子插件名列表；空表示 `opencli plugin install <source>` 的默认集合。非空时仅支持 `github:org/repo` 或规范 GitHub URL `https://github.com/org/repo[.git]`，Hub 会转换为官方 `github:org/repo/sub` 语法。 |
 | `enabled` | 是否允许同步 |
-| `autoUpdate` | 配置标记；MVP **不会**在启动时自动拉取 |
 
 ### 同步行为
+
+新增或编辑 source 只保存配置。运维人员在管理页执行 source 操作或调用 sync API 时，Hub 才会运行官方 CLI；不存在后台自动安装或自动更新。空 `desiredPlugins` 的 source 只安装默认集合；显式子插件 source 才会先更新已装子插件、再安装缺失项。
 
 ```text
 desired 为空:
@@ -146,8 +147,7 @@ curl -sS -X POST "$HUB_URL/api/plugins/sources" \
     "name":"github-trending",
     "source":"github:ByteYue/opencli-plugin-github-trending",
     "desiredPlugins":[],
-    "enabled":true,
-    "autoUpdate":false
+    "enabled":true
   }'
 
 curl -sS -X POST "$HUB_URL/api/plugins/sources/<id>/sync"
@@ -163,8 +163,7 @@ curl -sS -X POST "$HUB_URL/api/plugins/sources" \
     "name":"company-plugins",
     "source":"github:your-org/opencli-plugins",
     "desiredPlugins":["crm","weather"],
-    "enabled":true,
-    "autoUpdate":false
+    "enabled":true
   }'
 ```
 
@@ -177,10 +176,9 @@ curl -sS -X POST "$HUB_URL/api/plugins/sources" \
 Source: https://github.com/fengwk/my-opencli
 Desired plugins: chatgpt-agent
 Enabled: true
-Auto update: false
 ```
 
-保存后点击同步，首次安装等价于：
+保存后点击“安装/更新已选子插件”，首次安装等价于：
 
 ```bash
 opencli plugin install github:fengwk/my-opencli/chatgpt-agent
@@ -204,9 +202,9 @@ pin；远程首次安装和后续 update 仍使用仓库默认分支。`plugins.
 | 前端 sync 超时 | Gateway/浏览器 timeout；后端默认 CLI 超时 300s |
 | 容器重建后插件还在 | 确认 `/var/lib/opencli` 卷未丢 |
 
-## 7. MVP 未包含
+## 7. 未包含
 
-- 启动时按 `autoUpdate` 自动同步
+- 后台定时拉取或自动更新（每次安装/更新均需由运维人员手动触发）
 - 删除配置时自动 uninstall
 - 私有 Git 凭据管理 UI
 - 任意仓库 path 自由映射（仅 monorepo 子插件名）

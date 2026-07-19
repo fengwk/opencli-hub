@@ -59,7 +59,10 @@ function renderPage() {
   )
 }
 
-afterEach(() => vi.clearAllMocks())
+afterEach(() => {
+  Reflect.deleteProperty(navigator, 'clipboard')
+  vi.clearAllMocks()
+})
 
 describe('CommandsPage', () => {
   it('keeps command policy details unmounted until the compact card is expanded', async () => {
@@ -83,6 +86,27 @@ describe('CommandsPage', () => {
     await user.click(expand)
     expect(screen.getByRole('button', { name: '收起详情与策略' })).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByText('--output')).toBeInTheDocument()
+  })
+
+  it('copies a Hub-controlled curl template from expanded command details', async () => {
+    // The template must use the public controlled endpoint instead of exposing a direct CLI invocation.
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    vi.mocked(apiClient.get).mockResolvedValue([command])
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'demo/search' })
+    await user.click(screen.getByRole('button', { name: '查看详情与策略' }))
+    await user.click(screen.getByRole('button', { name: '复制 curl 模板' }))
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"<HUB_URL>/api/opencli/execute"'))
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"argv": [\n    "demo",\n    "search"'))
+    expect(screen.getByText('curl 模板已复制到本机剪贴板。')).toBeInTheDocument()
   })
 
   it('keeps the full website catalogue while filtering commands locally', async () => {

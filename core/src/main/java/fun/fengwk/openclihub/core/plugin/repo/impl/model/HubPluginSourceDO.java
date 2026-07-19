@@ -16,7 +16,6 @@ public class HubPluginSourceDO {
     private String source;
     private String desiredPluginsJson;
     private Boolean enabled;
-    private Boolean autoUpdate;
     private String lastStatus;
     private String lastError;
     private LocalDateTime lastSyncedAt;
