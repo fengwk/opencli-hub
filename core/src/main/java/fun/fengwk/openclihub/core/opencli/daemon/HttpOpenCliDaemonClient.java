@@ -26,10 +26,14 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
     static final String X_OPEN_CLI_HEADER = "X-OpenCLI";
     static final String X_OPEN_CLI_VALUE = "1";
 
+    /** Bounded timeout for CAS recovery so a stalled daemon cannot block Hub cleanup. */
+    static final Duration DEFAULT_RECOVERY_TIMEOUT = Duration.ofSeconds(7);
+
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final OpenCliHubProperties properties;
     private final Duration requestTimeout;
+    private final Duration recoveryTimeout;
     private final Duration bootstrapTimeout;
     private final Duration bootstrapPoll;
     private final URI baseUri;
@@ -48,6 +52,7 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
             newHttp11Client(),
             ProcessProcessRunner.DEFAULT,
             Duration.ofSeconds(2),
+            DEFAULT_RECOVERY_TIMEOUT,
             Duration.ofSeconds(30),
             Duration.ofMillis(100));
     }
@@ -66,6 +71,7 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
             httpClient,
             processRunner,
             requestTimeout,
+            DEFAULT_RECOVERY_TIMEOUT,
             bootstrapTimeout,
             bootstrapPoll);
     }
@@ -79,12 +85,34 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
         Duration requestTimeout,
         Duration bootstrapTimeout,
         Duration bootstrapPoll) {
+        this(properties,
+            baseUri,
+            objectMapper,
+            httpClient,
+            processRunner,
+            requestTimeout,
+            DEFAULT_RECOVERY_TIMEOUT,
+            bootstrapTimeout,
+            bootstrapPoll);
+    }
+
+    public HttpOpenCliDaemonClient(
+        OpenCliHubProperties properties,
+        URI baseUri,
+        ObjectMapper objectMapper,
+        HttpClient httpClient,
+        ProcessProcessRunner processRunner,
+        Duration requestTimeout,
+        Duration recoveryTimeout,
+        Duration bootstrapTimeout,
+        Duration bootstrapPoll) {
         this.properties = properties;
         this.baseUri = baseUri;
         this.objectMapper = objectMapper;
         this.httpClient = httpClient;
         this.processRunner = processRunner;
         this.requestTimeout = requestTimeout;
+        this.recoveryTimeout = recoveryTimeout;
         this.bootstrapTimeout = bootstrapTimeout;
         this.bootstrapPoll = bootstrapPoll;
     }
@@ -110,28 +138,87 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
             .header("Accept", "application/json")
             .GET()
             .build();
-        HttpResponse<String> response;
-        try {
-            response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        } catch (IOException ex) {
-            throw new OpenCliDaemonException("daemon /status connection failed: " + ex.getMessage(), ex);
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new OpenCliDaemonException("interrupted while reading /status", ex);
-        }
+        HttpResponse<String> response = send(request, "/status");
         if (response.statusCode() / 100 != 2) {
             throw new OpenCliDaemonException(
                 "daemon /status returned HTTP " + response.statusCode());
         }
         try {
             OpenCliDaemonStatus status = objectMapper.readValue(response.body(), OpenCliDaemonStatus.class);
-            if (status != null && status.getProfiles() == null) {
+            if (status == null) {
+                throw new OpenCliDaemonException("daemon /status returned empty body");
+            }
+            if (status.getProfiles() == null) {
                 status.setProfiles(java.util.List.of());
+            }
+            if (status.getCapabilities() == null) {
+                status.setCapabilities(java.util.List.of());
+            }
+            if (status.getSessionLeases() == null) {
+                status.setSessionLeases(java.util.List.of());
             }
             return status;
         } catch (IOException ex) {
             throw new OpenCliDaemonException("failed to parse daemon /status JSON", ex);
         }
+    }
+
+    @Override
+    public OpenCliSessionLeaseRecoverResponse recoverSessionLease(
+        OpenCliSessionLeaseRecoverRequest request) {
+        if (request == null) {
+            throw new OpenCliDaemonException("session lease recovery request is required");
+        }
+        String body;
+        try {
+            body = objectMapper.writeValueAsString(request);
+        } catch (IOException ex) {
+            throw new OpenCliDaemonException("failed to serialize session lease recovery request", ex);
+        }
+        HttpRequest httpRequest = HttpRequest.newBuilder(baseUri.resolve("/session-leases/recover"))
+            .timeout(recoveryTimeout)
+            .header(X_OPEN_CLI_HEADER, X_OPEN_CLI_VALUE)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build();
+        HttpResponse<String> response = send(httpRequest, "/session-leases/recover");
+        if (response.statusCode() / 100 != 2) {
+            throw new OpenCliDaemonException(
+                "daemon /session-leases/recover returned HTTP " + response.statusCode());
+        }
+        try {
+            OpenCliSessionLeaseRecoverResponse parsed = objectMapper.readValue(
+                response.body(), OpenCliSessionLeaseRecoverResponse.class);
+            if (!isValidRecoverResponse(parsed)) {
+                throw new OpenCliDaemonException(
+                    "daemon /session-leases/recover returned an invalid response body");
+            }
+            return parsed;
+        } catch (IOException ex) {
+            throw new OpenCliDaemonException(
+                "failed to parse daemon /session-leases/recover JSON", ex);
+        }
+    }
+
+    private HttpResponse<String> send(HttpRequest request, String endpoint) {
+        try {
+            return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (IOException ex) {
+            throw new OpenCliDaemonException(
+                "daemon " + endpoint + " connection failed: " + ex.getMessage(), ex);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new OpenCliDaemonException("interrupted while calling " + endpoint, ex);
+        }
+    }
+
+    private static boolean isValidRecoverResponse(OpenCliSessionLeaseRecoverResponse response) {
+        return response != null
+            && response.getOk() != null
+            && OpenCliSessionLeaseRecoverResponse.isKnownResult(response.getResult())
+            && response.getTabReset() != null
+            && response.getCancelledPending() != null;
     }
 
     @Override

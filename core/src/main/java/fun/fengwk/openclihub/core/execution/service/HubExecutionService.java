@@ -195,7 +195,7 @@ public class HubExecutionService {
             remainingMillis = deadline.remainingMillis();
             OpenCliExecutionResult result = remainingMillis <= 0
                 ? timedOutResult("Execution deadline elapsed before OpenCLI start")
-                : executor.execute(instance, managedArgv, remainingMillis);
+                : executor.execute(instance, managedArgv, remainingMillis, execution.getId());
             validateJsonOutput(result);
             execution.markFinished(result, LocalDateTime.now());
         } catch (RuntimeException ex) {

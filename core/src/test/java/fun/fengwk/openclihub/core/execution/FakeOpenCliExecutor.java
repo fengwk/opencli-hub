@@ -50,9 +50,11 @@ public class FakeOpenCliExecutor implements OpenCliExecutor {
     }
 
     @Override
-    public OpenCliExecutionResult execute(HubInstance instance, List<String> hubManagedArgv, long timeoutMillis) {
+    public OpenCliExecutionResult execute(
+        HubInstance instance, List<String> hubManagedArgv, long timeoutMillis, String executionId) {
         invocationCount.incrementAndGet();
-        Invocation inv = new Invocation(instance, java.util.List.copyOf(hubManagedArgv), timeoutMillis);
+        Invocation inv = new Invocation(
+            instance, java.util.List.copyOf(hubManagedArgv), timeoutMillis, executionId);
         invocations.add(inv);
         if (spawnProcessFactory != null) {
             return executeWithProcessFactory(hubManagedArgv, timeoutMillis, inv);
@@ -113,11 +115,13 @@ public class FakeOpenCliExecutor implements OpenCliExecutor {
         public final HubInstance instance;
         public final List<String> argv;
         public final long timeoutMillis;
+        public final String executionId;
 
-        Invocation(HubInstance instance, List<String> argv, long timeoutMillis) {
+        Invocation(HubInstance instance, List<String> argv, long timeoutMillis, String executionId) {
             this.instance = instance;
             this.argv = argv;
             this.timeoutMillis = timeoutMillis;
+            this.executionId = executionId;
         }
     }
 

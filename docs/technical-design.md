@@ -58,7 +58,7 @@
 | SQL | MyBatis Auto Mapper 生成常规 SQL；H2/MySQL 通过 Spring SQL initialization 幂等初始化当前 schema/data；旧 MySQL schema 手工迁移 |
 | 浏览器 | 正式 `google-chrome-stable`，非 Chromium/Chrome for Testing |
 | extension | 由 artifact lock 固定，当前 fork 1.0.24；构建期打包固定签名 CRX3，运行时通过 Linux managed policy + loopback update server 强制安装 |
-| OpenCLI | 由 artifact lock 固定，当前 fork 1.8.7-fengwk.2；Hub 通过 `ProcessBuilder` 调用，不在 Hub 内修改 CLI |
+| OpenCLI | 由 artifact lock 固定，当前 fork 1.8.7-fengwk.3；Hub 通过 `ProcessBuilder` 调用，不在 Hub 内修改 CLI |
 | daemon | 单容器共享一个 OpenCLI daemon |
 | Instance 创建 | 同步创建，成功后才插入数据库；失败清理全部残留 |
 | Instance 创建完成 | Chrome 保持运行，数据库状态为 `RUNNING` |
@@ -935,6 +935,31 @@ X-OpenCLI: 1
 
 不通过解析 `opencli daemon status` 的人类文本获取 profile。
 
+### 15.3 Persistent write session lease recovery
+
+Hub 为每个实际启动的 OpenCLI 子进程注入唯一 owner：
+
+```text
+OPENCLI_RUN_OWNER=opencli-hub:<instanceId>:<executionId>
+```
+
+当 Hub 已完成该子进程及其 descendants 的 cleanup，且原因是执行 deadline、输出 drain deadline
+或 caller interruption 时，Hub 才执行 best-effort recovery：
+
+```text
+GET /status (X-OpenCLI: 1)
+-> require capability session-recover-v1
+-> select only ACTIVE lease whose owner exactly equals OPENCLI_RUN_OWNER
+-> POST /session-leases/recover with status identity + expectedRunId
+   and mode=CANCEL_AND_RESET
+```
+
+daemon 是 lease 的唯一真相源；`expectedRunId` 是 CAS fence。Hub 不根据 PID、TTL 或 stderr
+推断 ownership，不碰 `RECOVERING` lease，不重启全局 daemon，不自动重试 recovery，也绝不重放
+原 write command。缺 capability、status/recovery HTTP 失败或 `OWNER_CHANGED` 都 fail closed：保留原
+Execution 的 timeout/failed terminal result。`RESET_FAILED` 保持 daemon lease fenced，等待人工处理或
+只重启受影响 Chrome profile。
+
 ## 16. Instance 创建
 
 ### 16.1 API 语义
@@ -1358,6 +1383,7 @@ process.destroy()
 -> wait process-stop-grace-millis
 -> destroy descendants
 -> process.destroyForcibly()
+-> capability-gated exact-owner session recovery
 -> status TIMED_OUT
 ```
 

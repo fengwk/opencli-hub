@@ -179,9 +179,9 @@ workflow 共用该文件，因此官方 baseline 与已发布 fork Release 的�
 
 ```text
 package=@jackwener/opencli
-CLI version=1.8.7-fengwk.2
+CLI version=1.8.7-fengwk.3
 extension version=1.0.24
-source revision=fengwk/OpenCLI@f148a7a9ed066000cf72c76e064f3b0cbdcf76d3
+source revision=fengwk/OpenCLI@df693d324e97a1201cebb7d246c34009b49eaa27
 ```
 
 升级或切换 fork 时：
@@ -194,18 +194,18 @@ source revision=fengwk/OpenCLI@f148a7a9ed066000cf72c76e064f3b0cbdcf76d3
 4. 构建后确认镜像内 `/opt/opencli/artifact-build-info.json` 反映解析结果；smoke 会比较
    `opencli --version` 与该文件中的 `cli.version`。
 
-当前 fork Release（tag `fork-v1.8.7-fengwk.2`，CLI `1.8.7-fengwk.2` + extension `1.0.24`）：
+当前 fork Release（tag `fork-v1.8.7-fengwk.3`，CLI `1.8.7-fengwk.3` + extension `1.0.24`）：
 
 ```bash
 # scripts/docker/opencli-artifact.lock.env
 OPENCLI_PACKAGE=@jackwener/opencli
-OPENCLI_VERSION=1.8.7-fengwk.2
-OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.2/jackwener-opencli-1.8.7-fengwk.2.tgz
-OPENCLI_CLI_SHA256=548cdfcab750ca8d7477309f1197f871c83b2ca79fb4f552dc95c95fdd75773d
-OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@f148a7a9ed066000cf72c76e064f3b0cbdcf76d3
+OPENCLI_VERSION=1.8.7-fengwk.3
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.3/jackwener-opencli-1.8.7-fengwk.3.tgz
+OPENCLI_CLI_SHA256=05c5ec2bcfea81bb44d1cdae6958ff6c83019ed4aeed86b22d8c8c0d2856dc2c
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@df693d324e97a1201cebb7d246c34009b49eaa27
 EXTENSION_VERSION=1.0.24
-OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.2/opencli-extension-v1.0.24.zip
-OPENCLI_EXTENSION_SHA256=977c39ed4dc53353256190740a84389c9ca4f89d873de8762b8d14566b959c87
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.3/opencli-extension-v1.0.24.zip
+OPENCLI_EXTENSION_SHA256=f3b65ff894fe4679dd6a8723dd463ca035c8cf5bc0ee36dd402dc90fc0c7f844
 ```
 
 可选 build-arg 仅覆盖**单次构建**，不改变仓库默认 pin：

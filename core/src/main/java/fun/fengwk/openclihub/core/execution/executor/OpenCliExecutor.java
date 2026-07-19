@@ -19,7 +19,12 @@ public interface OpenCliExecutor {
      * return a captured process result. Stdout and stderr are read concurrently so neither
      * can block the other; process exit and both stream drains share one deadline, and both
      * streams are truncated to the configured capture cap.
+     *
+     * <p>{@code executionId} is the Hub execution id used only to build
+     * {@code OPENCLI_RUN_OWNER=opencli-hub:&lt;instanceId&gt;:&lt;executionId&gt;} for the
+     * spawned process. It must never come from user argv.
      */
-    OpenCliExecutionResult execute(HubInstance instance, List<String> hubManagedArgv, long timeoutMillis);
+    OpenCliExecutionResult execute(
+        HubInstance instance, List<String> hubManagedArgv, long timeoutMillis, String executionId);
 
 }

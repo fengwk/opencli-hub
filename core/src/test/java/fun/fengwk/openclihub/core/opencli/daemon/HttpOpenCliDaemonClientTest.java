@@ -49,14 +49,126 @@ class HttpOpenCliDaemonClientTest {
     void shouldFetchStatusAndParseProfiles() {
         server.setStatusBody("{\"ok\":true,\"pid\":42,\"daemonVersion\":\"v1.8.6\","
             + "\"profiles\":[{\"contextId\":\"ctx-a\",\"extensionConnected\":true,"
-            + "\"extensionVersion\":\"v1.0.22\",\"lastSeenAt\":1783872000123}]}");
+            + "\"extensionVersion\":\"v1.0.22\",\"lastSeenAt\":1783872000123}],"
+            + "\"capabilities\":[\"session-lease-v1\",\"session-recover-v1\"],"
+            + "\"sessionLeases\":[{\"contextId\":\"ctx-a\",\"surface\":\"adapter\","
+            + "\"session\":\"site:chatgpt\",\"runId\":\"run-1\","
+            + "\"owner\":\"opencli-hub:i1:e1\",\"pendingCount\":1,\"state\":\"ACTIVE\"}]}");
         OpenCliDaemonStatus status = client.fetchStatus();
         assertThat(status.getPid()).isEqualTo(42L);
         assertThat(status.getDaemonVersion()).isEqualTo("v1.8.6");
         assertThat(status.connectedContextIds()).containsExactly("ctx-a");
         assertThat(status.getProfiles().get(0).getLastSeenAt()).isEqualTo(1783872000123L);
+        assertThat(status.getCapabilities())
+            .containsExactly("session-lease-v1", "session-recover-v1");
+        assertThat(status.getSessionLeases()).hasSize(1);
+        assertThat(status.getSessionLeases().get(0).getOwner()).isEqualTo("opencli-hub:i1:e1");
+        assertThat(status.getSessionLeases().get(0).getState()).isEqualTo("ACTIVE");
+        assertThat(status.getSessionLeases().get(0).getRunId()).isEqualTo("run-1");
         assertThat(server.lastHeaders()).contains("x-opencli: 1");
         assertThat(server.lastHeaders()).noneMatch(header -> header.startsWith("upgrade:"));
+    }
+
+    @Test
+    void shouldPostSessionLeaseRecoverWithOpenCliHeaderAndJsonBody() {
+        server.setRecoverBody(
+            "{\"ok\":true,\"result\":\"RECOVERED\",\"runId\":\"run-1\","
+                + "\"tabReset\":true,\"cancelledPending\":2}");
+        OpenCliSessionLeaseRecoverRequest request = new OpenCliSessionLeaseRecoverRequest();
+        request.setContextId("ctx-a");
+        request.setSurface("adapter");
+        request.setSession("site:chatgpt");
+        request.setExpectedRunId("run-1");
+        request.setMode(OpenCliSessionLeaseRecoverRequest.MODE_CANCEL_AND_RESET);
+        request.setReason("hub_execution_timeout");
+
+        OpenCliSessionLeaseRecoverResponse response = client.recoverSessionLease(request);
+
+        assertThat(response.getOk()).isTrue();
+        assertThat(response.getResult()).isEqualTo("RECOVERED");
+        assertThat(response.getRunId()).isEqualTo("run-1");
+        assertThat(response.getTabReset()).isTrue();
+        assertThat(response.getCancelledPending()).isEqualTo(2);
+        assertThat(server.lastMethodAndPath()).isEqualTo("POST /session-leases/recover");
+        assertThat(server.lastHeaders()).contains("x-opencli: 1");
+        assertThat(server.lastHeaders()).anyMatch(h -> h.startsWith("content-type: application/json"));
+        assertThat(server.lastBody()).contains("\"expectedRunId\":\"run-1\"");
+        assertThat(server.lastBody()).contains("\"mode\":\"CANCEL_AND_RESET\"");
+        assertThat(server.lastBody()).contains("\"reason\":\"hub_execution_timeout\"");
+    }
+
+    @Test
+    void shouldThrowWhenRecoverResponseIsNonTwoXx() {
+        server.setRecoverStatusCode(503);
+        server.setRecoverBody(
+            "{\"ok\":false,\"result\":\"RESET_FAILED\",\"tabReset\":false,"
+                + "\"cancelledPending\":0,\"errorCode\":\"session_recovery_failed\"}");
+        OpenCliSessionLeaseRecoverRequest request = new OpenCliSessionLeaseRecoverRequest();
+        request.setContextId("ctx");
+        request.setSurface("adapter");
+        request.setSession("site:x");
+        request.setExpectedRunId("run");
+        request.setMode(OpenCliSessionLeaseRecoverRequest.MODE_CANCEL_AND_RESET);
+        request.setReason("hub_execution_timeout");
+
+        assertThatThrownBy(() -> client.recoverSessionLease(request))
+            .isInstanceOf(OpenCliDaemonException.class)
+            .hasMessageContaining("HTTP 503");
+    }
+
+    @Test
+    void shouldThrowWhenRecoverResponseBodyIsInvalid() {
+        server.setRecoverBody("{\"ok\":true}");
+        OpenCliSessionLeaseRecoverRequest request = new OpenCliSessionLeaseRecoverRequest();
+        request.setContextId("ctx");
+        request.setSurface("adapter");
+        request.setSession("site:x");
+        request.setExpectedRunId("run");
+        request.setMode(OpenCliSessionLeaseRecoverRequest.MODE_CANCEL_AND_RESET);
+        request.setReason("hub_execution_timeout");
+
+        assertThatThrownBy(() -> client.recoverSessionLease(request))
+            .isInstanceOf(OpenCliDaemonException.class)
+            .hasMessageContaining("invalid response");
+    }
+
+    @Test
+    void shouldThrowWhenRecoverResultIsUnknownEnum() {
+        // Protocol only accepts RECOVERED|ALREADY_FREE|STILL_ACTIVE|OWNER_CHANGED|RESET_FAILED.
+        server.setRecoverBody(
+            "{\"ok\":true,\"result\":\"REPLAYED\",\"tabReset\":false,\"cancelledPending\":0}");
+        OpenCliSessionLeaseRecoverRequest request = new OpenCliSessionLeaseRecoverRequest();
+        request.setContextId("ctx");
+        request.setSurface("adapter");
+        request.setSession("site:x");
+        request.setExpectedRunId("run");
+        request.setMode(OpenCliSessionLeaseRecoverRequest.MODE_CANCEL_AND_RESET);
+        request.setReason("hub_execution_timeout");
+
+        assertThatThrownBy(() -> client.recoverSessionLease(request))
+            .isInstanceOf(OpenCliDaemonException.class)
+            .hasMessageContaining("invalid response");
+    }
+
+    @Test
+    void shouldAcceptEachKnownRecoverResultEnum() {
+        for (String result : OpenCliSessionLeaseRecoverResponse.VALID_RESULTS) {
+            server.setRecoverBody(
+                "{\"ok\":true,\"result\":\"" + result + "\",\"tabReset\":false,\"cancelledPending\":0}");
+            OpenCliSessionLeaseRecoverRequest request = new OpenCliSessionLeaseRecoverRequest();
+            request.setContextId("ctx");
+            request.setSurface("adapter");
+            request.setSession("site:x");
+            request.setExpectedRunId("run");
+            request.setMode(OpenCliSessionLeaseRecoverRequest.MODE_CANCEL_AND_RESET);
+            request.setReason("hub_execution_timeout");
+
+            OpenCliSessionLeaseRecoverResponse response = client.recoverSessionLease(request);
+            assertThat(response.getResult()).isEqualTo(result);
+            assertThat(response.getOk()).isTrue();
+            assertThat(response.getTabReset()).isFalse();
+            assertThat(response.getCancelledPending()).isZero();
+        }
     }
 
     @Test
@@ -233,14 +345,20 @@ class HttpOpenCliDaemonClientTest {
 
     /**
      * Tiny HTTP/1.1 loopback server that returns a configurable body for GET /status and
-     * echoes POST /shutdown. Sufficient for {@link HttpOpenCliDaemonClient} contract tests.
+     * POST /session-leases/recover. Sufficient for {@link HttpOpenCliDaemonClient} contract tests.
      */
     private static class FakeHttpServer {
 
         private final java.net.ServerSocket serverSocket;
         private final java.util.concurrent.atomic.AtomicInteger statusCode = new AtomicInteger(200);
+        private final java.util.concurrent.atomic.AtomicInteger recoverStatusCode =
+            new java.util.concurrent.atomic.AtomicInteger(200);
         private volatile String statusBody = "{}";
+        private volatile String recoverBody =
+            "{\"ok\":true,\"result\":\"RECOVERED\",\"tabReset\":false,\"cancelledPending\":0}";
         private volatile List<String> lastHeaders = List.of();
+        private volatile String lastMethodAndPath = "";
+        private volatile String lastBody = "";
         private final java.util.concurrent.ExecutorService acceptor =
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r, "fake-daemon-acceptor");
@@ -287,8 +405,24 @@ class HttpOpenCliDaemonClientTest {
             this.statusCode.set(code);
         }
 
+        void setRecoverBody(String body) {
+            this.recoverBody = body;
+        }
+
+        void setRecoverStatusCode(int code) {
+            this.recoverStatusCode.set(code);
+        }
+
         List<String> lastHeaders() {
             return lastHeaders;
+        }
+
+        String lastMethodAndPath() {
+            return lastMethodAndPath;
+        }
+
+        String lastBody() {
+            return lastBody;
         }
 
         private void acceptLoop() {
@@ -313,29 +447,50 @@ class HttpOpenCliDaemonClientTest {
                 }
                 List<String> headers = new java.util.ArrayList<>();
                 String line;
+                int contentLength = 0;
                 while ((line = in.readLine()) != null && !line.isEmpty()) {
                     headers.add(line.toLowerCase(java.util.Locale.ROOT));
+                    String lower = line.toLowerCase(java.util.Locale.ROOT);
+                    if (lower.startsWith("content-length:")) {
+                        contentLength = Integer.parseInt(lower.substring("content-length:".length()).trim());
+                    }
                 }
                 lastHeaders = List.copyOf(headers);
-                boolean isStatus = requestLine.startsWith("GET") && requestLine.contains("/status");
-                if (isStatus) {
-                    int code = statusCode.get();
-                    String reason = code == 200 ? "OK" : "ERROR";
-                    out.write(("HTTP/1.1 " + code + " " + reason + "\r\n"
-                        + "Content-Type: application/json\r\n"
-                        + "Content-Length: " + statusBody.length() + "\r\n"
-                        + "Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
-                    out.write(statusBody.getBytes(StandardCharsets.UTF_8));
-                } else {
-                    String body = "{\"ok\":false}";
-                    out.write(("HTTP/1.1 404 Not Found\r\n"
-                        + "Content-Length: " + body.length() + "\r\n"
-                        + "Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
-                    out.write(body.getBytes(StandardCharsets.UTF_8));
+                char[] bodyChars = new char[Math.max(0, contentLength)];
+                int read = 0;
+                while (read < bodyChars.length) {
+                    int n = in.read(bodyChars, read, bodyChars.length - read);
+                    if (n < 0) {
+                        break;
+                    }
+                    read += n;
                 }
-                out.flush();
+                lastBody = new String(bodyChars, 0, read);
+                String[] parts = requestLine.split(" ");
+                lastMethodAndPath = parts.length >= 2 ? parts[0] + " " + parts[1] : requestLine;
+                boolean isStatus = requestLine.startsWith("GET") && requestLine.contains("/status");
+                boolean isRecover = requestLine.startsWith("POST")
+                    && requestLine.contains("/session-leases/recover");
+                if (isStatus) {
+                    writeJson(out, statusCode.get(), statusBody);
+                } else if (isRecover) {
+                    writeJson(out, recoverStatusCode.get(), recoverBody);
+                } else {
+                    writeJson(out, 404, "{\"ok\":false}");
+                }
             } catch (IOException ignored) {
             }
+        }
+
+        private static void writeJson(java.io.OutputStream out, int code, String body) throws IOException {
+            String reason = code == 200 ? "OK" : "ERROR";
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            out.write(("HTTP/1.1 " + code + " " + reason + "\r\n"
+                + "Content-Type: application/json\r\n"
+                + "Content-Length: " + bytes.length + "\r\n"
+                + "Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+            out.write(bytes);
+            out.flush();
         }
     }
 

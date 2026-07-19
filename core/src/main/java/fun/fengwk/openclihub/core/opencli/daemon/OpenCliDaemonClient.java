@@ -22,6 +22,17 @@ public interface OpenCliDaemonClient {
     OpenCliDaemonStatus fetchStatus();
 
     /**
+     * Issues a compare-and-set session lease recovery request against the daemon.
+     *
+     * <p>Implementations must include {@code X-OpenCLI: 1}, send JSON, enforce a bounded
+     * request timeout, and throw {@link OpenCliDaemonException} on non-2xx or invalid
+     * responses. This method must never trigger daemon restart.
+     *
+     * @throws OpenCliDaemonException when the daemon is unreachable or returns an invalid response
+     */
+    OpenCliSessionLeaseRecoverResponse recoverSessionLease(OpenCliSessionLeaseRecoverRequest request);
+
+    /**
      * Ensures the daemon is ready. Behaviour:
      * <ol>
      *   <li>Fetch authenticated {@code /status}; return when it reports a valid pid.</li>

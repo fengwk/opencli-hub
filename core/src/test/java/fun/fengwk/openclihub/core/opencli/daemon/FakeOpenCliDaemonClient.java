@@ -23,7 +23,10 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
     private final AtomicInteger fetchCount = new AtomicInteger();
     private final List<DeferredAdd> deferredAdds = new ArrayList<>();
     private final List<String> ensureRunningCalls = new ArrayList<>();
+    private final List<OpenCliSessionLeaseRecoverRequest> recoverRequests = new ArrayList<>();
     private RuntimeException ensureFailure;
+    private RuntimeException recoverFailure;
+    private OpenCliSessionLeaseRecoverResponse recoverResponse = defaultRecoverResponse();
     /** When set, the daemon exposes the named context on the SECOND fetch and clears it after. */
     private String firstWinsContextId;
     private boolean firstWinsFired = false;
@@ -94,6 +97,28 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
     }
 
     @Override
+    public OpenCliSessionLeaseRecoverResponse recoverSessionLease(
+        OpenCliSessionLeaseRecoverRequest request) {
+        recoverRequests.add(request);
+        if (recoverFailure != null) {
+            throw recoverFailure;
+        }
+        return recoverResponse;
+    }
+
+    public void setRecoverResponse(OpenCliSessionLeaseRecoverResponse response) {
+        this.recoverResponse = response == null ? defaultRecoverResponse() : response;
+    }
+
+    public void failRecoverWith(RuntimeException failure) {
+        this.recoverFailure = failure;
+    }
+
+    public List<OpenCliSessionLeaseRecoverRequest> recoverRequests() {
+        return List.copyOf(recoverRequests);
+    }
+
+    @Override
     public void ensureRunning() {
         ensureRunningCalls.add("ensureRunning");
         restartInvoked.set(true);
@@ -149,7 +174,18 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
         OpenCliDaemonStatus status = new OpenCliDaemonStatus();
         status.setPid(0L);
         status.setProfiles(List.of());
+        status.setCapabilities(List.of());
+        status.setSessionLeases(List.of());
         return status;
+    }
+
+    private static OpenCliSessionLeaseRecoverResponse defaultRecoverResponse() {
+        OpenCliSessionLeaseRecoverResponse response = new OpenCliSessionLeaseRecoverResponse();
+        response.setOk(true);
+        response.setResult("RECOVERED");
+        response.setTabReset(true);
+        response.setCancelledPending(0);
+        return response;
     }
 
     private static final class DeferredAdd {

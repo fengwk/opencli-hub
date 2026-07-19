@@ -1,6 +1,7 @@
 package fun.fengwk.openclihub.core.execution.executor;
 
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
+import fun.fengwk.openclihub.core.opencli.daemon.OpenCliSessionLeaseRecoveryService;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import jakarta.annotation.PreDestroy;
@@ -29,6 +30,11 @@ import org.springframework.stereotype.Component;
  * one deadline across process exit and output drain via a
  * destroy-then-grace-then-descendant-kill chain.
  *
+ * <p>On process timeout or caller interruption, after local process-tree cleanup, Hub may
+ * request capability-gated daemon session lease recovery for the exact
+ * {@code OPENCLI_RUN_OWNER}. Normal nonzero command exits never trigger recovery and never
+ * replay the original command.
+ *
  * @author fengwk
  */
 @Component
@@ -36,36 +42,39 @@ import org.springframework.stereotype.Component;
 public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
 
     private final OpenCliHubProperties properties;
+    private final OpenCliSessionLeaseRecoveryService sessionLeaseRecoveryService;
     private final ExecutorService ioExecutor = Executors.newCachedThreadPool(runnable -> {
         Thread thread = new Thread(runnable, "opencli-hub-process-io");
         thread.setDaemon(true);
         return thread;
     });
 
-    public ProcessBuilderOpenCliExecutor(OpenCliHubProperties properties) {
+    public ProcessBuilderOpenCliExecutor(
+        OpenCliHubProperties properties,
+        OpenCliSessionLeaseRecoveryService sessionLeaseRecoveryService) {
         this.properties = properties;
+        this.sessionLeaseRecoveryService = sessionLeaseRecoveryService;
     }
 
     @Override
-    public OpenCliExecutionResult execute(HubInstance instance, List<String> hubManagedArgv, long timeoutMillis) {
+    public OpenCliExecutionResult execute(
+        HubInstance instance, List<String> hubManagedArgv, long timeoutMillis, String executionId) {
         long deadlineNanos = deadlineAfterMillis(timeoutMillis);
         List<String> command = buildCommand(hubManagedArgv);
         ProcessBuilder processBuilder = new ProcessBuilder(command);
         processBuilder.directory(Path.of(properties.getOpencli().getWorkdir()).toFile());
         processBuilder.redirectErrorStream(false);
-        if (instance != null) {
-            processBuilder.environment().put("OPENCLI_HUB_INSTANCE_ID", instance.getId());
-            processBuilder.environment().put("OPENCLI_HUB_INSTANCE_CODE",
-                instance.getCode() == null ? "" : instance.getCode());
-        }
-        Process process;
         String instanceId = instance == null ? null : instance.getId();
+        String runOwner = injectEnvironment(processBuilder, instance, executionId);
         log.info(
-            "Starting OpenCLI process instanceId={} timeoutMillis={} argvSize={} binary={}",
+            "Starting OpenCLI process instanceId={} executionId={} runOwner={} timeoutMillis={} argvSize={} binary={}",
             instanceId,
+            executionId,
+            runOwner,
             timeoutMillis,
             hubManagedArgv == null ? 0 : hubManagedArgv.size(),
             properties.getOpencli().getBinary());
+        Process process;
         try {
             process = processBuilder.start();
         } catch (IOException ex) {
@@ -79,6 +88,7 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
             boolean finished = waitFor(process, deadlineNanos);
             if (!finished) {
                 cleanup(process, captures);
+                requestRecovery(runOwner, OpenCliSessionLeaseRecoveryService.REASON_EXECUTION_TIMEOUT);
                 log.warn(
                     "OpenCLI process deadline exceeded instanceId={} pid={} timeoutMillis={}",
                     instanceId,
@@ -93,6 +103,7 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
 
             if (!captures.awaitUntil(deadlineNanos)) {
                 cleanup(process, captures);
+                requestRecovery(runOwner, OpenCliSessionLeaseRecoveryService.REASON_EXECUTION_TIMEOUT);
                 log.warn(
                     "OpenCLI process exited but streams incomplete instanceId={} pid={} timeoutMillis={}",
                     instanceId,
@@ -125,9 +136,42 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
             // Caller-side interrupt. Kill the process we just spawned before propagating
             // the interrupt status so we never leak an orphan OpenCLI/Chrome.
             cleanup(process, captures);
+            requestRecovery(runOwner, OpenCliSessionLeaseRecoveryService.REASON_EXECUTION_INTERRUPTED);
             Thread.currentThread().interrupt();
             log.warn("OpenCLI process interrupted instanceId={} pid={}", instanceId, process.pid());
             throw new IllegalStateException("Interrupted while running OpenCLI", ex);
+        }
+    }
+
+    private String injectEnvironment(
+        ProcessBuilder processBuilder, HubInstance instance, String executionId) {
+        if (instance != null) {
+            processBuilder.environment().put("OPENCLI_HUB_INSTANCE_ID", instance.getId());
+            processBuilder.environment().put("OPENCLI_HUB_INSTANCE_CODE",
+                instance.getCode() == null ? "" : instance.getCode());
+        }
+        if (instance == null || instance.getId() == null || instance.getId().isBlank()
+            || executionId == null || executionId.isBlank()) {
+            return null;
+        }
+        String runOwner = OpenCliRunOwner.of(instance.getId(), executionId);
+        processBuilder.environment().put(OpenCliRunOwner.ENV_NAME, runOwner);
+        return runOwner;
+    }
+
+    private void requestRecovery(String runOwner, String reason) {
+        if (runOwner == null || runOwner.isBlank() || sessionLeaseRecoveryService == null) {
+            return;
+        }
+        try {
+            sessionLeaseRecoveryService.recoverOwnedActiveLeases(runOwner, reason);
+        } catch (RuntimeException ex) {
+            // Recovery must never change the execution terminal outcome.
+            log.warn(
+                "Session lease recovery threw for owner={} reason={}: {}",
+                runOwner,
+                reason,
+                ex.getMessage());
         }
     }
 

@@ -32,6 +32,16 @@ public class OpenCliDaemonStatus {
     private Boolean profileRequired;
     private Boolean profileDisconnected;
     private List<OpenCliProfileSnapshot> profiles = List.of();
+    /**
+     * Capability tokens advertised by the daemon (for example {@code session-recover-v1}).
+     * Capability support must never be inferred from package version.
+     */
+    private List<String> capabilities = List.of();
+    /**
+     * Active or recovering session lease holders. Empty when the daemon has none or does not
+     * expose the field.
+     */
+    private List<OpenCliSessionLease> sessionLeases = List.of();
     private Integer pending;
     private Integer commandResultUnknown;
     private Double memoryMB;

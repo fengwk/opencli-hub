@@ -16,9 +16,10 @@
 ### 安全与运维
 
 - Browser Bridge CRX 由构建期 BuildKit secret 签名，私钥不进入仓库或运行时镜像。
-- OpenCLI CLI 与 Browser Bridge 由单一 artifact lock 固定 URL、版本、来源提交和 SHA256；当前配套 fork 为 `1.8.7-fengwk.2` / `1.0.24`。
+- OpenCLI CLI 与 Browser Bridge 由单一 artifact lock 固定 URL、版本、来源提交和 SHA256；当前配套 fork 为 `1.8.7-fengwk.3` / `1.0.24`。
 - Chrome 通过 managed policy 和 loopback CRX 更新服务安装 extension；VNC TCP 不对外发布。
 - 资源路径/symlink 防护、上传限制、Instance 生命周期串行化、执行 deadline 和安全启动恢复。
+- persistent write session lease 由 daemon capability/CAS 管理：Hub 仅在 cleanup 后按精确 owner 请求 reset recovery；未知 write 结果不重放。
 
 ### 升级注意
 
