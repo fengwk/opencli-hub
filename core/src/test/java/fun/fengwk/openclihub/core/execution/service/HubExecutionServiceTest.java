@@ -18,6 +18,7 @@ import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.convention4j.api.page.Page;
 import fun.fengwk.convention4j.api.page.PageQuery;
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommand;
+import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandArg;
 import fun.fengwk.openclihub.core.command.service.HubCommandBlacklistService;
 import fun.fengwk.openclihub.core.command.service.HubCommandOutputRuleService;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandOutputRule;
@@ -111,8 +112,20 @@ class HubExecutionServiceTest {
         when(resources.scanExisting(anyString())).thenReturn(List.of());
         when(resources.prepare(anyString(), any(), any())).thenAnswer(invocation -> {
             NormalizedOpenCliArgv argv = invocation.getArgument(1);
+            HubCommandOutputRule rule = invocation.getArgument(2);
+            HubExecutionResourceGroup group = null;
+            if (rule != null) {
+                Path groupDir = tempDir.resolve("execution-group-" + invocation.getArgument(0));
+                java.nio.file.Files.createDirectories(groupDir);
+                group = HubExecutionResourceGroup.builder()
+                    .executionId(invocation.getArgument(0))
+                    .date(LocalDate.now(java.time.ZoneOffset.UTC))
+                    .group("execution-" + invocation.getArgument(0))
+                    .realPath(groupDir)
+                    .build();
+            }
             return new HubExecutionResources.ResourceContext(
-                argv.getNormalizedArgv(), null, List.of());
+                argv.getNormalizedArgv(), group, List.of());
         });
 
         service = new HubExecutionService(
@@ -124,6 +137,7 @@ class HubExecutionServiceTest {
             repository,
             new HubExecutionArgvBuilder(),
             resources,
+            mock(HubExecutionArtifactImporter.class),
             executor,
             new HubExecutionConverter(),
             new ObjectMapper(),
@@ -412,6 +426,50 @@ class HubExecutionServiceTest {
         assertThat(interruptRestored).isTrue();
         assertThat(repository.updatedStatuses)
             .containsExactly(HubExecutionStatus.RUNNING, HubExecutionStatus.SUCCEEDED);
+    }
+
+
+    /** Commands declaring --op are auto-managed so callers do not supply container paths. */
+    @Test
+    void shouldAutoManageOpArgumentAsExecutionResourceDirectory() {
+        OpenCliCommandArg op = new OpenCliCommandArg();
+        op.setName("op");
+        op.setType("string");
+        op.setRequired(false);
+        op.setValueRequired(true);
+        op.setPositional(false);
+
+        OpenCliCommand command = new OpenCliCommand();
+        command.setSite("chatgpt-agent");
+        command.setName("ask");
+        command.setSiteSession(SiteSessionMode.PERSISTENT);
+        command.setArgs(List.of(op));
+        command.setCommandKey("chatgpt-agent/ask");
+
+        NormalizedOpenCliArgv ask = new NormalizedOpenCliArgv(
+            command,
+            "chatgpt-agent/ask",
+            List.of("hi"),
+            new LinkedHashMap<>(),
+            List.of("chatgpt-agent", "ask", "hi"));
+        when(argvValidator.validate(any())).thenReturn(ask);
+        when(blacklistService.findByCommandKey("chatgpt-agent/ask")).thenReturn(Optional.empty());
+        when(outputRuleService.findByCommandKey("chatgpt-agent/ask")).thenReturn(Optional.empty());
+        instance.setWebsites(List.of("chatgpt-agent"));
+        when(router.chooseInstance(eq("chatgpt-agent"), any())).thenReturn(instance);
+        executor.setBehavior(() -> FakeOpenCliExecutor.Behaviour.successJson("[{\"text\":\"ok\",\"downloads\":\"[]\"}]"));
+        when(resources.scan(any())).thenReturn(List.of());
+
+        HubExecutionRequestDTO request = new HubExecutionRequestDTO();
+        request.setArgv(List.of("chatgpt-agent", "ask", "hi"));
+        request.setTimeoutMillis(5_000L);
+        HubExecutionDTO dto = service.execute(request);
+        assertThat(dto.getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
+        verify(resources).prepare(anyString(), any(), org.mockito.ArgumentMatchers.argThat(rule ->
+            rule != null
+                && "op".equals(rule.getArgumentName())
+                && rule.getTargetType() == HubCommandOutputTargetType.DIRECTORY));
+        verify(resources).scan(any());
     }
 
     private HubExecutionRequestDTO request(String instanceId, long timeoutMillis) {

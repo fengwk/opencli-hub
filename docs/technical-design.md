@@ -1475,6 +1475,12 @@ GET /api/resources/{date}/{group}/{path}
 
 文件系统是事实来源，不建立资源表。按日期扫描，支持文件名搜索、来源过滤、大小和时间排序。
 
+### 23.4.1 执行产物托管
+
+当命令声明非位置参数 `op` 时，Hub 在没有管理员显式输出规则的情况下也会自动以 DIRECTORY 方式托管 `op`：创建 `execution-{id}` 资源组并注入绝对路径。调用方不得也不需要传容器路径。
+
+执行结束后，Hub 会从 OpenCLI JSON stdout 的 `downloads[].path` 中解析本地文件，仅将位于白名单根（OpenCLI home / 用户 Pictures·Downloads / 本次 execution 组 / 临时目录）内的普通文件导入资源组，再通过资源下载 API 对外提供。不提供任意绝对路径下载。
+
 ### 23.5 预览与下载
 
 - 图片、视频、音频、PDF 可 inline；

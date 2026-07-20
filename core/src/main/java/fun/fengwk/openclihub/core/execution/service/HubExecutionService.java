@@ -5,6 +5,9 @@ import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.convention4j.api.page.Page;
 import fun.fengwk.convention4j.api.page.PageQuery;
 import fun.fengwk.openclihub.core.command.service.HubCommandBlacklistService;
+import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
+import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandArg;
+import fun.fengwk.openclihub.core.command.catalog.OpenCliCommand;
 import fun.fengwk.openclihub.core.command.service.HubCommandOutputRuleService;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandBlacklist;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandOutputRule;
@@ -49,6 +52,7 @@ public class HubExecutionService {
     private final HubExecutionRepository executionRepository;
     private final HubExecutionArgvBuilder argvBuilder;
     private final HubExecutionResources executionResources;
+    private final HubExecutionArtifactImporter artifactImporter;
     private final OpenCliExecutor executor;
     private final HubExecutionConverter converter;
     private final ObjectMapper objectMapper;
@@ -63,6 +67,7 @@ public class HubExecutionService {
         HubExecutionRepository executionRepository,
         HubExecutionArgvBuilder argvBuilder,
         HubExecutionResources executionResources,
+        HubExecutionArtifactImporter artifactImporter,
         OpenCliExecutor executor,
         HubExecutionConverter converter,
         ObjectMapper objectMapper,
@@ -75,6 +80,7 @@ public class HubExecutionService {
         this.executionRepository = executionRepository;
         this.argvBuilder = argvBuilder;
         this.executionResources = executionResources;
+        this.artifactImporter = artifactImporter;
         this.executor = executor;
         this.converter = converter;
         this.objectMapper = objectMapper;
@@ -90,8 +96,7 @@ public class HubExecutionService {
         validateRequest(request);
         NormalizedOpenCliArgv normalized = argvValidator.validate(request.getArgv());
         rejectBlacklisted(normalized.getCanonicalKey());
-        HubCommandOutputRule outputRule = outputRuleService
-            .findByCommandKey(normalized.getCanonicalKey()).orElse(null);
+        HubCommandOutputRule outputRule = resolveEffectiveOutputRule(normalized);
         argvBuilder.assertNoCallerOutputArgument(normalized, outputRule);
 
         long timeoutMillis = resolveTimeout(request.getTimeoutMillis());
@@ -204,6 +209,9 @@ public class HubExecutionService {
             HubExecutionResourceGroup group = resourceContext == null ? null : resourceContext.getGroup();
             if (resourceContext != null) {
                 try {
+                    if (group != null && execution.getStdout() != null) {
+                        artifactImporter.importFromStdout(group, execution.getStdout());
+                    }
                     resources = executionResources.scan(group);
                 } catch (RuntimeException ex) {
                     recordResourceScanFailure(execution, ex);
@@ -269,6 +277,38 @@ public class HubExecutionService {
         execution.setTimeoutMillis(timeoutMillis);
         execution.setQueuedAt(LocalDateTime.now());
         return execution;
+    }
+
+
+    /**
+     * Prefer an explicit admin output rule. When absent, auto-manage a non-positional
+     * {@code op} argument as a DIRECTORY output so adapters write into Hub resources
+     * without callers supplying container paths.
+     */
+    private HubCommandOutputRule resolveEffectiveOutputRule(NormalizedOpenCliArgv normalized) {
+        HubCommandOutputRule configured = outputRuleService
+            .findByCommandKey(normalized.getCanonicalKey()).orElse(null);
+        if (configured != null) {
+            return configured;
+        }
+        OpenCliCommand command = normalized.getCommand();
+        if (command == null || command.getArgs() == null) {
+            return null;
+        }
+        for (OpenCliCommandArg arg : command.getArgs()) {
+            if (arg == null || arg.getName() == null) {
+                continue;
+            }
+            if (!"op".equals(arg.getName()) || arg.isPositional()) {
+                continue;
+            }
+            HubCommandOutputRule synthetic = new HubCommandOutputRule();
+            synthetic.setCommandKey(command.getCommandKey());
+            synthetic.setArgumentName("op");
+            synthetic.setTargetType(HubCommandOutputTargetType.DIRECTORY);
+            return synthetic;
+        }
+        return null;
     }
 
     private void validateJsonOutput(OpenCliExecutionResult result) {
