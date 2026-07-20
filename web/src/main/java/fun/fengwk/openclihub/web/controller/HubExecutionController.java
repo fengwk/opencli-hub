@@ -10,9 +10,12 @@ import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionDTO;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionRequestDTO;
+import fun.fengwk.openclihub.web.config.HubExecutionAsyncConfiguration;
 import jakarta.validation.Valid;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -30,12 +33,22 @@ import org.springframework.web.context.request.async.DeferredResult;
  *
  * @author fengwk
  */
-@RequiredArgsConstructor
 @RestController
 public class HubExecutionController {
 
     private final HubExecutionService executionService;
     private final OpenCliHubProperties properties;
+    private final ThreadPoolTaskExecutor hubExecuteTaskExecutor;
+
+    public HubExecutionController(
+        HubExecutionService executionService,
+        OpenCliHubProperties properties,
+        @Qualifier(HubExecutionAsyncConfiguration.EXECUTOR_BEAN_NAME)
+        ThreadPoolTaskExecutor hubExecuteTaskExecutor) {
+        this.executionService = executionService;
+        this.properties = properties;
+        this.hubExecuteTaskExecutor = hubExecuteTaskExecutor;
+    }
 
     @PostMapping("/api/opencli/execute")
     public DeferredResult<Result<HubExecutionDTO>> execute(
@@ -47,25 +60,30 @@ public class HubExecutionController {
         deferred.onTimeout(() -> clientOpen.set(false));
         deferred.onError(ex -> clientOpen.set(false));
 
-        Thread worker = new Thread(() -> {
-            try {
-                HubExecutionDTO dto = executionService.execute(request, clientOpen::get);
-                if (!deferred.isSetOrExpired()) {
-                    deferred.setResult(Results.ok(dto));
+        try {
+            hubExecuteTaskExecutor.execute(() -> {
+                try {
+                    HubExecutionDTO dto = executionService.execute(request, clientOpen::get);
+                    if (!deferred.isSetOrExpired()) {
+                        deferred.setResult(Results.ok(dto));
+                    }
+                } catch (ThrowableConventionErrorCode ex) {
+                    // Domain errors as Result keep HTTP status/code stable under DeferredResult.
+                    if (!deferred.isSetOrExpired()) {
+                        deferred.setResult(Results.error(ex));
+                    }
+                } catch (Throwable ex) {
+                    if (!deferred.isSetOrExpired()) {
+                        deferred.setErrorResult(ex);
+                    }
                 }
-            } catch (ThrowableConventionErrorCode ex) {
-                // Domain errors as Result keep HTTP status/code stable under DeferredResult.
-                if (!deferred.isSetOrExpired()) {
-                    deferred.setResult(Results.error(ex));
-                }
-            } catch (Throwable ex) {
-                if (!deferred.isSetOrExpired()) {
-                    deferred.setErrorResult(ex);
-                }
+            });
+        } catch (RejectedExecutionException ex) {
+            if (!deferred.isSetOrExpired()) {
+                deferred.setResult(Results.error(HubErrorCodes.OPENCLI_EXECUTION_FAILED.asThrowable(
+                    "Execute worker pool is saturated")));
             }
-        }, "hub-execute-worker");
-        worker.setDaemon(true);
-        worker.start();
+        }
         return deferred;
     }
 

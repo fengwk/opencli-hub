@@ -29,7 +29,9 @@ import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import fun.fengwk.openclihub.web.config.HubExecutionAsyncConfiguration;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
+import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -39,6 +41,7 @@ import org.springframework.test.web.servlet.MvcResult;
 /**
  * Verifies async execute semantics, history pagination and execution errors.
  */
+@Import(HubExecutionAsyncConfiguration.class)
 @ImportAutoConfiguration(WebExceptionResultHandlerAutoConfiguration.class)
 @WebMvcTest(
     controllers = HubExecutionController.class,

@@ -254,11 +254,8 @@ public class HubExecutionService {
         if (isError(failure, HubErrorCodes.QUEUE_WAIT_TIMEOUT)) {
             execution.markFinished(timedOutResult("Execution deadline elapsed while queued"),
                 LocalDateTime.now());
-        } else if (isError(failure, HubErrorCodes.CLIENT_DISCONNECTED)) {
-            execution.markFinished(failedResult(failure), LocalDateTime.now());
-        } else if (isError(failure, HubErrorCodes.INSTANCE_QUEUE_CLEARED)) {
-            execution.markFinished(failedResult(failure), LocalDateTime.now());
         } else {
+            // Includes CLIENT_DISCONNECTED, INSTANCE_QUEUE_CLEARED, and process failures.
             execution.markFinished(failedResult(failure), LocalDateTime.now());
         }
         persistUpdate(execution);
