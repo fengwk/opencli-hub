@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="OpenCLI Hub">
+  <!--
+    Brand mark favicon reconstructed from the live page (not a screenshot):
+      AppShell: <span class="brand-mark">O</span>
+      CSS .brand-mark: 24x24, radius 7px 7px 7px 2px, bg #8eeaa1, fg #0d1a11
+    The letter O is a path (not <text>) so 16px tab icons stay crisp.
+  -->
+  <path fill="#8eeaa1" d="
+    M18.666 0
+    H45.334
+    A18.666 18.666 0 0 1 64 18.666
+    V45.334
+    A18.666 18.666 0 0 1 45.334 64
+    H5.333
+    A5.333 5.333 0 0 1 0 58.667
+    V18.666
+    A18.666 18.666 0 0 1 18.666 0
+    Z"/>
+  <path fill="#0d1a11" fill-rule="evenodd" d="
+    M32 14
+    c-9.941 0-18 8.059-18 18s8.059 18 18 18 18-8.059 18-18-8.059-18-18-18
+    zm0 7.5
+    c5.799 0 10.5 4.701 10.5 10.5S37.799 42.5 32 42.5 21.5 37.799 21.5 32 26.201 21.5 32 21.5z"/>
+</svg>
