@@ -137,7 +137,6 @@ class HubExecutionServiceTest {
             repository,
             new HubExecutionArgvBuilder(),
             resources,
-            mock(HubExecutionArtifactImporter.class),
             executor,
             new HubExecutionConverter(),
             new ObjectMapper(),

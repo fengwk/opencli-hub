@@ -53,7 +53,6 @@ public class HubExecutionService {
     private final HubExecutionRepository executionRepository;
     private final HubExecutionArgvBuilder argvBuilder;
     private final HubExecutionResources executionResources;
-    private final HubExecutionArtifactImporter artifactImporter;
     private final OpenCliExecutor executor;
     private final HubExecutionConverter converter;
     private final ObjectMapper objectMapper;
@@ -68,7 +67,6 @@ public class HubExecutionService {
         HubExecutionRepository executionRepository,
         HubExecutionArgvBuilder argvBuilder,
         HubExecutionResources executionResources,
-        HubExecutionArtifactImporter artifactImporter,
         OpenCliExecutor executor,
         HubExecutionConverter converter,
         ObjectMapper objectMapper,
@@ -81,7 +79,6 @@ public class HubExecutionService {
         this.executionRepository = executionRepository;
         this.argvBuilder = argvBuilder;
         this.executionResources = executionResources;
-        this.artifactImporter = artifactImporter;
         this.executor = executor;
         this.converter = converter;
         this.objectMapper = objectMapper;
@@ -210,9 +207,6 @@ public class HubExecutionService {
             HubExecutionResourceGroup group = resourceContext == null ? null : resourceContext.getGroup();
             if (resourceContext != null) {
                 try {
-                    if (group != null && execution.getStdout() != null) {
-                        artifactImporter.importFromStdout(group, execution.getStdout());
-                    }
                     resources = executionResources.scan(group);
                 } catch (RuntimeException ex) {
                     recordResourceScanFailure(execution, ex);
