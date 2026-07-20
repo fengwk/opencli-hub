@@ -18,11 +18,8 @@ import org.mockito.Mockito;
 import static org.mockito.Mockito.when;
 
 /**
- * Snapshot coverage for the DTO assembler. Verifies that catalog metadata, blacklist
- * state and output rules are joined correctly so the management UI can render commands
- * in one pass without re-querying each subsystem.
- *
- * @author fengwk
+ * Snapshot coverage for the DTO assembler. Verifies catalog metadata and blacklist
+ * join, and that platform-managed output arguments stay hidden from public APIs.
  */
 class HubCommandQueryServiceTest {
 
@@ -37,8 +34,10 @@ class HubCommandQueryServiceTest {
         blacklistService = Mockito.mock(HubCommandBlacklistService.class);
         outputRuleService = Mockito.mock(HubCommandOutputRuleService.class);
 
-        OpenCliCommand bilibili = command("bilibili", "hot");
-        OpenCliCommand chatgpt = command("chatgpt", "image");
+        OpenCliCommand bilibili = command("bilibili", "hot", List.of(arg("limit", "int", "Max items")));
+        OpenCliCommand chatgpt = command("chatgpt", "image", List.of(
+            arg("prompt", "string", "Image prompt"),
+            arg("op", "string", "Output directory")));
         when(catalog.listPublicCommands()).thenReturn(List.of(bilibili, chatgpt));
 
         HubCommandBlacklist blocked = new HubCommandBlacklist();
@@ -71,9 +70,9 @@ class HubCommandQueryServiceTest {
         var chatgptDto = dtos.stream()
             .filter(d -> "chatgpt/image".equals(d.getCommandKey())).findFirst().orElseThrow();
         assertThat(chatgptDto.isBlacklisted()).isFalse();
-        assertThat(chatgptDto.getOutputRule()).isNotNull();
-        assertThat(chatgptDto.getOutputRule().getTargetType())
-            .isEqualTo(HubCommandOutputTargetType.DIRECTORY);
+        // Platform fully hosts local output paths — not exposed on the public contract.
+        assertThat(chatgptDto.getOutputRule()).isNull();
+        assertThat(chatgptDto.getArgs()).extracting(a -> a.getName()).containsExactly("prompt");
     }
 
     @Test
@@ -91,18 +90,23 @@ class HubCommandQueryServiceTest {
         assertThat(queryService.listPublicCommandsForWebsite(null)).isEmpty();
     }
 
-    private static OpenCliCommand command(String site, String name) {
+    private static OpenCliCommand command(String site, String name, List<OpenCliCommandArg> args) {
         OpenCliCommand cmd = new OpenCliCommand();
         cmd.setSite(site);
         cmd.setName(name);
         cmd.setCommandKey(site + "/" + name);
         cmd.setBrowser(true);
         cmd.setAccess(HubCommandAccess.READ);
-        OpenCliCommandArg limit = new OpenCliCommandArg();
-        limit.setName("limit");
-        limit.setType("int");
-        cmd.setArgs(new ArrayList<>(List.of(limit)));
+        cmd.setArgs(new ArrayList<>(args));
         return cmd;
     }
 
+    private static OpenCliCommandArg arg(String name, String type, String help) {
+        OpenCliCommandArg arg = new OpenCliCommandArg();
+        arg.setName(name);
+        arg.setType(type);
+        arg.setHelp(help);
+        arg.setValueRequired(true);
+        return arg;
+    }
 }
