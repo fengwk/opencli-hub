@@ -7,6 +7,7 @@ import fun.fengwk.openclihub.core.instance.service.HubInstanceService;
 import fun.fengwk.openclihub.core.instance.service.converter.HubInstanceConverter;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceCreateDTO;
+import fun.fengwk.openclihub.share.model.instance.HubInstanceQueueClearResultDTO;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceDTO;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceVncStatusDTO;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
@@ -96,6 +97,20 @@ public class HubInstanceController {
     public Result<HubInstanceDTO> stop(@PathVariable String id) {
         lifecycleService.stop(id);
         return Results.ok(toDTO(instanceService.get(id)));
+    }
+
+
+    /**
+     * Clear pending (queued) executions for this instance. Active execution is not cancelled.
+     * Waiting execute HTTP calls fail with INSTANCE_QUEUE_CLEARED.
+     */
+    @PostMapping("/{id}/clear-queue")
+    public Result<HubInstanceQueueClearResultDTO> clearQueue(@PathVariable String id) {
+        int cleared = lifecycleService.clearPendingQueue(id);
+        HubInstanceQueueClearResultDTO dto = new HubInstanceQueueClearResultDTO();
+        dto.setInstanceId(id);
+        dto.setClearedCount(cleared);
+        return Results.ok(dto);
     }
 
     @PostMapping("/{id}/restart")

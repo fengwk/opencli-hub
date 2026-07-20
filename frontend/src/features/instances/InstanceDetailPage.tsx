@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { deleteInstance, getInstance, getInstanceVncStatus, runInstanceLifecycleAction, updateInstance } from '@/features/instances/instances-api'
+import { clearInstanceQueue, deleteInstance, getInstance, getInstanceVncStatus, runInstanceLifecycleAction, updateInstance } from '@/features/instances/instances-api'
 import { InstanceForm } from '@/features/instances/InstanceForm'
 import { InstanceLifecycleActions } from '@/features/instances/InstanceLifecycleActions'
 import type { InstanceEditableProperties } from '@/features/instances/types'
@@ -58,6 +58,19 @@ export function InstanceDetailPage() {
     setActionPending(true)
     try {
       await runInstanceLifecycleAction(resolvedInstanceId, action)
+      await refresh()
+    } catch (error) {
+      setActionError(errorMessage(error))
+    } finally {
+      setActionPending(false)
+    }
+  }
+
+  async function clearQueue() {
+    setActionError(null)
+    setActionPending(true)
+    try {
+      await clearInstanceQueue(resolvedInstanceId)
       await refresh()
     } catch (error) {
       setActionError(errorMessage(error))
@@ -170,6 +183,15 @@ export function InstanceDetailPage() {
             {instance.lastErrorMessage ? <p className="inline-error instance-error" role="alert">最近错误：{instance.lastErrorMessage}</p> : null}
             <div className="instance-sidebar-actions">
               <InstanceLifecycleActions instance={instance} busy={actionPending} onAction={(action) => void runAction(action)} />
+              <button
+                type="button"
+                className="btn"
+                disabled={actionPending || (runtime?.pendingCount ?? 0) === 0}
+                title="拒绝所有排队中的执行；不影响当前正在执行的任务"
+                onClick={() => void clearQueue()}
+              >
+                清空排队{(runtime?.pendingCount ?? 0) > 0 ? ` (${runtime?.pendingCount})` : ''}
+              </button>
               <Link className="btn" to={`/logs?instanceId=${encodeURIComponent(instance.id)}`}>查看日志</Link>
               <button type="button" className="btn btn-danger" disabled={actionPending || !canDelete} onClick={() => setConfirmDelete(true)}>删除实例</button>
             </div>

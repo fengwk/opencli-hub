@@ -6,6 +6,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -312,6 +313,127 @@ class HubInstanceDispatcherTest {
             Thread.sleep(5L);
         }
         return dispatcher.activeCount() == 0 && dispatcher.pendingCount() == 0;
+    }
+
+
+    /**
+     * clearPending cancels only queued tasks; the active worker finishes.
+     * Blocked dispatch on a cleared pending task fails with INSTANCE_QUEUE_CLEARED.
+     */
+    @Test
+    void shouldClearPendingWithoutStoppingActiveTask() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("clear", 4);
+        CountDownLatch activeStarted = new CountDownLatch(1);
+        CountDownLatch releaseActive = new CountDownLatch(1);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        try {
+            Future<String> active = dispatcher.submit(() -> {
+                activeStarted.countDown();
+                releaseActive.await(5, TimeUnit.SECONDS);
+                return "active-done";
+            }, deadline);
+            assertThat(activeStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            CountDownLatch dispatchStarted = new CountDownLatch(1);
+            CountDownLatch dispatchDone = new CountDownLatch(1);
+            AtomicInteger domainHit = new AtomicInteger();
+            Thread blocked = new Thread(() -> {
+                dispatchStarted.countDown();
+                try {
+                    dispatcher.dispatch(() -> "should-be-cleared", deadline);
+                } catch (ThrowableConventionErrorCode ex) {
+                    if (HubErrorCodes.INSTANCE_QUEUE_CLEARED.getCode().equals(ex.getCode())) {
+                        domainHit.set(1);
+                    }
+                } finally {
+                    dispatchDone.countDown();
+                }
+            }, "blocked-dispatch");
+            blocked.setDaemon(true);
+            blocked.start();
+            assertThat(dispatchStarted.await(1, TimeUnit.SECONDS)).isTrue();
+
+            long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (dispatcher.pendingCount() < 1 && System.nanoTime() < until) {
+                Thread.sleep(10);
+            }
+            assertThat(dispatcher.pendingCount()).isGreaterThanOrEqualTo(1);
+
+            Future<String> another = dispatcher.submit(() -> "also-cleared", deadline);
+            assertThat(dispatcher.clearPending()).isGreaterThanOrEqualTo(2);
+            assertThat(dispatcher.pendingCount()).isZero();
+            assertThat(another.isCancelled()).isTrue();
+            assertThat(dispatchDone.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(domainHit.get()).isEqualTo(1);
+
+            assertThat(active.isDone()).isFalse();
+            releaseActive.countDown();
+            assertThat(active.get(2, TimeUnit.SECONDS)).isEqualTo("active-done");
+            assertThat(dispatcher.dispatch(() -> "after-clear", deadline)).isEqualTo("after-clear");
+        } finally {
+            releaseActive.countDown();
+            dispatcher.shutdownNow();
+        }
+    }
+
+    /**
+     * When stillWanted becomes false while queued, dispatch cancels the pending task and
+     * surfaces CLIENT_DISCONNECTED without running the body.
+     */
+    @Test
+    void shouldCancelPendingWhenClientDisconnects() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("disconnect", 4);
+        CountDownLatch activeStarted = new CountDownLatch(1);
+        CountDownLatch releaseActive = new CountDownLatch(1);
+        AtomicInteger bodyRuns = new AtomicInteger();
+        AtomicBoolean clientOpen = new AtomicBoolean(true);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        try {
+            dispatcher.submit(() -> {
+                activeStarted.countDown();
+                releaseActive.await(5, TimeUnit.SECONDS);
+                return "hold";
+            }, deadline);
+            assertThat(activeStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            CountDownLatch dispatchStarted = new CountDownLatch(1);
+            CountDownLatch dispatchDone = new CountDownLatch(1);
+            AtomicInteger domainHit = new AtomicInteger();
+            Thread blocked = new Thread(() -> {
+                dispatchStarted.countDown();
+                try {
+                    dispatcher.dispatch(() -> {
+                        bodyRuns.incrementAndGet();
+                        return "should-not-run";
+                    }, deadline, clientOpen::get);
+                } catch (ThrowableConventionErrorCode ex) {
+                    if (HubErrorCodes.CLIENT_DISCONNECTED.getCode().equals(ex.getCode())) {
+                        domainHit.set(1);
+                    }
+                } finally {
+                    dispatchDone.countDown();
+                }
+            }, "disconnect-dispatch");
+            blocked.setDaemon(true);
+            blocked.start();
+            assertThat(dispatchStarted.await(1, TimeUnit.SECONDS)).isTrue();
+
+            long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (dispatcher.pendingCount() < 1 && System.nanoTime() < until) {
+                Thread.sleep(10);
+            }
+            assertThat(dispatcher.pendingCount()).isGreaterThanOrEqualTo(1);
+
+            clientOpen.set(false);
+            assertThat(dispatchDone.await(3, TimeUnit.SECONDS)).isTrue();
+            assertThat(domainHit.get()).isEqualTo(1);
+            assertThat(bodyRuns.get()).isZero();
+
+            releaseActive.countDown();
+        } finally {
+            releaseActive.countDown();
+            dispatcher.shutdownNow();
+        }
     }
 
 }

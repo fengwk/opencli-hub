@@ -2,6 +2,9 @@ spring:
   application:
     name: opencli-hub
   mvc:
+    async:
+      # slightly above Hub max execute timeout (30m)
+      request-timeout: 1860000
     converters:
       preferred-json-mapper: jackson
   datasource:

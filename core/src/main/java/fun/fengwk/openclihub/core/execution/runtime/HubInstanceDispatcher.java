@@ -1,8 +1,10 @@
 package fun.fengwk.openclihub.core.execution.runtime;
 
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
@@ -11,6 +13,8 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.BooleanSupplier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -94,19 +98,28 @@ public class HubInstanceDispatcher {
      * with legacy callers.
      */
     public <T> T dispatch(Callable<T> task) {
-        return dispatch(task, Long.MAX_VALUE);
+        return dispatch(task, Long.MAX_VALUE, null);
     }
 
     /**
-     * Synchronous, deadline-aware dispatch. Behaves as {@link #submit(Callable, long)}
+     * Synchronous, deadline-aware dispatch. Behaves as {@link #submit(Callable, long, BooleanSupplier)}
      * then awaits the returned {@link Future}. The deadline is enforced at submit time
      * and again in the worker (via {@link DeadlineAwareCallable}); once the budget has
      * elapsed the queued task will throw {@link HubErrorCodes#QUEUE_WAIT_TIMEOUT} from
      * {@link Future#get()} without ever calling the body.
      */
     public <T> T dispatch(Callable<T> task, long deadlineNanos) {
-        Future<T> future = submit(task, deadlineNanos);
-        return await(future);
+        return dispatch(task, deadlineNanos, null);
+    }
+
+    /**
+     * Like {@link #dispatch(Callable, long)} but polls {@code stillWanted} while waiting
+     * in the queue. When it returns false (client gone), the pending future is cancelled
+     * and {@link HubErrorCodes#CLIENT_DISCONNECTED} is thrown so opencli never starts.
+     */
+    public <T> T dispatch(Callable<T> task, long deadlineNanos, BooleanSupplier stillWanted) {
+        Future<T> future = submit(task, deadlineNanos, stillWanted);
+        return await(future, stillWanted);
     }
 
     /**
@@ -125,6 +138,10 @@ public class HubInstanceDispatcher {
      * </ol>
      */
     public <T> Future<T> submit(Callable<T> task, long deadlineNanos) {
+        return submit(task, deadlineNanos, null);
+    }
+
+    public <T> Future<T> submit(Callable<T> task, long deadlineNanos, BooleanSupplier stillWanted) {
         if (task == null) {
             throw new IllegalArgumentException("task must not be null");
         }
@@ -138,11 +155,16 @@ public class HubInstanceDispatcher {
                 throw HubErrorCodes.QUEUE_WAIT_TIMEOUT.asThrowable(
                     "Queue deadline already exceeded before enqueue");
             }
+            if (stillWanted != null && !stillWanted.getAsBoolean()) {
+                throw HubErrorCodes.CLIENT_DISCONNECTED.asThrowable(
+                    "Client disconnected before enqueue");
+            }
             if (executor.getQueue().size() >= maxPending) {
                 throw HubErrorCodes.INSTANCE_QUEUE_FULL.asThrowable(
                     "Instance pending queue reached maxPending=" + maxPending);
             }
-            FutureTask<T> future = new FutureTask<>(new DeadlineAwareCallable<>(task, deadlineNanos));
+            FutureTask<T> future = new FutureTask<>(
+                new DeadlineAwareCallable<>(task, deadlineNanos, stillWanted));
             try {
                 executor.execute(future);
             } catch (RejectedExecutionException ex) {
@@ -163,6 +185,34 @@ public class HubInstanceDispatcher {
     public int pendingCount() {
         return executor.getQueue().size();
     }
+
+    /**
+     * Drain pending (queued, not yet running) tasks and cancel them so blocked
+     * {@link #dispatch} callers receive {@link HubErrorCodes#INSTANCE_QUEUE_CLEARED}.
+     * The active worker task is left running.
+     *
+     * @return number of pending tasks that were cancelled
+     */
+    public int clearPending() {
+        submitLock.lock();
+        try {
+            if (shutdown) {
+                return 0;
+            }
+            List<Runnable> drained = new ArrayList<>();
+            executor.getQueue().drainTo(drained);
+            int cleared = 0;
+            for (Runnable task : drained) {
+                if (task instanceof Future<?> future && future.cancel(false)) {
+                    cleared++;
+                }
+            }
+            return cleared;
+        } finally {
+            submitLock.unlock();
+        }
+    }
+
 
     /**
      * Idle-only shutdown guarded by the same lock as {@link #submit(Callable, long)} so
@@ -207,16 +257,29 @@ public class HubInstanceDispatcher {
         return shutdown;
     }
 
-    private static <T> T await(Future<T> future) {
+    private static <T> T await(Future<T> future, BooleanSupplier stillWanted) {
         boolean interrupted = false;
         try {
             while (true) {
                 try {
-                    return future.get();
+                    return future.get(200L, TimeUnit.MILLISECONDS);
+                } catch (TimeoutException ex) {
+                    if (stillWanted != null && !stillWanted.getAsBoolean()) {
+                        future.cancel(false);
+                        throw HubErrorCodes.CLIENT_DISCONNECTED.asThrowable(
+                            "Client disconnected while waiting in the instance queue");
+                    }
                 } catch (InterruptedException ex) {
                     // An accepted execution must outlive the synchronous caller. Keep
                     // waiting and restore the flag after the terminal state is persisted.
                     interrupted = true;
+                } catch (CancellationException ex) {
+                    if (stillWanted != null && !stillWanted.getAsBoolean()) {
+                        throw HubErrorCodes.CLIENT_DISCONNECTED.asThrowable(
+                            "Client disconnected while waiting in the instance queue");
+                    }
+                    throw HubErrorCodes.INSTANCE_QUEUE_CLEARED.asThrowable(
+                        "Pending execution was rejected because the instance queue was cleared");
                 } catch (ExecutionException ex) {
                     Throwable cause = ex.getCause();
                     if (cause instanceof RuntimeException runtimeException) {
@@ -245,14 +308,20 @@ public class HubInstanceDispatcher {
 
         private final Callable<T> delegate;
         private final long deadlineNanos;
+        private final BooleanSupplier stillWanted;
 
-        DeadlineAwareCallable(Callable<T> delegate, long deadlineNanos) {
+        DeadlineAwareCallable(Callable<T> delegate, long deadlineNanos, BooleanSupplier stillWanted) {
             this.delegate = delegate;
             this.deadlineNanos = deadlineNanos;
+            this.stillWanted = stillWanted;
         }
 
         @Override
         public T call() throws Exception {
+            if (stillWanted != null && !stillWanted.getAsBoolean()) {
+                throw HubErrorCodes.CLIENT_DISCONNECTED.asThrowable(
+                    "Client disconnected before execution started");
+            }
             if (System.nanoTime() >= deadlineNanos) {
                 throw HubErrorCodes.QUEUE_WAIT_TIMEOUT.asThrowable(
                     "Queue deadline expired before task body started");

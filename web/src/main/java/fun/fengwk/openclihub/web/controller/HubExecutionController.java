@@ -1,14 +1,17 @@
 package fun.fengwk.openclihub.web.controller;
 
+import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.convention4j.api.page.Page;
 import fun.fengwk.convention4j.api.page.PageQuery;
 import fun.fengwk.convention4j.api.result.Result;
 import fun.fengwk.convention4j.common.result.Results;
 import fun.fengwk.openclihub.core.execution.service.HubExecutionService;
+import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionDTO;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionRequestDTO;
 import jakarta.validation.Valid;
+import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -16,9 +19,14 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.async.DeferredResult;
 
 /**
- * Synchronous OpenCLI execution and execution history API.
+ * OpenCLI execution and execution history API.
+ *
+ * <p>{@code POST /api/opencli/execute} uses servlet async ({@link DeferredResult}) so that
+ * client disconnect / async timeout can flip a liveness flag. The dispatcher polls that
+ * flag while the task is queued and cancels it before opencli starts when the client is gone.
  *
  * @author fengwk
  */
@@ -27,11 +35,38 @@ import org.springframework.web.bind.annotation.RestController;
 public class HubExecutionController {
 
     private final HubExecutionService executionService;
+    private final OpenCliHubProperties properties;
 
     @PostMapping("/api/opencli/execute")
-    public Result<HubExecutionDTO> execute(
+    public DeferredResult<Result<HubExecutionDTO>> execute(
         @Valid @RequestBody HubExecutionRequestDTO request) {
-        return Results.ok(executionService.execute(request));
+        long timeoutMs = properties.getExecution().getMaxTimeoutMillis() + 60_000L;
+        DeferredResult<Result<HubExecutionDTO>> deferred = new DeferredResult<>(timeoutMs);
+        AtomicBoolean clientOpen = new AtomicBoolean(true);
+
+        deferred.onTimeout(() -> clientOpen.set(false));
+        deferred.onError(ex -> clientOpen.set(false));
+
+        Thread worker = new Thread(() -> {
+            try {
+                HubExecutionDTO dto = executionService.execute(request, clientOpen::get);
+                if (!deferred.isSetOrExpired()) {
+                    deferred.setResult(Results.ok(dto));
+                }
+            } catch (ThrowableConventionErrorCode ex) {
+                // Domain errors as Result keep HTTP status/code stable under DeferredResult.
+                if (!deferred.isSetOrExpired()) {
+                    deferred.setResult(Results.error(ex));
+                }
+            } catch (Throwable ex) {
+                if (!deferred.isSetOrExpired()) {
+                    deferred.setErrorResult(ex);
+                }
+            }
+        }, "hub-execute-worker");
+        worker.setDaemon(true);
+        worker.start();
+        return deferred;
     }
 
     @GetMapping("/api/executions")

@@ -181,6 +181,18 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         }
     }
 
+
+    /**
+     * Cancel all pending queue tasks for the instance. Waiting execute callers receive
+     * {@code INSTANCE_QUEUE_CLEARED}. The currently running task (if any) is not interrupted.
+     *
+     * @return number of pending tasks cleared
+     */
+    public int clearPendingQueue(String instanceId) {
+        loadInstance(instanceId);
+        return dispatchRegistry.clearPending(instanceId);
+    }
+
     /**
      * Hard delete: remove DB row, unregister runtime, then recursively delete the on-disk
      * directory. Active/pending requests cause rejection.

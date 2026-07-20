@@ -33,6 +33,7 @@ import fun.fengwk.openclihub.share.util.HubIds;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -91,6 +92,14 @@ public class HubExecutionService {
      * are represented by a terminal DTO so callers retain the execution id and diagnostics.
      */
     public HubExecutionDTO execute(HubExecutionRequestDTO request) {
+        return execute(request, null);
+    }
+
+    /**
+     * @param stillWanted optional liveness probe (e.g. HTTP client still connected). When it
+     *                    becomes false while queued, the task is cancelled without starting opencli.
+     */
+    public HubExecutionDTO execute(HubExecutionRequestDTO request, BooleanSupplier stillWanted) {
         validateRequest(request);
         NormalizedOpenCliArgv normalized = argvValidator.validate(request.getArgv());
         rejectBlacklisted(normalized.getCanonicalKey());
@@ -119,7 +128,8 @@ public class HubExecutionService {
             outcome = dispatchRegistry.dispatch(
                 instance,
                 () -> runOnInstance(execution, instance, normalized, outputRule, deadline),
-                deadline.deadlineNanos());
+                deadline.deadlineNanos(),
+                stillWanted);
         } catch (RuntimeException ex) {
             if (isError(ex, HubErrorCodes.EXECUTION_PERSIST_FAILED)) {
                 throw ex;
@@ -244,6 +254,10 @@ public class HubExecutionService {
         if (isError(failure, HubErrorCodes.QUEUE_WAIT_TIMEOUT)) {
             execution.markFinished(timedOutResult("Execution deadline elapsed while queued"),
                 LocalDateTime.now());
+        } else if (isError(failure, HubErrorCodes.CLIENT_DISCONNECTED)) {
+            execution.markFinished(failedResult(failure), LocalDateTime.now());
+        } else if (isError(failure, HubErrorCodes.INSTANCE_QUEUE_CLEARED)) {
+            execution.markFinished(failedResult(failure), LocalDateTime.now());
         } else {
             execution.markFinished(failedResult(failure), LocalDateTime.now());
         }

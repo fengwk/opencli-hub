@@ -53,3 +53,13 @@ export async function runInstanceLifecycleAction(
 export function getInstanceVncStatus(id: BackendId): Promise<HubInstanceVncStatus> {
   return apiClient.get<HubInstanceVncStatus>(`${instancePath(id)}/vnc/status`)
 }
+
+export interface InstanceQueueClearResult {
+  instanceId: string
+  clearedCount: number
+}
+
+/** Reject all pending (queued) executions; does not stop the active running task. */
+export function clearInstanceQueue(id: BackendId): Promise<InstanceQueueClearResult> {
+  return apiClient.post<InstanceQueueClearResult>(`${instancePath(id)}/clear-queue`)
+}

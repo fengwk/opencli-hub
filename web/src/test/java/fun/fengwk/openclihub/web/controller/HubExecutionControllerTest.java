@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -17,12 +18,15 @@ import fun.fengwk.convention4j.api.page.PageQuery;
 import fun.fengwk.convention4j.springboot.starter.web.result.WebExceptionResultHandlerAutoConfiguration;
 import fun.fengwk.openclihub.core.command.validator.OpenCliArgvValidationException;
 import fun.fengwk.openclihub.core.execution.service.HubExecutionService;
+import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionDTO;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionRequestDTO;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionStatus;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.function.BooleanSupplier;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
@@ -30,9 +34,10 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 /**
- * Verifies synchronous execute semantics, history pagination and execution errors.
+ * Verifies async execute semantics, history pagination and execution errors.
  */
 @ImportAutoConfiguration(WebExceptionResultHandlerAutoConfiguration.class)
 @WebMvcTest(
@@ -49,6 +54,15 @@ class HubExecutionControllerTest {
     @MockitoBean
     private HubExecutionService executionService;
 
+    @MockitoBean
+    private OpenCliHubProperties properties;
+
+    @BeforeEach
+    void setUpProperties() {
+        OpenCliHubProperties.Execution execution = new OpenCliHubProperties.Execution();
+        when(properties.getExecution()).thenReturn(execution);
+    }
+
     /** Terminal failure remains HTTP 200 while UUID Instance and Execution IDs stay lossless strings. */
     @Test
     void shouldReturnFailedTerminalExecutionWithHttp200() throws Exception {
@@ -57,16 +71,19 @@ class HubExecutionControllerTest {
         HubExecutionRequestDTO request = request();
         request.setInstanceId(instanceId);
         HubExecutionDTO execution = execution(executionId, HubExecutionStatus.FAILED);
-        when(executionService.execute(any())).thenReturn(execution);
+        when(executionService.execute(any(), any(BooleanSupplier.class))).thenReturn(execution);
 
-        mockMvc.perform(post("/api/opencli/execute")
+        MvcResult started = mockMvc.perform(post("/api/opencli/execute")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsBytes(request)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.request().asyncStarted())
+            .andReturn();
+        mockMvc.perform(asyncDispatch(started))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.id").value(executionId))
             .andExpect(jsonPath("$.data.status").value("FAILED"));
         verify(executionService).execute(argThat(
-            submitted -> instanceId.equals(submitted.getInstanceId())));
+            submitted -> instanceId.equals(submitted.getInstanceId())), any(BooleanSupplier.class));
     }
 
     /** Bean validation rejects an empty argv before the execution service is called. */
@@ -80,18 +97,21 @@ class HubExecutionControllerTest {
                 .content(objectMapper.writeValueAsBytes(request)))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.success").value(false));
-        verify(executionService, never()).execute(any());
+        verify(executionService, never()).execute(any(), any());
     }
 
     /** Core argv validation exceptions retain their specific Hub error code. */
     @Test
     void shouldMapArgvValidationError() throws Exception {
-        when(executionService.execute(any())).thenThrow(new OpenCliArgvValidationException(
-            HubErrorCodes.OPENCLI_COMMAND_NOT_FOUND, "unknown"));
+        when(executionService.execute(any(), any(BooleanSupplier.class))).thenThrow(
+            new OpenCliArgvValidationException(HubErrorCodes.OPENCLI_COMMAND_NOT_FOUND, "unknown"));
 
-        mockMvc.perform(post("/api/opencli/execute")
+        MvcResult started = mockMvc.perform(post("/api/opencli/execute")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsBytes(request())))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.request().asyncStarted())
+            .andReturn();
+        mockMvc.perform(asyncDispatch(started))
             .andExpect(status().isNotFound())
             .andExpect(jsonPath("$.code").value(
                 HubErrorCodes.OPENCLI_COMMAND_NOT_FOUND.getCode()));
@@ -100,12 +120,15 @@ class HubExecutionControllerTest {
     /** Queue capacity errors retain HTTP 429 instead of becoming terminal DTOs. */
     @Test
     void shouldMapQueueFullError() throws Exception {
-        when(executionService.execute(any()))
+        when(executionService.execute(any(), any(BooleanSupplier.class)))
             .thenThrow(HubErrorCodes.INSTANCE_QUEUE_FULL.asThrowable("full"));
 
-        mockMvc.perform(post("/api/opencli/execute")
+        MvcResult started = mockMvc.perform(post("/api/opencli/execute")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsBytes(request())))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.request().asyncStarted())
+            .andReturn();
+        mockMvc.perform(asyncDispatch(started))
             .andExpect(status().isTooManyRequests())
             .andExpect(jsonPath("$.code").value(HubErrorCodes.INSTANCE_QUEUE_FULL.getCode()));
     }
@@ -113,12 +136,15 @@ class HubExecutionControllerTest {
     /** Persistence failures remain explicit HTTP 500 domain errors. */
     @Test
     void shouldMapExecutionPersistenceFailure() throws Exception {
-        when(executionService.execute(any()))
+        when(executionService.execute(any(), any(BooleanSupplier.class)))
             .thenThrow(HubErrorCodes.EXECUTION_PERSIST_FAILED.asThrowable("database"));
 
-        mockMvc.perform(post("/api/opencli/execute")
+        MvcResult started = mockMvc.perform(post("/api/opencli/execute")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsBytes(request())))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.request().asyncStarted())
+            .andReturn();
+        mockMvc.perform(asyncDispatch(started))
             .andExpect(status().isInternalServerError())
             .andExpect(jsonPath("$.code").value(
                 HubErrorCodes.EXECUTION_PERSIST_FAILED.getCode()));
@@ -202,7 +228,12 @@ class HubExecutionControllerTest {
         HubExecutionDTO execution = new HubExecutionDTO();
         execution.setId(id);
         execution.setStatus(status);
+        execution.setInstanceId("c39c0ecf-b905-4526-b9b7-0825a16acb14");
+        execution.setInstanceCode("primary");
+        execution.setCommandKey("bilibili/hot");
+        execution.setSite("bilibili");
+        execution.setArgv(List.of("bilibili", "hot"));
+        execution.setTimeoutMillis(1_000L);
         return execution;
     }
-
 }

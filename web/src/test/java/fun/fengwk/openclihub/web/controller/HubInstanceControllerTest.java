@@ -207,4 +207,17 @@ class HubInstanceControllerTest {
             .andExpect(jsonPath("$.code").value(HubErrorCodes.INSTANCE_BUSY.getCode()));
     }
 
+
+    /** clear-queue drains pending tasks and reports the cancelled count. */
+    @Test
+    void shouldClearPendingQueue() throws Exception {
+        when(lifecycleService.clearPendingQueue("11")).thenReturn(3);
+
+        mockMvc.perform(post("/api/instances/11/clear-queue"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.instanceId").value("11"))
+            .andExpect(jsonPath("$.data.clearedCount").value(3));
+        verify(lifecycleService).clearPendingQueue("11");
+    }
+
 }

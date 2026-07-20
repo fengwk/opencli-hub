@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
+import java.util.function.BooleanSupplier;
 import org.springframework.stereotype.Component;
 
 /**
@@ -40,12 +41,19 @@ public class HubDispatchRegistry {
     }
 
     public <T> T dispatch(HubInstance instance, Callable<T> task, long deadlineNanos) {
+        return dispatch(instance, task, deadlineNanos, null);
+    }
+
+    public <T> T dispatch(HubInstance instance,
+                          Callable<T> task,
+                          long deadlineNanos,
+                          BooleanSupplier stillWanted) {
         HubInstanceDispatcher dispatcher = dispatchers.get(instance.getId());
         if (dispatcher == null) {
             throw HubErrorCodes.INSTANCE_RUNTIME_NOT_FOUND
                 .asThrowable("Instance dispatcher is not registered: " + instance.getId());
         }
-        return dispatcher.dispatch(task, deadlineNanos);
+        return dispatcher.dispatch(task, deadlineNanos, stillWanted);
     }
 
     public <T> Future<T> submit(HubInstance instance,
@@ -78,6 +86,19 @@ public class HubDispatchRegistry {
     }
 
     /** Applies an editable maxPending change to an already-running instance, if present. */
+
+    /**
+     * Cancel all pending (not running) tasks for an instance. Returns 0 when no
+     * dispatcher is registered.
+     */
+    public int clearPending(String instanceId) {
+        HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
+        if (dispatcher == null) {
+            return 0;
+        }
+        return dispatcher.clearPending();
+    }
+
     public void updateMaxPending(String instanceId, int maxPending) {
         HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
         if (dispatcher != null) {

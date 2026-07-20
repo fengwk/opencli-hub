@@ -1,4 +1,7 @@
 spring:
+  mvc:
+    async:
+      request-timeout: 1860000
   sql:
     init:
       mode: always
