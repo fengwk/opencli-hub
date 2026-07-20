@@ -175,6 +175,84 @@ public class HubPluginService {
         }
     }
 
+
+    /**
+     * Updates already-installed plugins through official {@code opencli plugin update}.
+     * Unlike {@link #syncSource(String)}, this never runs {@code install} and therefore will not
+     * silently skip an already-installed plugin that needs a tip refresh.
+     *
+     * <p>Plugin names:
+     * <ul>
+     *   <li>non-empty {@code desiredPlugins}: update exactly those names</li>
+     *   <li>empty {@code desiredPlugins}: update every name returned by {@code plugin list -f json}</li>
+     * </ul>
+     */
+    public HubPluginSourceDTO updateInstalledFromSource(String id) {
+        HubPluginSource source = requireSource(id);
+        if (!source.isEnabled()) {
+            throw HubErrorCodes.PLUGIN_SOURCE_ARGUMENT_INVALID.asThrowable(
+                "plugin source is disabled: " + id);
+        }
+        if (!syncLock.tryLock()) {
+            throw HubErrorCodes.PLUGIN_SYNC_BUSY.asThrowable("another plugin sync is running");
+        }
+        List<String> commands = new ArrayList<>();
+        try {
+            source.setLastStatus(HubPluginSourceStatus.SYNCING);
+            source.setLastError(null);
+            repository.update(source);
+            log.info(
+                "Plugin update-installed started id={} name={} source={} desiredPlugins={}",
+                source.getId(),
+                source.getName(),
+                source.getSource(),
+                source.getDesiredPlugins());
+
+            List<String> targets = resolveUpdateTargets(source);
+            if (targets.isEmpty()) {
+                return failSync(source, commands, "no installed plugins to update");
+            }
+            for (String pluginName : targets) {
+                OpenCliPluginCli.CliResult update = pluginCli.run(List.of("update", pluginName));
+                commands.add(summarize("update " + pluginName, update));
+                if (update.exitCode() != 0) {
+                    return failSync(source, commands, firstNonBlank(update.stderr(), update.stdout()));
+                }
+            }
+
+            OpenCliPluginCli.CliResult list = pluginCli.run(List.of("list"));
+            commands.add(summarize("list", list));
+            commandCatalog.reload();
+
+            HubPluginSource latest = requireSource(id);
+            latest.setLastStatus(HubPluginSourceStatus.SUCCEEDED);
+            latest.setLastError(null);
+            latest.setLastSyncedAt(LocalDateTime.now());
+            latest.setLastResult(String.join("\n", commands));
+            repository.update(latest);
+            log.info("Plugin update-installed succeeded id={} name={} targets={}", id, latest.getName(), targets);
+            return toDTO(repository.findById(id));
+        } catch (RuntimeException ex) {
+            throw recordUnexpectedSyncFailure(source, commands, ex);
+        } finally {
+            syncLock.unlock();
+        }
+    }
+
+    private List<String> resolveUpdateTargets(HubPluginSource source) {
+        List<String> desired = source.getDesiredPlugins();
+        if (desired != null && !desired.isEmpty()) {
+            return List.copyOf(desired);
+        }
+        List<String> names = new ArrayList<>();
+        for (HubInstalledPluginDTO installed : listInstalled()) {
+            if (installed != null && installed.getName() != null && !installed.getName().isBlank()) {
+                names.add(installed.getName().trim());
+            }
+        }
+        return names;
+    }
+
     public List<HubInstalledPluginDTO> listInstalled() {
         OpenCliPluginCli.CliResult list = pluginCli.run(List.of("list", "-f", "json"));
         if (list.exitCode() != 0) {

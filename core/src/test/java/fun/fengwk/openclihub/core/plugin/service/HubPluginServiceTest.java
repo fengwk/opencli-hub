@@ -171,6 +171,70 @@ class HubPluginServiceTest {
             .hasMessageContaining("Failed to parse opencli plugin list JSON");
     }
 
+
+    /** Empty desiredPlugins must still refresh installed plugins via official update, not install-skip. */
+    @Test
+    void shouldUpdateInstalledPluginsWhenDesiredListIsEmpty() {
+        InMemoryRepo repo = new InMemoryRepo();
+        OpenCliPluginCli pluginCli = mock(OpenCliPluginCli.class);
+        OpenCliCommandCatalog catalog = mock(OpenCliCommandCatalog.class);
+        HubPluginService service = new HubPluginService(repo, pluginCli, catalog);
+
+        HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
+        request.setName("demo");
+        request.setSource("https://github.com/fengwk/my-opencli");
+        request.setDesiredPlugins(List.of());
+        request.setEnabled(true);
+        var created = service.createSource(request);
+
+        when(pluginCli.run(List.of("list", "-f", "json"))).thenReturn(new OpenCliPluginCli.CliResult(
+            0,
+            """
+                [{
+                  "name":"chatgpt-agent",
+                  "version":"0.1.2",
+                  "description":"Protocol stream",
+                  "commands":["ask"]
+                }]
+                """,
+            ""));
+        when(pluginCli.run(List.of("update", "chatgpt-agent")))
+            .thenReturn(new OpenCliPluginCli.CliResult(0, "updated chatgpt-agent", ""));
+        when(pluginCli.run(List.of("list")))
+            .thenReturn(new OpenCliPluginCli.CliResult(0, "chatgpt-agent @0.1.3", ""));
+
+        var result = service.updateInstalledFromSource(created.getId());
+
+        assertThat(result.getLastStatus()).isEqualTo(HubPluginSourceStatus.SUCCEEDED);
+        assertThat(result.getLastResult()).contains("update chatgpt-agent");
+        assertThat(result.getLastResult()).doesNotContain("install ");
+    }
+
+    /** Explicit desiredPlugins should update only the selected names. */
+    @Test
+    void shouldUpdateOnlyDesiredPlugins() {
+        InMemoryRepo repo = new InMemoryRepo();
+        OpenCliPluginCli pluginCli = mock(OpenCliPluginCli.class);
+        OpenCliCommandCatalog catalog = mock(OpenCliCommandCatalog.class);
+        HubPluginService service = new HubPluginService(repo, pluginCli, catalog);
+
+        HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
+        request.setName("demo");
+        request.setSource("github:fengwk/my-opencli");
+        request.setDesiredPlugins(List.of("chatgpt-agent"));
+        request.setEnabled(true);
+        var created = service.createSource(request);
+
+        when(pluginCli.run(List.of("update", "chatgpt-agent")))
+            .thenReturn(new OpenCliPluginCli.CliResult(0, "updated", ""));
+        when(pluginCli.run(List.of("list")))
+            .thenReturn(new OpenCliPluginCli.CliResult(0, "ok", ""));
+
+        var result = service.updateInstalledFromSource(created.getId());
+        assertThat(result.getLastStatus()).isEqualTo(HubPluginSourceStatus.SUCCEEDED);
+        assertThat(result.getLastResult()).contains("update chatgpt-agent");
+    }
+
     /** A post-install catalog failure must not leave the source permanently stuck in SYNCING. */
     @Test
     void shouldMarkSourceFailedWhenCatalogReloadFails() {

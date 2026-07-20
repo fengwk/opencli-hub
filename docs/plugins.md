@@ -75,7 +75,8 @@ Hub 配置的 `desiredPlugins` 是**子插件名**（如 `crm`），不是任意
 | POST | `/api/plugins/sources` | 新增源 |
 | PUT | `/api/plugins/sources/{id}` | 更新源 |
 | DELETE | `/api/plugins/sources/{id}` | 删除**配置**（默认不卸载已装插件） |
-| POST | `/api/plugins/sources/{id}/sync` | 同步该源 |
+| POST | `/api/plugins/sources/{id}/sync` | 同步该源（空 desiredPlugins 时仅 install；已装会 skip） |
+| POST | `/api/plugins/sources/{id}/update-installed` | 仅更新已装插件（`opencli plugin update`） |
 | GET | `/api/plugins/installed` | 包装 `opencli plugin list -f json`，仅返回真实插件条目 |
 | POST | `/api/plugins/reload-catalog` | 仅刷新 Hub Command Catalog |
 

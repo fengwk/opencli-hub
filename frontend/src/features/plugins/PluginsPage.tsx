@@ -8,6 +8,7 @@ import {
   listPluginSources,
   reloadPluginCatalog,
   syncPluginSource,
+  updateInstalledPluginSource,
   updatePluginSource,
 } from '@/features/plugins/plugins-api'
 import type { HubPluginSource, HubPluginSourceUpsert } from '@/features/plugins/types'
@@ -160,6 +161,17 @@ export function PluginsPage() {
     },
     onError: (error) => setActionError(errorMessage(error)),
   })
+  const updateInstalledMutation = useMutation({
+    mutationFn: updateInstalledPluginSource,
+    onSuccess: async () => {
+      setActionError(null)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['plugin-sources'] }),
+        queryClient.invalidateQueries({ queryKey: ['plugin-installed'] }),
+      ])
+    },
+    onError: (error) => setActionError(errorMessage(error)),
+  })
   const reloadMutation = useMutation({
     mutationFn: reloadPluginCatalog,
     onSuccess: () => setActionError(null),
@@ -167,7 +179,7 @@ export function PluginsPage() {
   })
 
   const busy = createMutation.isPending || updateMutation.isPending || deleteMutation.isPending
-    || syncMutation.isPending || reloadMutation.isPending
+    || syncMutation.isPending || updateInstalledMutation.isPending || reloadMutation.isPending
 
   const sources = useMemo(() => sourcesQuery.data ?? [], [sourcesQuery.data])
 
@@ -238,6 +250,14 @@ export function PluginsPage() {
               <div className="logs-actions">
                 <button type="button" className="btn btn-primary" disabled={busy || !source.enabled} onClick={() => syncMutation.mutate(source.id)}>
                   {sourceSyncActionLabel(source)}
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={busy || !source.enabled}
+                  onClick={() => updateInstalledMutation.mutate(source.id)}
+                >
+                  更新已安装
                 </button>
                 <button type="button" className="btn" disabled={busy} onClick={() => { setEditingId(source.id); setCreating(false) }}>
                   编辑

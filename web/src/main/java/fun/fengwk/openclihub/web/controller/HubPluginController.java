@@ -63,6 +63,11 @@ public class HubPluginController {
         return Results.ok(pluginService.syncSource(id));
     }
 
+    @PostMapping("/sources/{id}/update-installed")
+    public Result<HubPluginSourceDTO> updateInstalledFromSource(@PathVariable("id") String id) {
+        return Results.ok(pluginService.updateInstalledFromSource(id));
+    }
+
     @GetMapping("/installed")
     public Result<List<HubInstalledPluginDTO>> listInstalled() {
         return Results.ok(pluginService.listInstalled());

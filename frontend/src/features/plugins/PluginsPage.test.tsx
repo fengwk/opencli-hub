@@ -57,12 +57,28 @@ describe('PluginsPage', () => {
     expect(screen.getAllByText('尚未同步')).toHaveLength(2)
     expect(screen.getByRole('button', { name: '安装/更新已选子插件' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '安装默认集合' })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '更新已安装' })).toHaveLength(2)
     expect(screen.getByText('尚未安装插件')).toBeInTheDocument()
     expect(screen.queryByText('自动更新标记')).not.toBeInTheDocument()
     expect(screen.queryByText(/标记为可自动更新/)).not.toBeInTheDocument()
 
     await user.click(screen.getAllByRole('button', { name: '编辑' })[0])
     expect(screen.getByRole('checkbox', { name: '启用插件源' })).toBeChecked()
+  })
+
+  it('calls update-installed for the dedicated refresh button', async () => {
+    const user = userEvent.setup()
+    vi.mocked(apiClient.get).mockResolvedValueOnce([defaultSource]).mockResolvedValueOnce([])
+    vi.mocked(apiClient.post).mockResolvedValue(defaultSource)
+
+    renderPage()
+    expect(await screen.findByRole('button', { name: '更新已安装' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '更新已安装' }))
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith(
+      '/plugins/sources/source-2/update-installed',
+      undefined,
+      { timeout: 320_000 },
+    ))
   })
 
   it('saves source configuration without an automatic-update field', async () => {
