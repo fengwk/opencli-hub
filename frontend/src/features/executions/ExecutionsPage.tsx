@@ -96,7 +96,7 @@ export function ExecutionsPage() {
                     <td data-label="命令">{execution.commandKey ?? '—'}</td>
                     <td data-label="耗时">{formatMillis(execution.durationMillis)}</td>
                     <td data-label="时间">{formatDateTime(execution.finishedAt ?? execution.startedAt ?? execution.queuedAt)}</td>
-                    <td data-label="操作"><Link className="btn compact-button" to={`/executions/${encodeURIComponent(execution.id)}`}>查看详情 {execution.id}</Link></td>
+                    <td data-label="操作"><Link className="btn compact-button" to={`/executions/${encodeURIComponent(execution.id)}`}>查看详情</Link></td>
                   </tr>
                 ))}
               </tbody>
