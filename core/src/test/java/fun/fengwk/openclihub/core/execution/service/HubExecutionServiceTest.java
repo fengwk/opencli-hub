@@ -472,6 +472,49 @@ class HubExecutionServiceTest {
         verify(resources).scan(any());
     }
 
+
+    @Test
+    void shouldAutoManageOutputDirectoryArgument() {
+        OpenCliCommandArg output = new OpenCliCommandArg();
+        output.setName("output");
+        output.setType("string");
+        output.setRequired(false);
+        output.setValueRequired(true);
+        output.setPositional(false);
+        output.setHelp("Output directory");
+
+        OpenCliCommand command = new OpenCliCommand();
+        command.setSite("xiaohongshu");
+        command.setName("download");
+        command.setSiteSession(SiteSessionMode.EPHEMERAL);
+        command.setArgs(List.of(output));
+        command.setCommandKey("xiaohongshu/download");
+
+        NormalizedOpenCliArgv download = new NormalizedOpenCliArgv(
+            command,
+            "xiaohongshu/download",
+            List.of(),
+            new LinkedHashMap<>(),
+            List.of("xiaohongshu", "download"));
+        when(argvValidator.validate(any())).thenReturn(download);
+        when(blacklistService.findByCommandKey("xiaohongshu/download")).thenReturn(Optional.empty());
+        when(outputRuleService.findByCommandKey("xiaohongshu/download")).thenReturn(Optional.empty());
+        instance.setWebsites(List.of("xiaohongshu"));
+        when(router.chooseInstance(eq("xiaohongshu"), any())).thenReturn(instance);
+        executor.setBehavior(() -> FakeOpenCliExecutor.Behaviour.successJson("[{\"ok\":true}]"));
+        when(resources.scan(any())).thenReturn(List.of());
+
+        HubExecutionRequestDTO request = new HubExecutionRequestDTO();
+        request.setArgv(List.of("xiaohongshu", "download"));
+        request.setTimeoutMillis(5_000L);
+        HubExecutionDTO dto = service.execute(request);
+        assertThat(dto.getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
+        verify(resources).prepare(anyString(), any(), org.mockito.ArgumentMatchers.argThat(rule ->
+            rule != null
+                && "output".equals(rule.getArgumentName())
+                && rule.getTargetType() == HubCommandOutputTargetType.DIRECTORY));
+    }
+
     private HubExecutionRequestDTO request(String instanceId, long timeoutMillis) {
         HubExecutionRequestDTO request = new HubExecutionRequestDTO();
         request.setInstanceId(instanceId);

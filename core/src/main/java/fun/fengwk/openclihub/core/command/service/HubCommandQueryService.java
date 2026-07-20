@@ -90,16 +90,25 @@ public class HubCommandQueryService {
         dto.setBrowser(command.isBrowser());
         dto.setSiteSession(command.getSiteSession());
         dto.setDefaultWindowMode(command.getDefaultWindowMode());
-        dto.setArgs(toArgDTOs(command));
+        // Platform fully manages local output paths; do not expose them (or output-rule
+        // config) on the public command contract.
+        dto.setArgs(toPublicArgDTOs(command, ruleEntry));
         dto.setBlacklisted(blacklistEntry != null);
         dto.setBlacklistReason(blacklistEntry == null ? null : blacklistEntry.getReason());
-        dto.setOutputRule(HubCommandOutputRuleService.toDTO(ruleEntry));
+        dto.setOutputRule(null);
         return dto;
     }
 
-    private static List<HubCommandArgDTO> toArgDTOs(OpenCliCommand command) {
+    private static List<HubCommandArgDTO> toPublicArgDTOs(OpenCliCommand command,
+                                                         HubCommandOutputRule ruleEntry) {
         List<HubCommandArgDTO> result = new ArrayList<>();
+        if (command.getArgs() == null) {
+            return result;
+        }
         for (var arg : command.getArgs()) {
+            if (HubManagedOutputArguments.shouldHideFromPublicCatalog(arg, ruleEntry)) {
+                continue;
+            }
             HubCommandArgDTO dto = new HubCommandArgDTO();
             dto.setName(arg.getName());
             dto.setType(arg.getType());

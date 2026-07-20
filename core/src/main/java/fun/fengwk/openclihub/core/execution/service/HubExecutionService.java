@@ -5,6 +5,7 @@ import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.convention4j.api.page.Page;
 import fun.fengwk.convention4j.api.page.PageQuery;
 import fun.fengwk.openclihub.core.command.service.HubCommandBlacklistService;
+import fun.fengwk.openclihub.core.command.service.HubManagedOutputArguments;
 import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandArg;
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommand;
@@ -281,9 +282,9 @@ public class HubExecutionService {
 
 
     /**
-     * Prefer an explicit admin output rule. When absent, auto-manage a non-positional
-     * {@code op} argument as a DIRECTORY output so adapters write into Hub resources
-     * without callers supplying container paths.
+     * Prefer an explicit admin output rule. When absent, auto-manage the first
+     * platform-owned local output argument (op/out/output/path/...) so adapters write
+     * into Hub resources without callers supplying container paths.
      */
     private HubCommandOutputRule resolveEffectiveOutputRule(NormalizedOpenCliArgv normalized) {
         HubCommandOutputRule configured = outputRuleService
@@ -291,24 +292,7 @@ public class HubExecutionService {
         if (configured != null) {
             return configured;
         }
-        OpenCliCommand command = normalized.getCommand();
-        if (command == null || command.getArgs() == null) {
-            return null;
-        }
-        for (OpenCliCommandArg arg : command.getArgs()) {
-            if (arg == null || arg.getName() == null) {
-                continue;
-            }
-            if (!"op".equals(arg.getName()) || arg.isPositional()) {
-                continue;
-            }
-            HubCommandOutputRule synthetic = new HubCommandOutputRule();
-            synthetic.setCommandKey(command.getCommandKey());
-            synthetic.setArgumentName("op");
-            synthetic.setTargetType(HubCommandOutputTargetType.DIRECTORY);
-            return synthetic;
-        }
-        return null;
+        return HubManagedOutputArguments.syntheticRule(normalized.getCommand());
     }
 
     private void validateJsonOutput(OpenCliExecutionResult result) {
