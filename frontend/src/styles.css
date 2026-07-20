@@ -139,13 +139,19 @@ h1, h2, h3 {
 .nav-link {
   position: relative;
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 7px;
   padding: 0 10px;
   color: var(--color-text-muted);
   font-size: 13px;
   text-decoration: none;
+  white-space: nowrap;
   transition: color .16s ease, background .16s ease;
+}
+
+.nav-link > span {
+  white-space: nowrap;
 }
 
 .nav-link:hover {
@@ -724,10 +730,17 @@ input[type='file']::file-selector-button:hover {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
 }
 
 .section-heading-row, .policy-row {
   flex-wrap: wrap;
+}
+
+.section-heading-row > h3,
+.section-heading-row > h2,
+.section-heading-row > div {
+  min-width: 0;
 }
 
 .compact-button {
@@ -1600,9 +1613,22 @@ input[type='file']::file-selector-button:hover {
 
 .command-card-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
+  gap: 10px 14px;
+  min-width: 0;
+}
+
+.command-card-header > div:first-child {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.command-card-header .badge-row {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+  max-width: 100%;
 }
 
 .command-card-header .eyebrow {
@@ -1661,11 +1687,15 @@ input[type='file']::file-selector-button:hover {
 
 .command-curl-section .section-heading-row {
   align-items: center;
+  gap: 8px;
 }
 
 .command-copy {
+  flex: 0 0 auto;
+  min-width: 0;
   min-height: 30px;
   padding: 5px 8px;
+  white-space: nowrap;
 }
 
 .command-copy svg {
@@ -1981,25 +2011,8 @@ input[type='file']::file-selector-button:hover {
   }
 }
 
-@media (max-width: 900px) {
-  .topbar {
-    gap: 14px;
-  }
-
-  .nav-link {
-    padding: 0 7px;
-  }
-
-  .nav-link small {
-    display: none;
-  }
-
-  .metric-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (max-width: 700px) {
+@media (max-width: 1100px) {
+  /* Desktop horizontal nav collapses before Chinese labels wrap vertically. */
   .topbar {
     gap: 10px;
     height: 56px;
@@ -2010,7 +2023,8 @@ input[type='file']::file-selector-button:hover {
     font-size: 14px;
   }
 
-  .brand small, .shell-status {
+  .brand small,
+  .shell-status {
     display: none;
   }
 
@@ -2054,6 +2068,11 @@ input[type='file']::file-selector-button:hover {
     min-height: 42px;
     padding: 0 10px;
     border-radius: 7px;
+    white-space: nowrap;
+  }
+
+  .nav-link small {
+    display: none;
   }
 
   .nav-link.active::after {
@@ -2068,10 +2087,30 @@ input[type='file']::file-selector-button:hover {
     padding-top: 27px;
   }
 
+  .command-card-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .command-card-header .badge-row {
+    justify-content: flex-start;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
   .page-header-actions,
   .instance-detail-header,
   .execution-detail-header,
-  .command-card-header,
   .resource-item {
     align-items: flex-start;
     flex-direction: column;
@@ -2079,14 +2118,6 @@ input[type='file']::file-selector-button:hover {
 
   .page-header-actions > .btn {
     width: 100%;
-  }
-
-  .command-card-header {
-    align-items: stretch;
-  }
-
-  .command-card-header > div {
-    min-width: 0;
   }
 
   .page-title {
@@ -2223,18 +2254,53 @@ input[type='file']::file-selector-button:hover {
 
   .filter-bar, .upload-form, .inline-form {
     align-items: stretch;
+    flex-direction: column;
   }
 
   .filter-bar label, .upload-form label, .inline-form label {
-    flex: 1 1 135px;
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  .inline-form > .btn,
+  .filter-bar > .btn,
+  .upload-form > .btn {
+    width: 100%;
+    margin-left: 0;
   }
 
   .command-search {
     flex-basis: 100%;
   }
 
-  .section-heading-row, .policy-row {
-    align-items: flex-start;
+  .section-heading-row,
+  .policy-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .section-heading-row > .btn,
+  .section-heading-row > .command-copy,
+  .policy-row > .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .command-curl-section .section-heading-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .command-copy {
+    width: 100%;
+    justify-content: center;
+    white-space: normal;
+  }
+
+  .command-section > .btn,
+  .policy-section > .btn {
+    width: 100%;
+    justify-content: center;
   }
 
   .btn, .icon-button {
