@@ -91,19 +91,19 @@ scripts/docker/opencli-artifact.lock.env
 
 1. **成对升级**：CLI 与 extension 必须来自同一 OpenCLI Release，不要只改一侧。
 2. **校验和必填**：任何远程 CLI tarball / extension zip 都必须写入对应 SHA256；构建会先校验再安装。
-3. **默认 lock 只指向已发布资产**：当前钉住已验证的 `fork-v1.8.7-fengwk.3`；不要提交未发布的本地产物 URL。
+3. **默认 lock 只指向已发布资产**：当前钉住已验证的 `fork-v1.8.7-fengwk.4`；不要提交未发布的本地产物 URL。
 4. **后续升级 fork Release 时只改 lock**，当前值为：
 
 ```bash
 # scripts/docker/opencli-artifact.lock.env
 OPENCLI_PACKAGE=@jackwener/opencli
-OPENCLI_VERSION=1.8.7-fengwk.3
-OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.3/jackwener-opencli-1.8.7-fengwk.3.tgz
-OPENCLI_CLI_SHA256=05c5ec2bcfea81bb44d1cdae6958ff6c83019ed4aeed86b22d8c8c0d2856dc2c
-OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@df693d324e97a1201cebb7d246c34009b49eaa27
-EXTENSION_VERSION=1.0.24
-OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.3/opencli-extension-v1.0.24.zip
-OPENCLI_EXTENSION_SHA256=f3b65ff894fe4679dd6a8723dd463ca035c8cf5bc0ee36dd402dc90fc0c7f844
+OPENCLI_VERSION=1.8.7-fengwk.4
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.4/jackwener-opencli-1.8.7-fengwk.4.tgz
+OPENCLI_CLI_SHA256=189d64e3fa5b00e5409c758bbb04e9e22dafe70b9273ab3031034ed20f9381b2
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@67ddb7ec24ccb92c9b14a57c7d316963294d6b1c
+EXTENSION_VERSION=1.0.25
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.4/opencli-extension-v1.0.25.zip
+OPENCLI_EXTENSION_SHA256=9292632206c53319ab5ade11805c2185035832904baa94db4560837a4215ecac
 ```
 
 可选 build-arg 覆盖范围（仅当前构建生效，不改仓库默认 pin）：
