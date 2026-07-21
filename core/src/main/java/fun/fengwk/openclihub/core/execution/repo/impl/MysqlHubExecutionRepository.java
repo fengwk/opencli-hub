@@ -63,6 +63,13 @@ public class MysqlHubExecutionRepository implements HubExecutionRepository {
     }
 
     @Override
+    public boolean markTerminalIfPending(String id, HubExecutionStatus status, String errorMessage,
+                                         Integer exitCode, LocalDateTime finishedAt) {
+        return id != null && status != null && finishedAt != null
+            && mapper.markTerminalIfPending(id, status.name(), errorMessage, exitCode, finishedAt) == 1;
+    }
+
+    @Override
     public Page<HubExecution> page(PageQuery pageQuery, String instanceId) {
         int limit = Pages.queryLimit(pageQuery);
         long offset = ((long) pageQuery.getPageNumber() - 1L) * limit;

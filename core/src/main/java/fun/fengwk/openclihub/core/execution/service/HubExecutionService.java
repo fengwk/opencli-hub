@@ -347,18 +347,29 @@ public class HubExecutionService {
         if (isTerminal(execution.getStatus())) {
             return converter.toDTO(execution, List.of());
         }
-        // Only overwrite when still queued/running enqueue failure.
-        if (execution.getStatus() == HubExecutionStatus.PENDING
-            || execution.getStatus() == HubExecutionStatus.RUNNING) {
+        LocalDateTime now = LocalDateTime.now();
+        if (execution.getStatus() == HubExecutionStatus.PENDING) {
+            // CAS so concurrent cancel(PENDING→CANCELLED) always wins over timeout/fail write.
+            OpenCliExecutionResult terminal = isError(failure, HubErrorCodes.QUEUE_WAIT_TIMEOUT)
+                ? timedOutResult("Execution deadline elapsed while queued")
+                : failedResult(failure);
+            HubExecutionStatus status = terminal.isTimedOut()
+                ? HubExecutionStatus.TIMED_OUT
+                : HubExecutionStatus.FAILED;
+            executionRepository.markTerminalIfPending(
+                executionId,
+                status,
+                terminal.getErrorMessage(),
+                terminal.getExitCode(),
+                now);
+            execution = executionRepository.findById(executionId);
+            return converter.toDTO(execution, List.of());
+        }
+        if (execution.getStatus() == HubExecutionStatus.RUNNING) {
             if (isError(failure, HubErrorCodes.QUEUE_WAIT_TIMEOUT)) {
-                execution.markFinished(timedOutResult("Execution deadline elapsed while queued"),
-                    LocalDateTime.now());
+                execution.markFinished(timedOutResult("Execution deadline elapsed while queued"), now);
             } else {
-                execution.markFinished(failedResult(failure), LocalDateTime.now());
-            }
-            // Prefer CAS cancel-style if still PENDING so we don't clobber a concurrent cancel.
-            if (execution.getStatus() == HubExecutionStatus.CANCELLED) {
-                // markFinished may have set FAILED; for PENDING race use markCancelled is wrong.
+                execution.markFinished(failedResult(failure), now);
             }
             persistUpdate(execution);
         }

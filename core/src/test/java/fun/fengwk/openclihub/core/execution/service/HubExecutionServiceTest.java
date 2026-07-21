@@ -635,6 +635,25 @@ class HubExecutionServiceTest {
             return true;
         }
 
+        @Override
+        public boolean markTerminalIfPending(String id, HubExecutionStatus status, String errorMessage,
+                                             Integer exitCode, java.time.LocalDateTime finishedAt) {
+            HubExecution execution = executions.get(id);
+            if (execution == null || execution.getStatus() != HubExecutionStatus.PENDING) {
+                return false;
+            }
+            updateCount++;
+            if (failUpdateAt == updateCount) {
+                return false;
+            }
+            execution.setStatus(status);
+            execution.setErrorMessage(errorMessage);
+            execution.setExitCode(exitCode);
+            execution.setFinishedAt(finishedAt);
+            updatedStatuses.add(status);
+            return true;
+        }
+
     }
 
 }

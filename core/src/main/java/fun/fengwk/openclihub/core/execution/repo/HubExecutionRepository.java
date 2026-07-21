@@ -3,6 +3,7 @@ package fun.fengwk.openclihub.core.execution.repo;
 import fun.fengwk.convention4j.api.page.Page;
 import fun.fengwk.convention4j.api.page.PageQuery;
 import fun.fengwk.openclihub.core.execution.service.model.HubExecution;
+import fun.fengwk.openclihub.share.model.execution.HubExecutionStatus;
 import java.time.LocalDateTime;
 
 /**
@@ -27,5 +28,9 @@ public interface HubExecutionRepository {
 
     /** CAS: PENDING -> CANCELLED. */
     boolean markCancelledIfPending(String id, String errorMessage, LocalDateTime finishedAt);
+
+    /** CAS: PENDING -> terminal status (FAILED/TIMED_OUT/...). */
+    boolean markTerminalIfPending(String id, HubExecutionStatus status, String errorMessage,
+                                 Integer exitCode, LocalDateTime finishedAt);
 
 }

@@ -87,4 +87,20 @@ public interface HubExecutionMapper extends BaseMapper {
         @Param("errorMessage") String errorMessage,
         @Param("finishedAt") LocalDateTime finishedAt);
 
+    @Update("""
+        update hub_execution
+        set status = #{status},
+            error_message = #{errorMessage},
+            exit_code = #{exitCode},
+            finished_at = #{finishedAt},
+            gmt_modified = #{finishedAt}
+        where id = #{id} and status = 'PENDING'
+        """)
+    int markTerminalIfPending(
+        @Param("id") String id,
+        @Param("status") String status,
+        @Param("errorMessage") String errorMessage,
+        @Param("exitCode") Integer exitCode,
+        @Param("finishedAt") LocalDateTime finishedAt);
+
 }
