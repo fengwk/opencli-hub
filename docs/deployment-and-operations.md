@@ -242,7 +242,7 @@ scripts/docker/test-install-opencli.sh
 
 `migrate-mysql-instance-priority.sql` 为既有 `hub_instance` 增加 `priority int not null default 0`（自动路由负载相同时更高优先）。新库由 `schema-mysql.sql` 建表即可；既有库必须在部署含该字段的 Hub 镜像前执行此脚本。
 
-`migrate-mysql-execution-queued-at-immutable.sql` 去掉 `hub_execution.queued_at` 的 `ON UPDATE CURRENT_TIMESTAMP`，避免状态更新改写入队时间导致列表乱序。
+`migrate-mysql-execution-queued-at-immutable.sql` 去掉 `hub_execution.queued_at` 的 `ON UPDATE CURRENT_TIMESTAMP`，并使用稳定的 `gmt_create` 回填已被状态更新改写的历史入队时间。脚本结束时 `queued_at_rows_still_drifted` 应为 `0`。
 
 ## 7. 日常检查
 
