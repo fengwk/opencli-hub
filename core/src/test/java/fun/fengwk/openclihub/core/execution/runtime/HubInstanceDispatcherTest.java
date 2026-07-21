@@ -5,6 +5,9 @@ import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -363,6 +366,120 @@ class HubInstanceDispatcherTest {
             releaseActive.countDown();
             busy.shutdownNow();
         }
+    }
+
+    /**
+     * acceptedNotTerminalCount closes the worker-start race: even if a future is still
+     * between executor.execute() and the first Runnable tick, executeWhenIdle and
+     * shutdownIfIdle must see the accepted work. The worker is held in a custom
+     * thread factory so the test never relies on Thread.sleep to land the window.
+     */
+    @Test
+    void shouldNotRunExecuteWhenIdleWhileFutureAcceptedButNotStarted() throws Exception {
+        HoldingExecutor executor = new HoldingExecutor();
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("accept-window", 4, executor);
+        try {
+            Future<String> submitted = dispatcher.submit(
+                () -> "never",
+                System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
+            // The controlled executor has accepted the FutureTask but deliberately has no active
+            // worker or queued command. This is the same observable state as the Worker-start gap.
+            assertThat(dispatcher.activeCount()).isZero();
+            assertThat(dispatcher.pendingCount()).isZero();
+            assertThat(submitted).isNotDone();
+
+            // The bind-like idle op must be rejected without ever invoking the body
+            // or releasing the worker.
+            AtomicInteger bodyRuns = new AtomicInteger();
+            assertThatThrownBy(() -> dispatcher.executeWhenIdle(() -> {
+                bodyRuns.incrementAndGet();
+                return "must-not-run";
+            }))
+                .isInstanceOf(ThrowableConventionErrorCode.class)
+                .satisfies(ex -> assertThat(((ThrowableConventionErrorCode) ex).getCode())
+                    .isEqualTo(HubErrorCodes.INSTANCE_BUSY.getCode()));
+            assertThat(bodyRuns).hasValue(0);
+            assertThat(dispatcher.shutdownIfIdle())
+                .as("accepted but not started work must block idle shutdown")
+                .isFalse();
+
+            // Release the worker; once done() runs the counter decrements and the
+            // next idle op can complete.
+            executor.runHeldTask();
+            assertThat(submitted.get(2, TimeUnit.SECONDS)).isEqualTo("never");
+            assertThat(dispatcher.shutdownIfIdle())
+                .as("idle shutdown resumes once the accepted task terminal-ised")
+                .isTrue();
+        } finally {
+            if (!dispatcher.isShuttingDown()) {
+                dispatcher.shutdownNow();
+            }
+        }
+    }
+
+    /**
+     * A rejection before a worker is created must roll back the accepted counter so an idle
+     * operation does not see a phantom task.
+     */
+    @Test
+    void shouldRollbackAcceptedCounterWhenExecutorRejectsSubmission() {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher(
+            "accept-rollback", 2, new RejectingExecutor());
+        try {
+            assertThatThrownBy(() -> dispatcher.submit(
+                () -> "never",
+                System.nanoTime() + TimeUnit.SECONDS.toNanos(5)))
+                .isInstanceOf(ThrowableConventionErrorCode.class)
+                .satisfies(ex -> assertThat(((ThrowableConventionErrorCode) ex).getCode())
+                    .isEqualTo(HubErrorCodes.INSTANCE_QUEUE_FULL.getCode()));
+            assertThat(dispatcher.executeWhenIdle(() -> "idle"))
+                .as("the rejected task must not leave a phantom accepted count")
+                .isEqualTo("idle");
+        } finally {
+            dispatcher.shutdownNow();
+        }
+    }
+
+    /** Accepts one command without exposing it through ThreadPoolExecutor's active/queue metrics. */
+    private static final class HoldingExecutor extends ThreadPoolExecutor {
+
+        private Runnable held;
+
+        HoldingExecutor() {
+            super(1, 1, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
+        }
+
+        @Override
+        public void execute(Runnable command) {
+            if (held != null) {
+                throw new RejectedExecutionException("test executor already holds a command");
+            }
+            held = command;
+        }
+
+        void runHeldTask() {
+            if (held == null) {
+                throw new IllegalStateException("no held command");
+            }
+            Runnable command = held;
+            held = null;
+            command.run();
+        }
+
+    }
+
+    /** Rejects before accepting a command while leaving the dispatcher itself open. */
+    private static final class RejectingExecutor extends ThreadPoolExecutor {
+
+        RejectingExecutor() {
+            super(1, 1, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
+        }
+
+        @Override
+        public void execute(Runnable command) {
+            throw new RejectedExecutionException("test rejection");
+        }
+
     }
 
     private static boolean awaitIdle(HubInstanceDispatcher dispatcher, long timeoutMillis)

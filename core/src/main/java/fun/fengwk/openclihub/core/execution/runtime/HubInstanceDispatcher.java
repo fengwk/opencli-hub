@@ -49,21 +49,31 @@ public class HubInstanceDispatcher {
      * submit is in flight.
      */
     private final ReentrantLock submitLock = new ReentrantLock();
+    /** Number of accepted FutureTasks that have not reached FutureTask.done() yet. */
+    private int acceptedNotTerminalCount;
     private volatile boolean shutdown;
 
     public HubInstanceDispatcher(String instanceCode, int maxPending) {
-        if (maxPending <= 0) {
-            throw new IllegalArgumentException("maxPending must be positive");
-        }
-        this.maxPending = maxPending;
-        executor = new ThreadPoolExecutor(
+        this(instanceCode, maxPending, new ThreadPoolExecutor(
             1,
             1,
             0L,
             TimeUnit.MILLISECONDS,
             new LinkedBlockingQueue<>(),
             new DispatcherThreadFactory(instanceCode),
-            new ThreadPoolExecutor.AbortPolicy());
+            new ThreadPoolExecutor.AbortPolicy()));
+    }
+
+    /** Package-private test wiring for deterministic executor acceptance control. */
+    HubInstanceDispatcher(String instanceCode, int maxPending, ThreadPoolExecutor executor) {
+        if (maxPending <= 0) {
+            throw new IllegalArgumentException("maxPending must be positive");
+        }
+        if (executor == null) {
+            throw new IllegalArgumentException("executor must not be null");
+        }
+        this.maxPending = maxPending;
+        this.executor = executor;
     }
 
     public int getMaxPending() {
@@ -163,14 +173,20 @@ public class HubInstanceDispatcher {
                 throw HubErrorCodes.INSTANCE_QUEUE_FULL.asThrowable(
                     "Instance pending queue reached maxPending=" + maxPending);
             }
-            FutureTask<T> future = new FutureTask<>(
+            TrackedFutureTask<T> future = new TrackedFutureTask<>(
                 new DeadlineAwareCallable<>(task, deadlineNanos, stillWanted));
+            acceptedNotTerminalCount++;
             try {
                 executor.execute(future);
+                future.markAccepted();
             } catch (RejectedExecutionException ex) {
+                rollbackAcceptedSubmission();
                 throw HubErrorCodes.INSTANCE_QUEUE_FULL.asThrowable(
                     "Instance pending queue refused the submission: "
                         + (ex.getMessage() == null ? "queue full" : ex.getMessage()));
+            } catch (RuntimeException | Error ex) {
+                rollbackAcceptedSubmission();
+                throw ex;
             }
             return future;
         } finally {
@@ -193,9 +209,11 @@ public class HubInstanceDispatcher {
                 throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
                     "Instance dispatcher is shutting down");
             }
-            if (executor.getActiveCount() != 0 || !executor.getQueue().isEmpty()) {
+            if (acceptedNotTerminalCount != 0
+                || executor.getActiveCount() != 0
+                || !executor.getQueue().isEmpty()) {
                 throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
-                    "Instance has active or pending work");
+                    "Instance has accepted, active, or pending work");
             }
             try {
                 return task.call();
@@ -258,7 +276,9 @@ public class HubInstanceDispatcher {
             if (shutdown) {
                 return true;
             }
-            if (executor.getActiveCount() != 0 || !executor.getQueue().isEmpty()) {
+            if (acceptedNotTerminalCount != 0
+                || executor.getActiveCount() != 0
+                || !executor.getQueue().isEmpty()) {
                 return false;
             }
             executor.shutdown();
@@ -287,6 +307,49 @@ public class HubInstanceDispatcher {
 
     public boolean isShuttingDown() {
         return shutdown;
+    }
+
+    /** Caller must hold {@link #submitLock}. */
+    private void rollbackAcceptedSubmission() {
+        if (acceptedNotTerminalCount > 0) {
+            acceptedNotTerminalCount--;
+        }
+    }
+
+    private final class TrackedFutureTask<T> extends FutureTask<T> {
+
+        private boolean accepted;
+        private boolean terminal;
+        private boolean terminalCounted;
+
+        private TrackedFutureTask(Callable<T> callable) {
+            super(callable);
+        }
+
+        /** Caller holds submitLock; done() may have run before executor.execute returned. */
+        private void markAccepted() {
+            accepted = true;
+            decrementWhenTerminal();
+        }
+
+        @Override
+        protected void done() {
+            submitLock.lock();
+            try {
+                terminal = true;
+                decrementWhenTerminal();
+            } finally {
+                submitLock.unlock();
+            }
+        }
+
+        private void decrementWhenTerminal() {
+            if (accepted && terminal && !terminalCounted) {
+                rollbackAcceptedSubmission();
+                terminalCounted = true;
+            }
+        }
+
     }
 
     private <T> T await(Future<T> future, BooleanSupplier stillWanted) {
