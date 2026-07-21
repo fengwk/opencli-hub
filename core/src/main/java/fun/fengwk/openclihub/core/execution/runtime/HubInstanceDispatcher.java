@@ -257,15 +257,16 @@ public class HubInstanceDispatcher {
         return shutdown;
     }
 
-    private static <T> T await(Future<T> future, BooleanSupplier stillWanted) {
+    private <T> T await(Future<T> future, BooleanSupplier stillWanted) {
         boolean interrupted = false;
         try {
             while (true) {
                 try {
-                    return future.get(200L, TimeUnit.MILLISECONDS);
+                    // 50ms poll: cancel pending promptly after liveness is lost.
+                    return future.get(50L, TimeUnit.MILLISECONDS);
                 } catch (TimeoutException ex) {
                     if (stillWanted != null && !stillWanted.getAsBoolean()) {
-                        future.cancel(false);
+                        cancelQueued(future);
                         throw HubErrorCodes.CLIENT_DISCONNECTED.asThrowable(
                             "Client disconnected while waiting in the instance queue");
                     }
@@ -274,6 +275,8 @@ public class HubInstanceDispatcher {
                     // waiting and restore the flag after the terminal state is persisted.
                     interrupted = true;
                 } catch (CancellationException ex) {
+                    // Already cancelled (clear-queue or a prior cancelQueued).
+                    executor.getQueue().remove(future);
                     if (stillWanted != null && !stillWanted.getAsBoolean()) {
                         throw HubErrorCodes.CLIENT_DISCONNECTED.asThrowable(
                             "Client disconnected while waiting in the instance queue");
@@ -297,6 +300,15 @@ public class HubInstanceDispatcher {
                 Thread.currentThread().interrupt();
             }
         }
+    }
+
+    /**
+     * Cancel a not-yet-running task and drop it from the executor queue so it does not
+     * occupy a pending slot until the active worker happens to poll it.
+     */
+    private void cancelQueued(Future<?> future) {
+        future.cancel(false);
+        executor.getQueue().remove(future);
     }
 
     /**
