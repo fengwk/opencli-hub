@@ -11,6 +11,8 @@ public enum HubExecutionStatus {
     RUNNING,
     SUCCEEDED,
     FAILED,
-    TIMED_OUT
+    TIMED_OUT,
+    /** Cancelled while still queued (before opencli started). */
+    CANCELLED
 
 }

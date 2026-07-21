@@ -14,6 +14,7 @@ const STATUS_TONES: Record<string, StatusTone> = {
   STOPPING: 'warning',
   TIMEOUT: 'warning',
   TIMED_OUT: 'warning',
+  CANCELLED: 'neutral',
   ERROR: 'danger',
   FAILED: 'danger',
 }

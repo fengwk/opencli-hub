@@ -4,8 +4,10 @@ import fun.fengwk.automapper.annotation.AutoMapper;
 import fun.fengwk.convention4j.springboot.starter.mybatis.BaseMapper;
 import fun.fengwk.openclihub.core.execution.repo.impl.model.HubExecutionDO;
 import java.util.List;
+import java.time.LocalDateTime;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 /**
  * Auto-generated SQL mapper for hub_execution.
@@ -61,5 +63,28 @@ public interface HubExecutionMapper extends BaseMapper {
         @Param("instanceId") String instanceId,
         @Param("offset") long offset,
         @Param("limit") int limit);
+
+
+    @Update("""
+        update hub_execution
+        set status = 'RUNNING',
+            started_at = #{startedAt},
+            gmt_modified = #{startedAt}
+        where id = #{id} and status = 'PENDING'
+        """)
+    int markRunningIfPending(@Param("id") String id, @Param("startedAt") LocalDateTime startedAt);
+
+    @Update("""
+        update hub_execution
+        set status = 'CANCELLED',
+            error_message = #{errorMessage},
+            finished_at = #{finishedAt},
+            gmt_modified = #{finishedAt}
+        where id = #{id} and status = 'PENDING'
+        """)
+    int markCancelledIfPending(
+        @Param("id") String id,
+        @Param("errorMessage") String errorMessage,
+        @Param("finishedAt") LocalDateTime finishedAt);
 
 }

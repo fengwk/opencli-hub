@@ -1,6 +1,6 @@
 import type { BackendDateTime, BackendId, BackendLong } from '@/shared/api/contracts'
 
-export type HubExecutionStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT'
+export type HubExecutionStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'CANCELLED'
 export type SiteSessionMode = 'EPHEMERAL' | 'PERSISTENT'
 
 export interface ExecutionResource {

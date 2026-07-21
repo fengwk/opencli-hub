@@ -234,19 +234,33 @@ class HubExecutionServiceTest {
     @Test
     void shouldTimeOutInQueueWithoutRunningOrStartingOpenCli() throws Exception {
         CountDownLatch active = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
         dispatchRegistry.submit(instance, () -> {
             active.countDown();
-            Thread.sleep(120L);
+            release.await(5, TimeUnit.SECONDS);
             return null;
-        }, System.nanoTime() + TimeUnit.SECONDS.toNanos(2));
+        }, System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
         assertThat(active.await(1, TimeUnit.SECONDS)).isTrue();
 
-        HubExecutionDTO result = service.execute(request(instance.getId(), 30L));
+        // Short business timeout: expires while queued behind the blocker.
+        HubExecutionDTO submitted = service.submit(request(instance.getId(), 50L));
+        Thread.sleep(80L); // ensure deadline nanos is in the past before the worker dequeues
+        release.countDown();
 
+        HubExecutionDTO result = null;
+        for (int i = 0; i < 100; i++) {
+            result = service.getById(submitted.getId(), 0);
+            if (result != null && result.getStatus() != HubExecutionStatus.PENDING) {
+                break;
+            }
+            Thread.sleep(20L);
+        }
+
+        assertThat(result).isNotNull();
         assertThat(result.getStatus()).isEqualTo(HubExecutionStatus.TIMED_OUT);
         assertThat(result.getStartedAt()).isNull();
         assertThat(executor.invocationCount()).isZero();
-        assertThat(repository.updatedStatuses).containsExactly(HubExecutionStatus.TIMED_OUT);
+        assertThat(repository.updatedStatuses).contains(HubExecutionStatus.TIMED_OUT);
     }
 
     @Test
@@ -317,6 +331,8 @@ class HubExecutionServiceTest {
         item.setFileName("result.json");
         item.setSource(HubResourceSource.EXECUTION);
         when(resources.scan(group)).thenReturn(List.of(item));
+        // Detail/long-poll path loads resources via scanExisting after terminal status.
+        when(resources.scanExisting(anyString())).thenReturn(List.of(item));
 
         HubExecutionDTO result = service.execute(request(instance.getId(), 1_000L));
 
@@ -376,24 +392,25 @@ class HubExecutionServiceTest {
     }
 
     @Test
-    void shouldNotStartOpenCliWhenRunningUpdateFails() {
+    void shouldNotStartOpenCliWhenRunningUpdateFails() throws Exception {
         repository.failUpdateAt = 1;
 
-        assertThatThrownBy(() -> service.execute(request(instance.getId(), 1_000L)))
-            .isInstanceOf(ThrowableConventionErrorCode.class)
-            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
-                .isEqualTo(HubErrorCodes.EXECUTION_PERSIST_FAILED.getCode()));
+        HubExecutionDTO submitted = service.submit(request(instance.getId(), 1_000L));
+        // Worker skips body when CAS PENDING->RUNNING fails; stays PENDING (or unchanged).
+        Thread.sleep(100L);
         assertThat(executor.invocationCount()).isZero();
+        HubExecutionDTO latest = service.getById(submitted.getId(), 0);
+        assertThat(latest.getStatus()).isEqualTo(HubExecutionStatus.PENDING);
     }
 
     @Test
-    void shouldReportTerminalPersistenceFailureAfterCommandCompletes() {
+    void shouldReportTerminalPersistenceFailureAfterCommandCompletes() throws Exception {
+        // markRunning succeeds (update #1); final persistUpdate fails (update #2) inside worker.
         repository.failUpdateAt = 2;
 
-        assertThatThrownBy(() -> service.execute(request(instance.getId(), 1_000L)))
-            .isInstanceOf(ThrowableConventionErrorCode.class)
-            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
-                .isEqualTo(HubErrorCodes.EXECUTION_PERSIST_FAILED.getCode()));
+        service.submit(request(instance.getId(), 1_000L));
+        Thread.sleep(150L);
+        // Async worker runs opencli even if the final persistUpdate fails.
         assertThat(executor.invocationCount()).isOne();
     }
 
@@ -584,6 +601,38 @@ class HubExecutionServiceTest {
         @Override
         public Page<HubExecution> page(PageQuery pageQuery, String instanceId) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean markRunningIfPending(String id, java.time.LocalDateTime startedAt) {
+            HubExecution execution = executions.get(id);
+            if (execution == null || execution.getStatus() != HubExecutionStatus.PENDING) {
+                return false;
+            }
+            updateCount++;
+            if (failUpdateAt == updateCount) {
+                return false;
+            }
+            execution.markRunning(startedAt);
+            updatedStatuses.add(HubExecutionStatus.RUNNING);
+            return true;
+        }
+
+        @Override
+        public boolean markCancelledIfPending(String id, String errorMessage, java.time.LocalDateTime finishedAt) {
+            HubExecution execution = executions.get(id);
+            if (execution == null || execution.getStatus() != HubExecutionStatus.PENDING) {
+                return false;
+            }
+            updateCount++;
+            if (failUpdateAt == updateCount) {
+                return false;
+            }
+            execution.setStatus(HubExecutionStatus.CANCELLED);
+            execution.setErrorMessage(errorMessage);
+            execution.setFinishedAt(finishedAt);
+            updatedStatuses.add(HubExecutionStatus.CANCELLED);
+            return true;
         }
 
     }

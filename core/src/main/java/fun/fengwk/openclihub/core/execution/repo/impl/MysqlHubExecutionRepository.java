@@ -52,6 +52,17 @@ public class MysqlHubExecutionRepository implements HubExecutionRepository {
     }
 
     @Override
+    public boolean markRunningIfPending(String id, LocalDateTime startedAt) {
+        return id != null && startedAt != null && mapper.markRunningIfPending(id, startedAt) == 1;
+    }
+
+    @Override
+    public boolean markCancelledIfPending(String id, String errorMessage, LocalDateTime finishedAt) {
+        return id != null && finishedAt != null
+            && mapper.markCancelledIfPending(id, errorMessage, finishedAt) == 1;
+    }
+
+    @Override
     public Page<HubExecution> page(PageQuery pageQuery, String instanceId) {
         int limit = Pages.queryLimit(pageQuery);
         long offset = ((long) pageQuery.getPageNumber() - 1L) * limit;

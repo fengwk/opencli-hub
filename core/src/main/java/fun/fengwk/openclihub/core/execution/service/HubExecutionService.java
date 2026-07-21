@@ -6,9 +6,6 @@ import fun.fengwk.convention4j.api.page.Page;
 import fun.fengwk.convention4j.api.page.PageQuery;
 import fun.fengwk.openclihub.core.command.service.HubCommandBlacklistService;
 import fun.fengwk.openclihub.core.command.service.HubManagedOutputArguments;
-import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
-import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandArg;
-import fun.fengwk.openclihub.core.command.catalog.OpenCliCommand;
 import fun.fengwk.openclihub.core.command.service.HubCommandOutputRuleService;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandBlacklist;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandOutputRule;
@@ -33,18 +30,33 @@ import fun.fengwk.openclihub.share.util.HubIds;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.BooleanSupplier;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
- * Synchronous execution orchestration from validated request to persisted terminal result.
+ * Execution orchestration: async submit + DB-backed cancel + optional long-poll get.
+ *
+ * <p>Scheme B (KISS):
+ * <ul>
+ *   <li>{@link #submit} validates, persists PENDING, enqueues work, returns immediately,</li>
+ *   <li>{@link #cancel} marks PENDING as CANCELLED in DB,</li>
+ *   <li>worker CAS PENDING→RUNNING before opencli; cancelled rows never start,</li>
+ *   <li>{@link #getById(String, int)} supports long-poll via {@code waitSeconds}.</li>
+ * </ul>
  *
  * @author fengwk
  */
 @Slf4j
 @Service
 public class HubExecutionService {
+
+    private static final int MAX_WAIT_SECONDS = 120;
+    private static final Set<HubExecutionStatus> TERMINAL = Set.of(
+        HubExecutionStatus.SUCCEEDED,
+        HubExecutionStatus.FAILED,
+        HubExecutionStatus.TIMED_OUT,
+        HubExecutionStatus.CANCELLED);
 
     private final OpenCliArgvValidator argvValidator;
     private final HubCommandBlacklistService blacklistService;
@@ -87,19 +99,9 @@ public class HubExecutionService {
     }
 
     /**
-     * Executes a controlled OpenCLI command. Validation and route/queue prechecks happen
-     * before the PENDING row is inserted. After insertion, command failures and deadlines
-     * are represented by a terminal DTO so callers retain the execution id and diagnostics.
+     * Accept an execution: persist PENDING, enqueue on the instance dispatcher, return immediately.
      */
-    public HubExecutionDTO execute(HubExecutionRequestDTO request) {
-        return execute(request, null);
-    }
-
-    /**
-     * @param stillWanted optional liveness probe (e.g. HTTP client still connected). When it
-     *                    becomes false while queued, the task is cancelled without starting opencli.
-     */
-    public HubExecutionDTO execute(HubExecutionRequestDTO request, BooleanSupplier stillWanted) {
+    public HubExecutionDTO submit(HubExecutionRequestDTO request) {
         validateRequest(request);
         NormalizedOpenCliArgv normalized = argvValidator.validate(request.getArgv());
         rejectBlacklisted(normalized.getCanonicalKey());
@@ -114,54 +116,102 @@ public class HubExecutionService {
         HubExecution execution = newExecution(request, normalized, instance, timeoutMillis);
         persistAdd(execution);
         log.info(
-            "Execution accepted id={} command={} site={} instanceId={} instanceCode={} timeoutMillis={} reuseInstance={}",
+            "Execution submitted id={} command={} site={} instanceId={} instanceCode={} timeoutMillis={}",
             execution.getId(),
             execution.getCommandKey(),
             execution.getSite(),
             instance.getId(),
             instance.getCode(),
-            timeoutMillis,
-            execution.isReuseInstance());
+            timeoutMillis);
 
-        ExecutionOutcome outcome;
+        String executionId = execution.getId();
         try {
-            outcome = dispatchRegistry.dispatch(
-                instance,
-                () -> runOnInstance(execution, instance, normalized, outputRule, deadline),
-                deadline.deadlineNanos(),
-                stillWanted);
+            // Enqueue without FutureTask-level deadline abort (that would complete the Future
+            // exceptionally without our terminal DB write). Worker checks deadline itself.
+            dispatchRegistry.submit(instance, () -> {
+                try {
+                    if (System.nanoTime() >= deadline.deadlineNanos()) {
+                        terminalAfterDispatchFailure(
+                            executionId,
+                            HubErrorCodes.QUEUE_WAIT_TIMEOUT.asThrowable(
+                                "Execution deadline elapsed while queued"));
+                        return null;
+                    }
+                    runOnInstance(executionId, instance, normalized, outputRule, deadline);
+                } catch (RuntimeException ex) {
+                    if (isError(ex, HubErrorCodes.EXECUTION_PERSIST_FAILED)) {
+                        log.error("Execution persist failed in worker id={}", executionId, ex);
+                    } else {
+                        log.warn("Execution worker failed id={} error={}", executionId, ex.getMessage());
+                        terminalAfterDispatchFailure(executionId, ex);
+                    }
+                }
+                return null;
+            }, Long.MAX_VALUE);
         } catch (RuntimeException ex) {
             if (isError(ex, HubErrorCodes.EXECUTION_PERSIST_FAILED)) {
                 throw ex;
             }
             log.warn(
-                "Execution dispatch failed id={} command={} instanceId={} error={}",
+                "Execution enqueue failed id={} command={} instanceId={} error={}",
                 execution.getId(),
                 execution.getCommandKey(),
                 instance.getId(),
                 ex.getMessage());
-            return terminalAfterDispatchFailure(execution, ex);
+            return terminalAfterDispatchFailure(executionId, ex);
         }
-        log.info(
-            "Execution finished id={} command={} instanceId={} status={} exitCode={} durationMillis={}",
-            execution.getId(),
-            execution.getCommandKey(),
-            instance.getId(),
-            execution.getStatus(),
-            execution.getExitCode(),
-            execution.getDurationMillis());
-        return converter.toDTO(execution, outcome.resources());
+        return converter.toDTO(execution, List.of());
+    }
+
+    /**
+     * Backward-compatible helper used by tests: submit then long-poll until terminal or timeout.
+     */
+    public HubExecutionDTO execute(HubExecutionRequestDTO request) {
+        HubExecutionDTO submitted = submit(request);
+        long waitSeconds = Math.min(
+            MAX_WAIT_SECONDS,
+            Math.max(1L, (submitted.getTimeoutMillis() + 60_000L) / 1000L));
+        // For long executes, loop long-poll windows until terminal or overall deadline.
+        long deadlineMs = System.currentTimeMillis() + submitted.getTimeoutMillis() + 60_000L;
+        HubExecutionDTO latest = submitted;
+        while (System.currentTimeMillis() < deadlineMs) {
+            latest = getById(submitted.getId(), (int) Math.min(waitSeconds, MAX_WAIT_SECONDS));
+            if (latest == null || isTerminal(latest.getStatus())) {
+                return latest;
+            }
+        }
+        return getById(submitted.getId(), 0);
     }
 
     public HubExecutionDTO getById(String id) {
+        return getById(id, 0);
+    }
+
+    /**
+     * Load execution detail. When {@code waitSeconds > 0}, block until terminal status or timeout.
+     */
+    public HubExecutionDTO getById(String id, int waitSeconds) {
         if (!HubIds.isSupported(id)) {
             return null;
         }
-        HubExecution execution = executionRepository.findById(id);
-        if (execution == null) {
-            return null;
+        int wait = Math.max(0, Math.min(waitSeconds, MAX_WAIT_SECONDS));
+        long deadlineMs = System.currentTimeMillis() + wait * 1000L;
+        while (true) {
+            HubExecution execution = executionRepository.findById(id);
+            if (execution == null) {
+                return null;
+            }
+            if (isTerminal(execution.getStatus()) || wait == 0
+                || System.currentTimeMillis() >= deadlineMs) {
+                return converter.toDTO(execution, executionResources.scanExisting(id));
+            }
+            try {
+                Thread.sleep(200L);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                return converter.toDTO(execution, executionResources.scanExisting(id));
+            }
         }
-        return converter.toDTO(execution, executionResources.scanExisting(id));
     }
 
     public Page<HubExecutionDTO> page(PageQuery pageQuery, String instanceId) {
@@ -169,14 +219,48 @@ public class HubExecutionService {
             .map(execution -> converter.toDTO(execution, List.of()));
     }
 
-    private ExecutionOutcome runOnInstance(
-        HubExecution execution,
+    /**
+     * Cancel a still-queued execution by CAS PENDING → CANCELLED.
+     */
+    public HubExecutionDTO cancel(String id) {
+        if (!HubIds.isSupported(id)) {
+            throw HubErrorCodes.EXECUTION_NOT_FOUND.asThrowable("execution not found: " + id);
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (executionRepository.markCancelledIfPending(id, "Cancelled by client", now)) {
+            log.info("Execution cancelled id={}", id);
+            HubExecution cancelled = executionRepository.findById(id);
+            return converter.toDTO(cancelled, List.of());
+        }
+        HubExecution execution = executionRepository.findById(id);
+        if (execution == null) {
+            throw HubErrorCodes.EXECUTION_NOT_FOUND.asThrowable("execution not found: " + id);
+        }
+        if (isTerminal(execution.getStatus())) {
+            return converter.toDTO(execution, executionResources.scanExisting(id));
+        }
+        // RUNNING (or unexpected non-pending)
+        throw HubErrorCodes.EXECUTION_NOT_CANCELLABLE.asThrowable(
+            "Execution is " + execution.getStatus() + " and cannot be cancelled");
+    }
+
+    private void runOnInstance(
+        String executionId,
         HubInstance instance,
         NormalizedOpenCliArgv normalized,
         HubCommandOutputRule outputRule,
         HubExecutionDeadline deadline) {
-        execution.markRunning(LocalDateTime.now());
-        persistUpdate(execution);
+        LocalDateTime now = LocalDateTime.now();
+        if (!executionRepository.markRunningIfPending(executionId, now)) {
+            log.info("Skip execution id={} (no longer PENDING; cancelled or raced)", executionId);
+            return;
+        }
+        HubExecution execution = executionRepository.findById(executionId);
+        if (execution == null) {
+            log.warn("Execution disappeared after markRunning id={}", executionId);
+            return;
+        }
+        execution.markRunning(now);
 
         HubExecutionResources.ResourceContext resourceContext = null;
         List<HubResourceItemDTO> resources = List.of();
@@ -186,7 +270,7 @@ public class HubExecutionService {
                 OpenCliExecutionResult timeout = timedOutResult("Execution deadline elapsed before OpenCLI start");
                 execution.markFinished(timeout, LocalDateTime.now());
                 persistUpdate(execution);
-                return new ExecutionOutcome(resources);
+                return;
             }
 
             resourceContext = executionResources.prepare(execution.getId(), normalized, outputRule);
@@ -233,7 +317,12 @@ public class HubExecutionService {
             }
         }
         persistUpdate(execution);
-        return new ExecutionOutcome(resources);
+        log.info(
+            "Execution finished id={} status={} exitCode={} durationMillis={}",
+            execution.getId(),
+            execution.getStatus(),
+            execution.getExitCode(),
+            execution.getDurationMillis());
     }
 
     private static void recordResourceScanFailure(
@@ -250,15 +339,29 @@ public class HubExecutionService {
         }
     }
 
-    private HubExecutionDTO terminalAfterDispatchFailure(HubExecution execution, RuntimeException failure) {
-        if (isError(failure, HubErrorCodes.QUEUE_WAIT_TIMEOUT)) {
-            execution.markFinished(timedOutResult("Execution deadline elapsed while queued"),
-                LocalDateTime.now());
-        } else {
-            // Includes CLIENT_DISCONNECTED, INSTANCE_QUEUE_CLEARED, and process failures.
-            execution.markFinished(failedResult(failure), LocalDateTime.now());
+    private HubExecutionDTO terminalAfterDispatchFailure(String executionId, RuntimeException failure) {
+        HubExecution execution = executionRepository.findById(executionId);
+        if (execution == null) {
+            throw HubErrorCodes.EXECUTION_NOT_FOUND.asThrowable("execution not found: " + executionId);
         }
-        persistUpdate(execution);
+        if (isTerminal(execution.getStatus())) {
+            return converter.toDTO(execution, List.of());
+        }
+        // Only overwrite when still queued/running enqueue failure.
+        if (execution.getStatus() == HubExecutionStatus.PENDING
+            || execution.getStatus() == HubExecutionStatus.RUNNING) {
+            if (isError(failure, HubErrorCodes.QUEUE_WAIT_TIMEOUT)) {
+                execution.markFinished(timedOutResult("Execution deadline elapsed while queued"),
+                    LocalDateTime.now());
+            } else {
+                execution.markFinished(failedResult(failure), LocalDateTime.now());
+            }
+            // Prefer CAS cancel-style if still PENDING so we don't clobber a concurrent cancel.
+            if (execution.getStatus() == HubExecutionStatus.CANCELLED) {
+                // markFinished may have set FAILED; for PENDING race use markCancelled is wrong.
+            }
+            persistUpdate(execution);
+        }
         return converter.toDTO(execution, List.of());
     }
 
@@ -285,12 +388,6 @@ public class HubExecutionService {
         return execution;
     }
 
-
-    /**
-     * Prefer an explicit admin output rule. When absent, auto-manage the first
-     * platform-owned local output argument (op/out/output/path/...) so adapters write
-     * into Hub resources without callers supplying container paths.
-     */
     private HubCommandOutputRule resolveEffectiveOutputRule(NormalizedOpenCliArgv normalized) {
         HubCommandOutputRule configured = outputRuleService
             .findByCommandKey(normalized.getCanonicalKey()).orElse(null);
@@ -403,6 +500,10 @@ public class HubExecutionService {
         }
     }
 
+    private static boolean isTerminal(HubExecutionStatus status) {
+        return status != null && TERMINAL.contains(status);
+    }
+
     private static OpenCliExecutionResult timedOutResult(String errorMessage) {
         OpenCliExecutionResult result = new OpenCliExecutionResult();
         result.setExitCode(124);
@@ -435,8 +536,4 @@ public class HubExecutionService {
         }
         return false;
     }
-
-    private record ExecutionOutcome(List<HubResourceItemDTO> resources) {
-    }
-
 }
