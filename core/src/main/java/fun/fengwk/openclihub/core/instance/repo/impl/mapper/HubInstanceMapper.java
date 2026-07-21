@@ -28,7 +28,7 @@ public interface HubInstanceMapper extends BaseMapper {
 
     @Select("""
         select id, code, display_name as displayName, context_id as contextId, state,
-               websites_json as websitesJson, max_pending as maxPending,
+               websites_json as websitesJson, max_pending as maxPending, priority,
                proxy_mode as proxyMode, proxy_server as proxyServer,
                last_error_message as lastErrorMessage, state_changed_at as stateChangedAt,
                gmt_create as createTime, gmt_modified as modifiedTime, version

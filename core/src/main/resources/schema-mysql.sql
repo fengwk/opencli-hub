@@ -10,6 +10,7 @@ create table if not exists hub_instance (
     state varchar(32) not null,
     websites_json text not null,
     max_pending int not null,
+    priority int not null default 0,
     proxy_mode varchar(16) not null default 'INHERIT',
     proxy_server varchar(512) null,
     last_error_message text null,
@@ -22,6 +23,9 @@ create table if not exists hub_instance (
     unique key uk_hub_instance_context_id (context_id),
     key idx_hub_instance_state (state)
 ) engine=InnoDB default charset=utf8mb4 comment='OpenCLI browser instance';
+
+-- Existing DBs (run once if missing):
+-- ALTER TABLE hub_instance ADD COLUMN priority int NOT NULL DEFAULT 0 AFTER max_pending;
 
 create table if not exists hub_system_settings (
     id int not null,

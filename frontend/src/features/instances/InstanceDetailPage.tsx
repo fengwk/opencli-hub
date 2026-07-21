@@ -123,6 +123,7 @@ export function InstanceDetailPage() {
     displayName: instance.displayName,
     websites: instance.websites ?? [],
     maxPending: instance.maxPending,
+    priority: instance.priority ?? 0,
     proxyMode: instance.proxyMode,
     proxyServer: instance.proxyServer,
   }
@@ -178,6 +179,7 @@ export function InstanceDetailPage() {
               <div><dt>Context ID</dt><dd className="mono-value" title={instance.contextId ?? undefined}>{instance.contextId || '未分配'}</dd></div>
               <div><dt>显示器</dt><dd>{runtime?.registered ? `:${runtime.displayNumber ?? '—'}` : '运行时未注册'}</dd></div>
               <div><dt>执行队列</dt><dd>活跃 {runtime?.activeCount ?? 0} / 待处理 {runtime?.pendingCount ?? 0}（上限 {instance.maxPending}）</dd></div>
+              <div><dt>优先级</dt><dd>{instance.priority ?? 0}</dd></div>
               <div><dt>代理</dt><dd title={instance.proxyServer ?? undefined}>{proxySummary(instance.proxyMode, instance.proxyServer)}</dd></div>
             </dl>
             {instance.lastErrorMessage ? <p className="inline-error instance-error" role="alert">最近错误：{instance.lastErrorMessage}</p> : null}
@@ -192,8 +194,18 @@ export function InstanceDetailPage() {
               >
                 清空排队{(runtime?.pendingCount ?? 0) > 0 ? ` (${runtime?.pendingCount})` : ''}
               </button>
-              <Link className="btn" to={`/logs?instanceId=${encodeURIComponent(instance.id)}`}>查看日志</Link>
-              <button type="button" className="btn btn-danger" disabled={actionPending || !canDelete} onClick={() => setConfirmDelete(true)}>删除实例</button>
+              <div className="instance-sidebar-secondary">
+                <Link className="btn" to={`/logs?instanceId=${encodeURIComponent(instance.id)}`}>查看日志</Link>
+                <button
+                  type="button"
+                  className="btn btn-quiet-danger"
+                  disabled={actionPending || !canDelete}
+                  title="删除实例"
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  删除
+                </button>
+              </div>
             </div>
           </section>
 

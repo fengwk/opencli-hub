@@ -57,6 +57,7 @@ public class InMemoryHubInstanceService implements HubInstanceService {
         instance.setCode(validator.validateCode(instance.getCode()));
         instance.setDisplayName(validator.validateDisplayName(instance.getDisplayName()));
         instance.setMaxPending(validator.validateMaxPending(instance.getMaxPending()));
+        instance.setPriority(validator.validatePriority(instance.getPriority()));
         instance.setWebsites(validator.validateWebsites(instance.getWebsites()));
         var proxy = validator.normalizeInstanceProxy(
             instance.getProxyMode(), instance.getProxyServer());
@@ -147,6 +148,7 @@ public class InMemoryHubInstanceService implements HubInstanceService {
             existing.setDisplayName(dto.getDisplayName());
             existing.setWebsites(normalized);
             existing.setMaxPending(dto.getMaxPending());
+            existing.setPriority(dto.getPriority() == null ? 0 : dto.getPriority());
             existing.setProxyMode(dto.getProxyMode());
             existing.setProxyServer(dto.getProxyServer());
             existing.setUpdateTime(LocalDateTime.now());
@@ -226,6 +228,7 @@ public class InMemoryHubInstanceService implements HubInstanceService {
         target.setState(source.getState());
         target.setWebsites(source.getWebsites());
         target.setMaxPending(source.getMaxPending());
+        target.setPriority(source.getPriority());
         target.setProxyMode(source.getProxyMode());
         target.setProxyServer(source.getProxyServer());
         target.setLastErrorMessage(source.getLastErrorMessage());

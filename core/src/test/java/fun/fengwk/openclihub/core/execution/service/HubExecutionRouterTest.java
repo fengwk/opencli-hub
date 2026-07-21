@@ -107,6 +107,20 @@ class HubExecutionRouterTest {
     /**
      * "least-busy" — exact load by snapshot's pending count determines the winner.
      */
+    /**
+     * When load is equal, higher priority wins (default 0).
+     */
+    @Test
+    void shouldPreferHigherPriorityWhenLoadIsEqual() throws Exception {
+        HubInstance low = persist("low", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-low", 5, 0);
+        HubInstance high = persist("high", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-high", 5, 10);
+        registerRuntime(low, "ctx-low");
+        registerRuntime(high, "ctx-high");
+
+        HubInstance chosen = router.chooseInstance("bilibili", null);
+        assertThat(chosen.getCode()).isEqualTo("high");
+    }
+
     @Test
     void shouldSelectTheInstanceWithLowerPendingLoad() throws Exception {
         HubInstance a = persist("a", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-a");
@@ -222,10 +236,15 @@ class HubExecutionRouterTest {
     }
 
     private HubInstance persist(String code, List<String> websites, HubInstanceState state, String ctx) {
-        return persist(code, websites, state, ctx, 5);
+        return persist(code, websites, state, ctx, 5, 0);
     }
 
     private HubInstance persist(String code, List<String> websites, HubInstanceState state, String ctx, int maxPending) {
+        return persist(code, websites, state, ctx, maxPending, 0);
+    }
+
+    private HubInstance persist(String code, List<String> websites, HubInstanceState state, String ctx,
+                                int maxPending, int priority) {
         HubInstance instance = new HubInstance();
         instance.setId(Long.toString(runtimeSeq.incrementAndGet()));
         instance.setCode(code);
@@ -234,6 +253,7 @@ class HubExecutionRouterTest {
         instance.setContextId(ctx);
         instance.setWebsites(websites);
         instance.setMaxPending(maxPending);
+        instance.setPriority(priority);
         instance.setStateChangedAt(java.time.LocalDateTime.now());
         // Persist via InMemoryHubInstanceService so candidate lookups work.
         InMemoryHubInstanceService inMem = (InMemoryHubInstanceService) instanceService;

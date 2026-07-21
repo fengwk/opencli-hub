@@ -1377,7 +1377,7 @@ input[type='file']::file-selector-button:hover {
 
 .instance-sidebar-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 150px 150px;
+  grid-template-columns: minmax(0, 1fr) 150px minmax(200px, 1fr);
   align-items: stretch;
   gap: 8px;
 }
@@ -1388,6 +1388,16 @@ input[type='file']::file-selector-button:hover {
 }
 
 .instance-sidebar-actions .btn {
+  width: 100%;
+}
+
+.instance-sidebar-secondary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.instance-sidebar-secondary .btn {
   width: 100%;
 }
 

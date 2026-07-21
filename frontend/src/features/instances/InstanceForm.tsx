@@ -36,6 +36,7 @@ export function InstanceForm({
   const [displayName, setDisplayName] = useState(initialValues?.displayName ?? '')
   const [websites, setWebsites] = useState<string[]>(initialValues?.websites ?? [])
   const [maxPending, setMaxPending] = useState(String(initialValues?.maxPending ?? 1))
+  const [priority, setPriority] = useState(String(initialValues?.priority ?? 0))
   const [proxyMode, setProxyMode] = useState<InstanceProxyMode>(initialValues?.proxyMode ?? 'INHERIT')
   const [proxyServer, setProxyServer] = useState(initialValues?.proxyServer ?? '')
   const [websiteKeyword, setWebsiteKeyword] = useState('')
@@ -78,6 +79,11 @@ export function InstanceForm({
       setValidationError(`最大待处理数必须是 ${minimumPendingCount} 到 ${maximumPendingCount} 之间的整数。`)
       return
     }
+    const parsedPriority = Number(priority)
+    if (!Number.isInteger(parsedPriority) || parsedPriority < -1000 || parsedPriority > 1000) {
+      setValidationError('优先级必须是 -1000 到 1000 之间的整数（越大越优先，默认 0）。')
+      return
+    }
     const normalizedProxyServer = proxyServer.trim()
     if (proxyMode === 'CUSTOM') {
       const proxyError = validateCustomProxyServer(normalizedProxyServer)
@@ -92,6 +98,7 @@ export function InstanceForm({
       displayName: normalizedDisplayName,
       websites,
       maxPending: parsedMaxPending,
+      priority: parsedPriority,
       proxyMode,
       proxyServer: proxyMode === 'CUSTOM' ? normalizedProxyServer : null,
     })
@@ -125,6 +132,23 @@ export function InstanceForm({
           disabled={busy}
           onChange={(event) => {
             setMaxPending(event.target.value)
+            setValidationError(null)
+          }}
+        />
+      </label>
+      <label>
+        优先级
+        <input
+          type="number"
+          min={-1000}
+          max={1000}
+          step="1"
+          value={priority}
+          required
+          disabled={busy}
+          title="自动路由时负载相同优先选更大值，默认 0"
+          onChange={(event) => {
+            setPriority(event.target.value)
             setValidationError(null)
           }}
         />

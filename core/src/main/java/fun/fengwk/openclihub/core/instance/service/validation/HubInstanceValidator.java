@@ -72,6 +72,7 @@ public class HubInstanceValidator {
         dto.setCode(validateCode(dto.getCode()));
         dto.setDisplayName(validateDisplayName(dto.getDisplayName()));
         dto.setMaxPending(validateMaxPending(dto.getMaxPending()));
+        dto.setPriority(validatePriority(dto.getPriority()));
         ProxyConfiguration proxy = HubProxyValidator.normalizeInstance(
             dto.getProxyMode(), dto.getProxyServer());
         dto.setProxyMode(proxy.proxyMode());
@@ -208,4 +209,19 @@ public class HubInstanceValidator {
         return trimmed;
     }
 
+
+    /**
+     * Priority for automatic routing when load is equal. Higher wins. Default 0.
+     * Allowed range keeps values human-scale and storage-safe.
+     */
+    public int validatePriority(Integer priority) {
+        if (priority == null) {
+            return 0;
+        }
+        if (priority < -1000 || priority > 1000) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable(
+                "priority must be between -1000 and 1000");
+        }
+        return priority;
+    }
 }

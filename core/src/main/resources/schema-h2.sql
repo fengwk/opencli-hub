@@ -6,6 +6,7 @@ create table if not exists hub_instance (
     state varchar(32) not null,
     websites_json clob not null,
     max_pending int not null,
+    priority int not null default 0,
     proxy_mode varchar(16) not null default 'INHERIT',
     proxy_server varchar(512) null,
     last_error_message clob null,
@@ -21,6 +22,7 @@ create table if not exists hub_instance (
 alter table hub_instance alter column id varchar(36) not null;
 alter table hub_instance add column if not exists proxy_mode varchar(16) default 'INHERIT' not null;
 alter table hub_instance add column if not exists proxy_server varchar(512) null;
+alter table hub_instance add column if not exists priority int default 0 not null;
 create index if not exists idx_hub_instance_state on hub_instance (state);
 
 create table if not exists hub_system_settings (

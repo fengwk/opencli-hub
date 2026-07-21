@@ -22,7 +22,7 @@ const instanceId = '2c6eefbd-a8cf-44fb-8016-14d6886c2557'
 
 const stoppedInstance: HubInstance = {
   id: instanceId, code: 'alpha', displayName: 'Alpha browser', contextId: null, state: 'STOPPED',
-  websites: ['demo'], maxPending: 3, proxyMode: 'INHERIT', proxyServer: null, lastErrorMessage: 'last launch failed', stateChangedAt: null,
+  websites: ['demo'], maxPending: 3, priority: 0, proxyMode: 'INHERIT', proxyServer: null, lastErrorMessage: 'last launch failed', stateChangedAt: null,
   runtime: { registered: false, displayNumber: null, vncPort: null, activeCount: 0, pendingCount: 0 },
   createTime: null, updateTime: null,
 }
@@ -98,7 +98,7 @@ describe('InstancesPage', () => {
     await user.click(within(screen.getByRole('dialog', { name: '创建浏览器实例' })).getByRole('button', { name: '创建实例' }))
 
     expect(apiClient.post).toHaveBeenCalledWith('/instances', {
-      code: 'new-browser', displayName: 'New browser', websites: ['demo'], maxPending: 4,
+      code: 'new-browser', displayName: 'New browser', websites: ['demo'], maxPending: 4, priority: 0,
       proxyMode: 'INHERIT', proxyServer: null,
     })
     expect(screen.getByRole('button', { name: '正在保存…' })).toBeDisabled()

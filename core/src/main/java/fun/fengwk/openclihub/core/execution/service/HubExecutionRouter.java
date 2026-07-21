@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
  * contract from {@code docs/technical-design.md §20}:
  * <ul>
  *   <li><b>Explicit instanceId</b> — strict, no failover.</li>
- *   <li><b>Automatic</b> — least-busy among candidates, ties broken by ascending instance id.</li>
+ *   <li><b>Automatic</b> — least-busy among candidates; ties broken by higher priority, then ascending id.</li>
  * </ul>
  *
  * <p>Candidate criteria mirror the design §20.1 list and are evaluated against BOTH the
@@ -94,15 +94,21 @@ public class HubExecutionRouter {
         }
         HubInstance chosen = null;
         int chosenLoad = Integer.MAX_VALUE;
+        int chosenPriority = Integer.MIN_VALUE;
         for (HubInstance instance : all) {
             if (checkCandidate(instance, site) != null) {
                 continue;
             }
             int load = loadOf(instance);
-            if (chosen == null || load < chosenLoad
-                || (load == chosenLoad && instance.getId().compareTo(chosen.getId()) < 0)) {
+            int priority = instance.getPriority();
+            if (chosen == null
+                || load < chosenLoad
+                || (load == chosenLoad && priority > chosenPriority)
+                || (load == chosenLoad && priority == chosenPriority
+                    && instance.getId().compareTo(chosen.getId()) < 0)) {
                 chosen = instance;
                 chosenLoad = load;
+                chosenPriority = priority;
             }
         }
         if (chosen == null) {

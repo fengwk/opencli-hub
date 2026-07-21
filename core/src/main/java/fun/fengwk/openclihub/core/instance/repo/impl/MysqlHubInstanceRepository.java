@@ -78,6 +78,7 @@ public class MysqlHubInstanceRepository implements HubInstanceRepository {
         target.setState(instance.getState() == null ? null : instance.getState().name());
         target.setWebsitesJson(writeJson(instance.getWebsites()));
         target.setMaxPending(instance.getMaxPending());
+        target.setPriority(instance.getPriority());
         target.setProxyMode(instance.getProxyMode() == null ? null : instance.getProxyMode().name());
         target.setProxyServer(instance.getProxyServer());
         target.setLastErrorMessage(instance.getLastErrorMessage());
@@ -100,6 +101,7 @@ public class MysqlHubInstanceRepository implements HubInstanceRepository {
         target.setState(source.getState() == null ? null : HubInstanceState.valueOf(source.getState()));
         target.setWebsites(readStringList(source.getWebsitesJson()));
         target.setMaxPending(source.getMaxPending() == null ? 0 : source.getMaxPending());
+        target.setPriority(source.getPriority() == null ? 0 : source.getPriority());
         target.setProxyMode(source.getProxyMode() == null
             ? HubProxyMode.INHERIT : HubProxyMode.valueOf(source.getProxyMode()));
         target.setProxyServer(source.getProxyServer());

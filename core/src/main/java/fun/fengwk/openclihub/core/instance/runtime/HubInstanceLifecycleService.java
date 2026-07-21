@@ -110,6 +110,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         preset.setMaxPending(dto.getMaxPending() == null
             ? properties.getExecution().getDefaultMaxPending()
             : dto.getMaxPending());
+        preset.setPriority(dto.getPriority() == null ? 0 : dto.getPriority());
         preset.setState(HubInstanceState.STARTING);
         preset.setStateChangedAt(LocalDateTime.now());
         instanceService.validateAndNormalizeForCreate(preset);

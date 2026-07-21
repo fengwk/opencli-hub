@@ -14,7 +14,7 @@ vi.mock('@/shared/api/client', () => ({
 const instanceId = '343020517415976960'
 const instance: HubInstance = {
   id: instanceId, code: 'beta', displayName: 'Beta browser', contextId: 'ctx-42', state: 'RUNNING',
-  websites: ['demo'], maxPending: 2, proxyMode: 'CUSTOM', proxyServer: 'socks5://proxy.example.com:1080', lastErrorMessage: null, stateChangedAt: null,
+  websites: ['demo'], maxPending: 2, priority: 0, proxyMode: 'CUSTOM', proxyServer: 'socks5://proxy.example.com:1080', lastErrorMessage: null, stateChangedAt: null,
   runtime: { registered: true, displayNumber: 13, vncPort: 5901, activeCount: 0, pendingCount: 0 },
   createTime: null, updateTime: null,
 }
@@ -87,7 +87,7 @@ describe('InstanceDetailPage', () => {
     await user.click(screen.getByRole('button', { name: '保存更改' }))
 
     await waitFor(() => expect(apiClient.put).toHaveBeenCalledWith(`/instances/${instanceId}`, {
-      code: 'beta', displayName: 'Updated browser', websites: ['demo'], maxPending: 2,
+      code: 'beta', displayName: 'Updated browser', websites: ['demo'], maxPending: 2, priority: 0,
       proxyMode: 'CUSTOM', proxyServer: 'socks5://proxy.example.com:1080',
     }))
   })
