@@ -52,6 +52,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -416,7 +417,18 @@ class HubExecutionServiceTest {
 
     @Test
     void shouldContinueAcceptedExecutionWhenCallerThreadIsInterrupted() throws Exception {
-        executor.setBehavior(() -> FakeOpenCliExecutor.Behaviour.slow(100L, "{\"ok\":true}"));
+        CountDownLatch workerEntered = new CountDownLatch(1);
+        CountDownLatch allowWorkerCompletion = new CountDownLatch(1);
+        executor.setBehavior(() -> {
+            workerEntered.countDown();
+            try {
+                allowWorkerCompletion.await();
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("worker interrupted while test was coordinating", ex);
+            }
+            return FakeOpenCliExecutor.Behaviour.successJson("{\"ok\":true}");
+        });
         AtomicReference<HubExecutionDTO> result = new AtomicReference<>();
         AtomicReference<Throwable> failure = new AtomicReference<>();
         AtomicBoolean interruptRestored = new AtomicBoolean();
@@ -430,16 +442,25 @@ class HubExecutionServiceTest {
             }
         });
         caller.start();
-        for (int i = 0; i < 100 && executor.invocationCount() == 0; i++) {
-            Thread.sleep(5L);
+        try {
+            assertThat(workerEntered.await(2L, TimeUnit.SECONDS)).isTrue();
+            caller.interrupt();
+        } finally {
+            allowWorkerCompletion.countDown();
         }
-        caller.interrupt();
-        caller.join(2_000L);
 
+        caller.join(5_000L);
+        // Caller interruption must not cancel already accepted work. The compatibility
+        // helper can observe either the running snapshot or the completed terminal snapshot.
+        assertThat(caller.isAlive()).isFalse();
         assertThat(failure.get()).isNull();
         assertThat(result.get()).isNotNull();
-        assertThat(result.get().getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
+        assertThat(result.get().getStatus())
+            .isIn(HubExecutionStatus.RUNNING, HubExecutionStatus.SUCCEEDED);
         assertThat(interruptRestored).isTrue();
+        HubExecutionDTO completed = service.getById(result.get().getId(), 2);
+        assertThat(completed).isNotNull();
+        assertThat(completed.getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
         assertThat(repository.updatedStatuses)
             .containsExactly(HubExecutionStatus.RUNNING, HubExecutionStatus.SUCCEEDED);
     }
@@ -561,10 +582,10 @@ class HubExecutionServiceTest {
         private boolean failGenerate;
         private boolean failAdd;
         private final Map<String, HubExecution> executions = new LinkedHashMap<>();
-        private final List<HubExecutionStatus> updatedStatuses = new ArrayList<>();
+        private final List<HubExecutionStatus> updatedStatuses = new CopyOnWriteArrayList<>();
 
         @Override
-        public String generateId() {
+        public synchronized String generateId() {
             if (failGenerate) {
                 throw new IllegalStateException("id generator unavailable");
             }
@@ -572,39 +593,40 @@ class HubExecutionServiceTest {
         }
 
         @Override
-        public boolean add(HubExecution execution) {
+        public synchronized boolean add(HubExecution execution) {
             addCount++;
             if (failAdd) {
                 return false;
             }
-            executions.put(execution.getId(), execution);
+            executions.put(execution.getId(), snapshot(execution));
             return true;
         }
 
         @Override
-        public boolean update(HubExecution execution) {
+        public synchronized boolean update(HubExecution execution) {
             updateCount++;
             if (failUpdateAt == updateCount) {
                 return false;
             }
             updatedStatuses.add(execution.getStatus());
-            executions.put(execution.getId(), execution);
+            executions.put(execution.getId(), snapshot(execution));
             return true;
         }
 
         @Override
-        public HubExecution findById(String id) {
+        public synchronized HubExecution findById(String id) {
             findCount++;
-            return executions.get(id);
+            HubExecution execution = executions.get(id);
+            return execution == null ? null : snapshot(execution);
         }
 
         @Override
-        public Page<HubExecution> page(PageQuery pageQuery, String instanceId) {
+        public synchronized Page<HubExecution> page(PageQuery pageQuery, String instanceId) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public boolean markRunningIfPending(String id, java.time.LocalDateTime startedAt) {
+        public synchronized boolean markRunningIfPending(String id, java.time.LocalDateTime startedAt) {
             HubExecution execution = executions.get(id);
             if (execution == null || execution.getStatus() != HubExecutionStatus.PENDING) {
                 return false;
@@ -619,7 +641,8 @@ class HubExecutionServiceTest {
         }
 
         @Override
-        public boolean markCancelledIfPending(String id, String errorMessage, java.time.LocalDateTime finishedAt) {
+        public synchronized boolean markCancelledIfPending(
+            String id, String errorMessage, java.time.LocalDateTime finishedAt) {
             HubExecution execution = executions.get(id);
             if (execution == null || execution.getStatus() != HubExecutionStatus.PENDING) {
                 return false;
@@ -636,8 +659,12 @@ class HubExecutionServiceTest {
         }
 
         @Override
-        public boolean markTerminalIfPending(String id, HubExecutionStatus status, String errorMessage,
-                                             Integer exitCode, java.time.LocalDateTime finishedAt) {
+        public synchronized boolean markTerminalIfPending(
+            String id,
+            HubExecutionStatus status,
+            String errorMessage,
+            Integer exitCode,
+            java.time.LocalDateTime finishedAt) {
             HubExecution execution = executions.get(id);
             if (execution == null || execution.getStatus() != HubExecutionStatus.PENDING) {
                 return false;
@@ -652,6 +679,30 @@ class HubExecutionServiceTest {
             execution.setFinishedAt(finishedAt);
             updatedStatuses.add(status);
             return true;
+        }
+
+        private static HubExecution snapshot(HubExecution source) {
+            HubExecution target = new HubExecution();
+            target.setId(source.getId());
+            target.setInstanceId(source.getInstanceId());
+            target.setInstanceCode(source.getInstanceCode());
+            target.setCommandKey(source.getCommandKey());
+            target.setSite(source.getSite());
+            target.setSiteSession(source.getSiteSession());
+            target.setArgv(source.getArgv());
+            target.setReuseInstance(source.isReuseInstance());
+            target.setStatus(source.getStatus());
+            target.setExitCode(source.getExitCode());
+            target.setStdout(source.getStdout());
+            target.setStdoutTruncated(source.isStdoutTruncated());
+            target.setStderr(source.getStderr());
+            target.setStderrTruncated(source.isStderrTruncated());
+            target.setErrorMessage(source.getErrorMessage());
+            target.setTimeoutMillis(source.getTimeoutMillis());
+            target.setQueuedAt(source.getQueuedAt());
+            target.setStartedAt(source.getStartedAt());
+            target.setFinishedAt(source.getFinishedAt());
+            return target;
         }
 
     }
