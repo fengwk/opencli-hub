@@ -58,6 +58,7 @@ class MysqlHubInstanceRepositoryH2Test {
         instance.setState(HubInstanceState.RUNNING);
         instance.setWebsites(List.of("bilibili", "chatgpt"));
         instance.setMaxPending(5);
+        instance.setPriority(7);
         instance.setProxyMode(HubProxyMode.CUSTOM);
         instance.setProxyServer("http://proxy.example:8080");
         LocalDateTime now = LocalDateTime.now();
@@ -75,6 +76,7 @@ class MysqlHubInstanceRepositoryH2Test {
         assertThat(loaded.getState()).isEqualTo(HubInstanceState.RUNNING);
         assertThat(loaded.getWebsites()).containsExactly("bilibili", "chatgpt");
         assertThat(loaded.getMaxPending()).isEqualTo(5);
+        assertThat(loaded.getPriority()).isEqualTo(7);
         assertThat(loaded.getProxyMode()).isEqualTo(HubProxyMode.CUSTOM);
         assertThat(loaded.getProxyServer()).isEqualTo("http://proxy.example:8080");
     }

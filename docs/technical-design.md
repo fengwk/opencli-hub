@@ -498,6 +498,7 @@ create table hub_instance (
     state varchar(32) not null,
     websites_json text not null,
     max_pending int not null,
+    priority int not null default 0,
     proxy_mode varchar(16) not null default 'INHERIT',
     proxy_server varchar(512) null,
     last_error_message text null,
@@ -1283,7 +1284,7 @@ state == RUNNING
 load = activeCount + pendingCount
 ```
 
-选择 load 最小者；相同时按不透明字符串 ID 的字典序排序，仅用于稳定打破平局，不表达创建时间。
+选择 load 最小者；load 相同时选 `priority` 更大者（默认 0，越大越优先）；仍相同时按不透明字符串 ID 的字典序排序，仅用于稳定打破平局，不表达创建时间。
 
 ### 20.3 指定 Instance
 

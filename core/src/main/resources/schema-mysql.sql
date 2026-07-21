@@ -24,8 +24,8 @@ create table if not exists hub_instance (
     key idx_hub_instance_state (state)
 ) engine=InnoDB default charset=utf8mb4 comment='OpenCLI browser instance';
 
--- Existing DBs (run once if missing):
--- ALTER TABLE hub_instance ADD COLUMN priority int NOT NULL DEFAULT 0 AFTER max_pending;
+-- Existing MySQL DBs: do not rely on this file to ALTER live tables.
+-- Run scripts/migrate-mysql-instance-priority.sql once before deploying images that use priority.
 
 create table if not exists hub_system_settings (
     id int not null,

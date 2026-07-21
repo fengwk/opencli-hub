@@ -235,8 +235,11 @@ scripts/docker/test-install-opencli.sh
 1. `scripts/migrate-mysql-uuid-ids.sql`
 2. `scripts/migrate-mysql-browser-proxy-settings.sql`
 3. `scripts/migrate-mysql-execution-indexes.sql`
+4. `scripts/migrate-mysql-instance-priority.sql`
 
 每个脚本都有 `information_schema` 校验输出。完整字段、索引和回滚说明在各自的迁移文档中；不要跳过备份，也不要将 MySQL 8 volume 直接降级挂载到 5.7。
+
+`migrate-mysql-instance-priority.sql` 为既有 `hub_instance` 增加 `priority int not null default 0`（自动路由负载相同时更高优先）。新库由 `schema-mysql.sql` 建表即可；既有库必须在部署含该字段的 Hub 镜像前执行此脚本。
 
 ## 7. 日常检查
 
