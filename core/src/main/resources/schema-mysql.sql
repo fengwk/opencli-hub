@@ -54,7 +54,8 @@ create table if not exists hub_execution (
     stderr_truncated tinyint(1) not null default 0,
     error_message text null,
     timeout_millis bigint not null,
-    queued_at timestamp(3) not null default current_timestamp(3) on update current_timestamp(3),
+    -- queued_at is immutable enqueue time; do NOT use ON UPDATE (status updates must not rewrite sort key).
+    queued_at timestamp(3) not null default current_timestamp(3),
     started_at timestamp(3) null,
     finished_at timestamp(3) null,
     gmt_create timestamp(3) not null default current_timestamp(3),

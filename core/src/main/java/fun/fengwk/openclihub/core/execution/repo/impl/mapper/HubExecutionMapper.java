@@ -36,7 +36,7 @@ public interface HubExecutionMapper extends BaseMapper {
                started_at as startedAt, finished_at as finishedAt,
                gmt_create as createTime, gmt_modified as modifiedTime, version
         from hub_execution
-        order by queued_at desc, id desc
+        order by coalesce(finished_at, started_at, queued_at) desc, id desc
         limit #{offset}, #{limit}
         """)
     List<HubExecutionDO> pageAllOrderByQueuedAtDescIdDesc(
@@ -56,7 +56,7 @@ public interface HubExecutionMapper extends BaseMapper {
                gmt_create as createTime, gmt_modified as modifiedTime, version
         from hub_execution
         where instance_id = #{instanceId}
-        order by queued_at desc, id desc
+        order by coalesce(finished_at, started_at, queued_at) desc, id desc
         limit #{offset}, #{limit}
         """)
     List<HubExecutionDO> pageByInstanceIdOrderByQueuedAtDescIdDesc(

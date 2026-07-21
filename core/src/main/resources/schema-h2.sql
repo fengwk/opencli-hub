@@ -52,7 +52,7 @@ create table if not exists hub_execution (
     stderr_truncated boolean not null default false,
     error_message clob null,
     timeout_millis bigint not null,
-    queued_at timestamp(3) not null default current_timestamp(3) on update current_timestamp(3),
+    queued_at timestamp(3) not null default current_timestamp(3),
     started_at timestamp(3) null,
     finished_at timestamp(3) null,
     gmt_create timestamp(3) not null default current_timestamp(3),
