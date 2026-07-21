@@ -172,6 +172,57 @@ class HttpOpenCliDaemonClientTest {
     }
 
     @Test
+    void shouldPostBindActiveTabWithAdapterPersistentCommand() throws Exception {
+        server.setCommandBody("{\"id\":\"unused\",\"ok\":true}");
+
+        OpenCliDaemonCommandResponse response = client.bindActiveTab("ctx-bind");
+
+        assertThat(response.getOk()).isTrue();
+        assertThat(server.lastMethodAndPath()).isEqualTo("POST /command");
+        assertThat(server.lastHeaders()).contains("x-opencli: 1");
+        assertThat(server.lastHeaders()).anyMatch(h -> h.startsWith("content-type: application/json"));
+        var request = new ObjectMapper().readTree(server.lastBody());
+        assertThat(request.get("id").asText()).isNotBlank();
+        assertThat(request.get("action").asText()).isEqualTo("bind");
+        assertThat(request.get("session").asText()).isEqualTo("site:chatgpt-agent");
+        assertThat(request.get("surface").asText()).isEqualTo("adapter");
+        assertThat(request.get("siteSession").asText()).isEqualTo("persistent");
+        assertThat(request.get("contextId").asText()).isEqualTo("ctx-bind");
+    }
+
+    @Test
+    void shouldReturnCommandLevelBindFailureFromSuccessfulHttpResponse() {
+        server.setCommandBody("{\"id\":\"unused\",\"ok\":false,"
+            + "\"errorCode\":\"bound_tab_not_found\",\"error\":\"No tab\","
+            + "\"errorHint\":\"Focus the tab\"}");
+
+        OpenCliDaemonCommandResponse response = client.bindActiveTab("ctx-bind");
+
+        assertThat(response.getOk()).isFalse();
+        assertThat(response.getErrorCode()).isEqualTo("bound_tab_not_found");
+        assertThat(response.getError()).isEqualTo("No tab");
+        assertThat(response.getErrorHint()).isEqualTo("Focus the tab");
+    }
+
+    @Test
+    void shouldThrowWhenBindCommandIsNonTwoXx() {
+        server.setCommandStatusCode(503);
+
+        assertThatThrownBy(() -> client.bindActiveTab("ctx-bind"))
+            .isInstanceOf(OpenCliDaemonException.class)
+            .hasMessageContaining("HTTP 503");
+    }
+
+    @Test
+    void shouldThrowWhenBindCommandResponseBodyIsInvalid() {
+        server.setCommandBody("{\"ok\":true}");
+
+        assertThatThrownBy(() -> client.bindActiveTab("ctx-bind"))
+            .isInstanceOf(OpenCliDaemonException.class)
+            .hasMessageContaining("invalid bind response");
+    }
+
+    @Test
     void shouldThrowWhenStatusIsNonTwoXx() {
         server.setStatusCode(500);
         assertThatThrownBy(() -> client.fetchStatus())
@@ -353,9 +404,12 @@ class HttpOpenCliDaemonClientTest {
         private final java.util.concurrent.atomic.AtomicInteger statusCode = new AtomicInteger(200);
         private final java.util.concurrent.atomic.AtomicInteger recoverStatusCode =
             new java.util.concurrent.atomic.AtomicInteger(200);
+        private final java.util.concurrent.atomic.AtomicInteger commandStatusCode =
+            new java.util.concurrent.atomic.AtomicInteger(200);
         private volatile String statusBody = "{}";
         private volatile String recoverBody =
             "{\"ok\":true,\"result\":\"RECOVERED\",\"tabReset\":false,\"cancelledPending\":0}";
+        private volatile String commandBody = "{\"id\":\"unused\",\"ok\":true}";
         private volatile List<String> lastHeaders = List.of();
         private volatile String lastMethodAndPath = "";
         private volatile String lastBody = "";
@@ -411,6 +465,14 @@ class HttpOpenCliDaemonClientTest {
 
         void setRecoverStatusCode(int code) {
             this.recoverStatusCode.set(code);
+        }
+
+        void setCommandBody(String body) {
+            this.commandBody = body;
+        }
+
+        void setCommandStatusCode(int code) {
+            this.commandStatusCode.set(code);
         }
 
         List<String> lastHeaders() {
@@ -471,15 +533,38 @@ class HttpOpenCliDaemonClientTest {
                 boolean isStatus = requestLine.startsWith("GET") && requestLine.contains("/status");
                 boolean isRecover = requestLine.startsWith("POST")
                     && requestLine.contains("/session-leases/recover");
+                boolean isCommand = requestLine.startsWith("POST")
+                    && requestLine.contains("/command");
                 if (isStatus) {
                     writeJson(out, statusCode.get(), statusBody);
                 } else if (isRecover) {
                     writeJson(out, recoverStatusCode.get(), recoverBody);
+                } else if (isCommand) {
+                    writeJson(out, commandStatusCode.get(), withCommandId(commandBody, lastBody));
                 } else {
                     writeJson(out, 404, "{\"ok\":false}");
                 }
             } catch (IOException ignored) {
             }
+        }
+
+        private static String withCommandId(String responseBody, String requestBody) {
+            String marker = Character.toString('"') + "unused" + '"';
+            if (!responseBody.contains(marker)) {
+                return responseBody;
+            }
+            String idKey = Character.toString('"') + "id" + '"' + ":" + '"';
+            int start = requestBody.indexOf(idKey);
+            if (start < 0) {
+                return responseBody;
+            }
+            start += idKey.length();
+            int end = requestBody.indexOf('"', start);
+            if (end < 0) {
+                return responseBody;
+            }
+            return responseBody.replace(marker,
+                Character.toString('"') + requestBody.substring(start, end) + '"');
         }
 
         private static void writeJson(java.io.OutputStream out, int code, String body) throws IOException {

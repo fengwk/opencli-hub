@@ -9,6 +9,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -201,6 +204,52 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
         }
     }
 
+    @Override
+    public OpenCliDaemonCommandResponse bindActiveTab(String contextId) {
+        if (contextId == null || contextId.isBlank()) {
+            throw new OpenCliDaemonException("bind active tab contextId is required");
+        }
+        String commandId = UUID.randomUUID().toString();
+        Map<String, Object> command = new LinkedHashMap<>();
+        command.put("id", commandId);
+        command.put("action", "bind");
+        command.put("session", "site:chatgpt-agent");
+        command.put("surface", "adapter");
+        command.put("siteSession", "persistent");
+        command.put("contextId", contextId);
+
+        String body;
+        try {
+            body = objectMapper.writeValueAsString(command);
+        } catch (IOException ex) {
+            throw new OpenCliDaemonException("failed to serialize daemon bind active tab request", ex);
+        }
+        HttpRequest request = HttpRequest.newBuilder(baseUri.resolve("/command"))
+            .timeout(requestTimeout)
+            .header(X_OPEN_CLI_HEADER, X_OPEN_CLI_VALUE)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build();
+        HttpResponse<String> response = send(request, "/command");
+        if (response.statusCode() / 100 != 2) {
+            throw new OpenCliDaemonException(
+                "daemon /command returned HTTP " + response.statusCode());
+        }
+        try {
+            OpenCliDaemonCommandResponse parsed = objectMapper.readValue(
+                response.body(), OpenCliDaemonCommandResponse.class);
+            if (!isValidCommandResponse(parsed, commandId)) {
+                throw new OpenCliDaemonException(
+                    "daemon /command returned an invalid bind response body");
+            }
+            return parsed;
+        } catch (IOException ex) {
+            throw new OpenCliDaemonException(
+                "failed to parse daemon /command JSON", ex);
+        }
+    }
+
     private HttpResponse<String> send(HttpRequest request, String endpoint) {
         try {
             return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -211,6 +260,13 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
             Thread.currentThread().interrupt();
             throw new OpenCliDaemonException("interrupted while calling " + endpoint, ex);
         }
+    }
+
+    private static boolean isValidCommandResponse(
+        OpenCliDaemonCommandResponse response, String commandId) {
+        return response != null
+            && commandId.equals(response.getId())
+            && response.getOk() != null;
     }
 
     private static boolean isValidRecoverResponse(OpenCliSessionLeaseRecoverResponse response) {

@@ -178,6 +178,38 @@ public class HubInstanceDispatcher {
         }
     }
 
+    /**
+     * Runs a short lifecycle-side operation only when this instance is idle. The same
+     * {@link #submitLock} guards the idle check and the operation, so a submission cannot enter
+     * between the check and the daemon call.
+     */
+    public <T> T executeWhenIdle(Callable<T> task) {
+        if (task == null) {
+            throw new IllegalArgumentException("task must not be null");
+        }
+        submitLock.lock();
+        try {
+            if (shutdown) {
+                throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
+                    "Instance dispatcher is shutting down");
+            }
+            if (executor.getActiveCount() != 0 || !executor.getQueue().isEmpty()) {
+                throw HubErrorCodes.INSTANCE_BUSY.asThrowable(
+                    "Instance has active or pending work");
+            }
+            try {
+                return task.call();
+            } catch (RuntimeException | Error ex) {
+                throw ex;
+            } catch (Exception ex) {
+                throw HubErrorCodes.OPENCLI_EXECUTION_FAILED.asThrowable(
+                    ex, "Idle instance operation failed");
+            }
+        } finally {
+            submitLock.unlock();
+        }
+    }
+
     public int activeCount() {
         return executor.getActiveCount();
     }

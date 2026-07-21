@@ -303,6 +303,68 @@ class HubInstanceDispatcherTest {
         }
     }
 
+    /**
+     * The idle check and callback share submitLock: a concurrent submit cannot enter while the
+     * bind-like callback is in progress, and active work is rejected before the callback runs.
+     */
+    @Test
+    void shouldGuardIdleOperationAtomicallyAgainstSubmit() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("idle-guard", 2);
+        CountDownLatch callbackEntered = new CountDownLatch(1);
+        CountDownLatch releaseCallback = new CountDownLatch(1);
+        CountDownLatch submitFinished = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<Future<String>> submitted =
+            new java.util.concurrent.atomic.AtomicReference<>();
+        Thread operation = new Thread(() -> dispatcher.executeWhenIdle(() -> {
+            callbackEntered.countDown();
+            releaseCallback.await(2, TimeUnit.SECONDS);
+            return "bound";
+        }));
+        operation.setDaemon(true);
+        operation.start();
+        Thread submitter = new Thread(() -> {
+            submitted.set(dispatcher.submit(() -> "execution", System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(5)));
+            submitFinished.countDown();
+        });
+        submitter.setDaemon(true);
+        try {
+            assertThat(callbackEntered.await(1, TimeUnit.SECONDS)).isTrue();
+            submitter.start();
+            assertThat(submitFinished.await(150, TimeUnit.MILLISECONDS))
+                .as("submit must wait for the idle operation callback")
+                .isFalse();
+            releaseCallback.countDown();
+            operation.join(1000);
+            assertThat(submitFinished.await(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(submitted.get().get(1, TimeUnit.SECONDS)).isEqualTo("execution");
+        } finally {
+            releaseCallback.countDown();
+            dispatcher.shutdownNow();
+            operation.join(1000);
+            submitter.join(1000);
+        }
+
+        HubInstanceDispatcher busy = new HubInstanceDispatcher("idle-busy", 1);
+        CountDownLatch activeStarted = new CountDownLatch(1);
+        CountDownLatch releaseActive = new CountDownLatch(1);
+        try {
+            busy.submit(() -> {
+                activeStarted.countDown();
+                releaseActive.await(2, TimeUnit.SECONDS);
+                return null;
+            }, System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
+            assertThat(activeStarted.await(1, TimeUnit.SECONDS)).isTrue();
+            assertThatThrownBy(() -> busy.executeWhenIdle(() -> "must-not-run"))
+                .isInstanceOf(ThrowableConventionErrorCode.class)
+                .satisfies(ex -> assertThat(((ThrowableConventionErrorCode) ex).getCode())
+                    .isEqualTo(HubErrorCodes.INSTANCE_BUSY.getCode()));
+        } finally {
+            releaseActive.countDown();
+            busy.shutdownNow();
+        }
+    }
+
     private static boolean awaitIdle(HubInstanceDispatcher dispatcher, long timeoutMillis)
         throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);

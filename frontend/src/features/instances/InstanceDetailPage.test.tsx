@@ -91,4 +91,64 @@ describe('InstanceDetailPage', () => {
       proxyMode: 'CUSTOM', proxyServer: 'socks5://proxy.example.com:1080',
     }))
   })
+
+  it('confirms before binding the current VNC tab and shows success', async () => {
+    const user = userEvent.setup()
+    vi.mocked(apiClient.get).mockImplementation((url: string) => Promise.resolve(
+      url === `/instances/${instanceId}/vnc/status` ? vncStatus : instance,
+    ) as never)
+    vi.mocked(apiClient.post).mockResolvedValue(undefined)
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Beta browser' })
+    const bindButton = screen.getByRole('button', { name: '绑定当前 VNC 标签页' })
+    expect(bindButton).toBeEnabled()
+    await user.click(bindButton)
+
+    expect(screen.getByText(/先在 VNC 中选中目标 ChatGPT tab/)).toBeInTheDocument()
+    expect(apiClient.post).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '绑定当前标签页' }))
+
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith(
+      `/instances/${instanceId}/chatgpt-agent/bind-active-tab`,
+    ))
+    expect(await screen.findByText('已绑定当前 VNC 标签页。')).toBeInTheDocument()
+  })
+
+  it('disables binding when the instance is unavailable', async () => {
+    const unavailable = { ...instance, state: 'STOPPED' as const, runtime: null }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => Promise.resolve(
+      url === `/instances/${instanceId}/vnc/status` ? vncStatus : unavailable,
+    ) as never)
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Beta browser' })
+    expect(screen.getByRole('button', { name: '绑定当前 VNC 标签页' })).toBeDisabled()
+  })
+
+  it('disables binding while work is active', async () => {
+    const busy = { ...instance, runtime: { ...instance.runtime!, activeCount: 1 } }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => Promise.resolve(
+      url === `/instances/${instanceId}/vnc/status` ? vncStatus : busy,
+    ) as never)
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Beta browser' })
+    expect(screen.getByRole('button', { name: '绑定当前 VNC 标签页' })).toBeDisabled()
+  })
+
+  it('shows bind failures in the existing page error area', async () => {
+    const user = userEvent.setup()
+    vi.mocked(apiClient.get).mockImplementation((url: string) => Promise.resolve(
+      url === `/instances/${instanceId}/vnc/status` ? vncStatus : instance,
+    ) as never)
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('目标 tab 不可用'))
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Beta browser' })
+    await user.click(screen.getByRole('button', { name: '绑定当前 VNC 标签页' }))
+    await user.click(screen.getByRole('button', { name: '绑定当前标签页' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('目标 tab 不可用')
+  })
 })

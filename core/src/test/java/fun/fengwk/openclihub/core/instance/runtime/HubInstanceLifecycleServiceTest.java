@@ -8,6 +8,7 @@ import fun.fengwk.openclihub.core.execution.runtime.HubDispatchRegistry;
 import fun.fengwk.openclihub.core.instance.runtime.test.InMemoryHubInstanceService;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.core.opencli.daemon.FakeOpenCliDaemonClient;
+import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonCommandResponse;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliProfileSnapshot;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import fun.fengwk.openclihub.core.settings.service.FakeHubSystemSettingsService;
@@ -677,8 +678,92 @@ class HubInstanceLifecycleServiceTest {
         assertThat(lastChromeCommand()).contains("--no-proxy-server");
     }
 
-    // ---------------------------------------------------------------------------------
-    //  STOP / RESTART / DELETE
+    @Test
+    void shouldBindChatgptAgentActiveTabThroughConnectedProfile() {
+        String id = seedPersistedInstance("chatgpt-bind-success", "ctx-bind-success");
+        OpenCliProfileSnapshot profile = connectedProfile("ctx-bind-success");
+        daemon.setProfiles(List.of(profile));
+
+        lifecycle.start(id);
+        lifecycle.bindActiveTab(id);
+
+        assertThat(daemon.bindContextIds()).containsExactly("ctx-bind-success");
+    }
+
+    @Test
+    void shouldRejectActiveTabBindWhenInstanceIsNotRunning() {
+        String id = seedPersistedInstance("chatgpt-bind-stopped", "ctx-bind-stopped");
+
+        assertThatThrownBy(() -> lifecycle.bindActiveTab(id))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_NOT_RUNNING));
+        assertThat(daemon.bindContextIds()).isEmpty();
+    }
+
+    @Test
+    void shouldRejectActiveTabBindWhenDaemonProfileIsDisconnected() {
+        String id = seedPersistedInstance("chatgpt-bind-offline", "ctx-bind-offline");
+        daemon.setProfiles(List.of(connectedProfile("ctx-bind-offline")));
+        lifecycle.start(id);
+        daemon.clearProfiles();
+
+        assertThatThrownBy(() -> lifecycle.bindActiveTab(id))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_CONTEXT_NOT_CONNECTED));
+        assertThat(daemon.bindContextIds()).isEmpty();
+    }
+
+    @Test
+    void shouldRejectActiveTabBindWhileInstanceIsBusy() throws Exception {
+        String id = seedPersistedInstance("chatgpt-bind-busy", "ctx-bind-busy");
+        daemon.setProfiles(List.of(connectedProfile("ctx-bind-busy")));
+        lifecycle.start(id);
+        CountDownLatch activeStarted = new CountDownLatch(1);
+        CountDownLatch releaseActive = new CountDownLatch(1);
+        ExecutorService submitter = Executors.newSingleThreadExecutor();
+        try {
+            submitter.submit(() -> dispatchRegistry.dispatch(instanceService.get(id), () -> {
+                activeStarted.countDown();
+                releaseActive.await(2, TimeUnit.SECONDS);
+                return null;
+            }, Long.MAX_VALUE));
+            assertThat(activeStarted.await(1, TimeUnit.SECONDS)).isTrue();
+
+            assertThatThrownBy(() -> lifecycle.bindActiveTab(id))
+                .isInstanceOf(ThrowableConventionErrorCode.class)
+                .extracting("code")
+                .isEqualTo(prefixed(HubErrorCodes.INSTANCE_BUSY));
+            assertThat(daemon.bindContextIds()).isEmpty();
+        } finally {
+            releaseActive.countDown();
+            submitter.shutdownNow();
+            submitter.awaitTermination(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void shouldPreserveDaemonBindFailureAndHint() {
+        String id = seedPersistedInstance("chatgpt-bind-failed", "ctx-bind-failed");
+        daemon.setProfiles(List.of(connectedProfile("ctx-bind-failed")));
+        lifecycle.start(id);
+        OpenCliDaemonCommandResponse failure = new OpenCliDaemonCommandResponse();
+        failure.setId("fake-bind");
+        failure.setOk(false);
+        failure.setErrorCode("bound_tab_not_found");
+        failure.setError("No debuggable tab found");
+        failure.setErrorHint("Focus the target Chrome tab/window, then retry bind.");
+        daemon.setBindResponse(failure);
+
+        assertThatThrownBy(() -> lifecycle.bindActiveTab(id))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .hasMessageContaining("No debuggable tab found")
+            .hasMessageContaining("Focus the target Chrome tab/window")
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_TAB_BIND_FAILED));
+    }
+
     // ---------------------------------------------------------------------------------
 
     @Test
@@ -1031,6 +1116,14 @@ class HubInstanceLifecycleServiceTest {
         lifecycle = new HubInstanceLifecycleService(
             instanceService, registry, launcher, daemon, properties, settingsService,
             new ProfileSingletonCleaner(), dispatchRegistry);
+    }
+
+    private OpenCliProfileSnapshot connectedProfile(String contextId) {
+        OpenCliProfileSnapshot profile = new OpenCliProfileSnapshot();
+        profile.setContextId(contextId);
+        profile.setExtensionConnected(true);
+        profile.setExtensionVersion("v1.0.22");
+        return profile;
     }
 
     private String seedPersistedInstance(String code, String contextId) {

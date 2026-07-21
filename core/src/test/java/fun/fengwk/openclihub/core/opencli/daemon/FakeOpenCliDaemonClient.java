@@ -27,6 +27,8 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
     private RuntimeException ensureFailure;
     private RuntimeException recoverFailure;
     private OpenCliSessionLeaseRecoverResponse recoverResponse = defaultRecoverResponse();
+    private OpenCliDaemonCommandResponse bindResponse = defaultBindResponse();
+    private final List<String> bindContextIds = new ArrayList<>();
     /** When set, the daemon exposes the named context on the SECOND fetch and clears it after. */
     private String firstWinsContextId;
     private boolean firstWinsFired = false;
@@ -104,6 +106,20 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
             throw recoverFailure;
         }
         return recoverResponse;
+    }
+
+    @Override
+    public OpenCliDaemonCommandResponse bindActiveTab(String contextId) {
+        bindContextIds.add(contextId);
+        return bindResponse;
+    }
+
+    public void setBindResponse(OpenCliDaemonCommandResponse response) {
+        this.bindResponse = response == null ? defaultBindResponse() : response;
+    }
+
+    public List<String> bindContextIds() {
+        return List.copyOf(bindContextIds);
     }
 
     public void setRecoverResponse(OpenCliSessionLeaseRecoverResponse response) {
@@ -185,6 +201,13 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
         response.setResult("RECOVERED");
         response.setTabReset(true);
         response.setCancelledPending(0);
+        return response;
+    }
+
+    private static OpenCliDaemonCommandResponse defaultBindResponse() {
+        OpenCliDaemonCommandResponse response = new OpenCliDaemonCommandResponse();
+        response.setId("fake-bind");
+        response.setOk(true);
         return response;
     }
 

@@ -6,6 +6,7 @@ import fun.fengwk.openclihub.core.instance.runtime.HubInstanceRuntime.HubInstanc
 import fun.fengwk.openclihub.core.instance.service.HubInstanceService;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonClient;
+import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonCommandResponse;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonException;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonStatus;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
@@ -192,6 +193,50 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     public int clearPendingQueue(String instanceId) {
         loadInstance(instanceId);
         return dispatchRegistry.clearPending(instanceId);
+    }
+
+    /**
+     * Binds the fixed chatgpt-agent adapter session to the tab currently focused in the
+     * instance's VNC browser. The dispatcher idle guard remains held for the complete daemon
+     * round trip, so no execution can be accepted while the tab is being replaced.
+     */
+    public void bindActiveTab(String instanceId) {
+        ReentrantLock lock = lockExistingInstance(instanceId);
+        try {
+            HubInstance instance = loadInstance(instanceId);
+            if (!instance.isRunning()) {
+                throw HubErrorCodes.INSTANCE_NOT_RUNNING.asThrowable(
+                    "instance is not RUNNING: " + instanceId);
+            }
+            HubInstanceRuntime runtime = registry.get(instanceId);
+            if (runtime == null) {
+                throw HubErrorCodes.INSTANCE_RUNTIME_NOT_FOUND.asThrowable(
+                    "instance runtime is not registered: " + instanceId);
+            }
+            String contextId = runtime.getContextId();
+            if (contextId == null || contextId.isBlank()
+                || instance.getContextId() == null
+                || !instance.getContextId().equals(contextId)) {
+                throw HubErrorCodes.INSTANCE_CONTEXT_NOT_CONNECTED.asThrowable(
+                    "instance live contextId is unavailable or stale: " + instanceId);
+            }
+            dispatchRegistry.executeWhenIdle(instance, () -> {
+                requireConnectedDaemonProfile(contextId);
+                OpenCliDaemonCommandResponse response;
+                try {
+                    response = daemonClient.bindActiveTab(contextId);
+                } catch (OpenCliDaemonException ex) {
+                    throw HubErrorCodes.INSTANCE_START_FAILED.asThrowable(
+                        ex, "failed to bind active tab through OpenCLI daemon: " + ex.getMessage());
+                }
+                if (response == null || !Boolean.TRUE.equals(response.getOk())) {
+                    throw bindFailure(response);
+                }
+                return null;
+            });
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -688,6 +733,53 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             throw HubErrorCodes.INSTANCE_START_FAILED.asThrowable(
                 ex, "failed to ensure OpenCLI daemon: " + ex.getMessage());
         }
+    }
+
+    private void requireConnectedDaemonProfile(String contextId) {
+        OpenCliDaemonStatus status;
+        try {
+            status = daemonClient.fetchStatus();
+        } catch (OpenCliDaemonException ex) {
+            throw HubErrorCodes.INSTANCE_START_FAILED.asThrowable(
+                ex, "failed to fetch OpenCLI daemon status for bind: " + ex.getMessage());
+        }
+        if (!isConnectedProfile(status, contextId)) {
+            throw HubErrorCodes.INSTANCE_CONTEXT_NOT_CONNECTED.asThrowable(
+                "instance context is not connected to the OpenCLI daemon: " + contextId);
+        }
+    }
+
+    private static boolean isConnectedProfile(OpenCliDaemonStatus status, String contextId) {
+        if (status == null) {
+            return false;
+        }
+        if (status.getProfiles() != null) {
+            for (var profile : status.getProfiles()) {
+                if (contextId.equals(profile.getContextId())) {
+                    return Boolean.TRUE.equals(profile.getExtensionConnected());
+                }
+            }
+        }
+        // Keep compatibility with daemon status snapshots that expose one profile only through
+        // the legacy top-level contextId/extensionConnected fields.
+        return contextId.equals(status.getContextId())
+            && Boolean.TRUE.equals(status.getExtensionConnected());
+    }
+
+    private static RuntimeException bindFailure(OpenCliDaemonCommandResponse response) {
+        StringBuilder message = new StringBuilder("OpenCLI daemon rejected active tab bind");
+        if (response != null && response.getErrorCode() != null
+            && !response.getErrorCode().isBlank()) {
+            message.append(" [").append(response.getErrorCode()).append(']');
+        }
+        if (response != null && response.getError() != null && !response.getError().isBlank()) {
+            message.append(": ").append(response.getError());
+        }
+        if (response != null && response.getErrorHint() != null
+            && !response.getErrorHint().isBlank()) {
+            message.append(" Hint: ").append(response.getErrorHint());
+        }
+        return HubErrorCodes.INSTANCE_TAB_BIND_FAILED.asThrowable(message.toString());
     }
 
     private Set<String> snapshotContextIds() {

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { clearInstanceQueue, deleteInstance, getInstance, getInstanceVncStatus, runInstanceLifecycleAction, updateInstance } from '@/features/instances/instances-api'
+import { bindInstanceActiveTab, clearInstanceQueue, deleteInstance, getInstance, getInstanceVncStatus, runInstanceLifecycleAction, updateInstance } from '@/features/instances/instances-api'
 import { InstanceForm } from '@/features/instances/InstanceForm'
 import { InstanceLifecycleActions } from '@/features/instances/InstanceLifecycleActions'
 import type { InstanceEditableProperties } from '@/features/instances/types'
@@ -26,9 +26,11 @@ export function InstanceDetailPage() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [actionError, setActionError] = useState<string | null>(null)
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null)
   const [actionPending, setActionPending] = useState(false)
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmBindActiveTab, setConfirmBindActiveTab] = useState(false)
   const instanceQuery = useQuery({
     queryKey: ['instance', instanceId],
     queryFn: () => getInstance(instanceId!),
@@ -55,6 +57,7 @@ export function InstanceDetailPage() {
 
   async function runAction(action: 'start' | 'stop' | 'restart') {
     setActionError(null)
+    setActionSuccess(null)
     setActionPending(true)
     try {
       await runInstanceLifecycleAction(resolvedInstanceId, action)
@@ -68,6 +71,7 @@ export function InstanceDetailPage() {
 
   async function clearQueue() {
     setActionError(null)
+    setActionSuccess(null)
     setActionPending(true)
     try {
       await clearInstanceQueue(resolvedInstanceId)
@@ -79,8 +83,26 @@ export function InstanceDetailPage() {
     }
   }
 
+  async function bindActiveTab() {
+    setActionError(null)
+    setActionSuccess(null)
+    setActionPending(true)
+    try {
+      await bindInstanceActiveTab(resolvedInstanceId)
+      setConfirmBindActiveTab(false)
+      setActionSuccess('已绑定当前 VNC 标签页。')
+      await refresh()
+    } catch (error) {
+      setConfirmBindActiveTab(false)
+      setActionError(errorMessage(error))
+    } finally {
+      setActionPending(false)
+    }
+  }
+
   async function save(properties: InstanceEditableProperties) {
     setActionError(null)
+    setActionSuccess(null)
     setActionPending(true)
     try {
       await updateInstance(resolvedInstanceId, properties)
@@ -95,6 +117,7 @@ export function InstanceDetailPage() {
 
   async function remove() {
     setActionError(null)
+    setActionSuccess(null)
     setActionPending(true)
     try {
       await deleteInstance(resolvedInstanceId)
@@ -117,6 +140,7 @@ export function InstanceDetailPage() {
   const instance = instanceQuery.data
   const runtime = instance.runtime
   const queueBusy = (runtime?.activeCount ?? 0) + (runtime?.pendingCount ?? 0) > 0
+  const canBindActiveTab = instance.state === 'RUNNING' && runtime?.registered === true && !queueBusy
   const canDelete = !queueBusy && instance.state !== 'STARTING' && instance.state !== 'STOPPING'
   const initialValues: InstanceEditableProperties = {
     code: instance.code,
@@ -139,6 +163,7 @@ export function InstanceDetailPage() {
         <StatusBadge status={instance.state} />
       </header>
       {actionError ? <p className="page-error" role="alert">{actionError}</p> : null}
+      {actionSuccess ? <p className="page-success" role="status">{actionSuccess}</p> : null}
 
       <div className="instance-detail-layout">
         <div className="instance-detail-main">
@@ -188,6 +213,15 @@ export function InstanceDetailPage() {
               <button
                 type="button"
                 className="btn"
+                disabled={actionPending || !canBindActiveTab}
+                title="先在 VNC 中选中目标 ChatGPT tab；运行中的任务不能绑定"
+                onClick={() => setConfirmBindActiveTab(true)}
+              >
+                绑定当前 VNC 标签页
+              </button>
+              <button
+                type="button"
+                className="btn"
                 disabled={actionPending || (runtime?.pendingCount ?? 0) === 0}
                 title="拒绝所有排队中的执行；不影响当前正在执行的任务"
                 onClick={() => void clearQueue()}
@@ -217,6 +251,16 @@ export function InstanceDetailPage() {
           ) : null}
         </aside>
       </div>
+
+      <ConfirmDialog
+        open={confirmBindActiveTab}
+        title="绑定当前 VNC 标签页？"
+        description={<>请先在 VNC 中选中目标 ChatGPT tab。此操作会替换当前 chatgpt-agent 受管 tab，不会关闭目标用户 tab；运行中的任务不能绑定。</>}
+        confirmLabel="绑定当前标签页"
+        busy={actionPending}
+        onConfirm={() => void bindActiveTab()}
+        onCancel={() => setConfirmBindActiveTab(false)}
+      />
 
       <ConfirmDialog
         open={confirmDelete}

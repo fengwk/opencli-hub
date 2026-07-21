@@ -67,6 +67,19 @@ public class HubDispatchRegistry {
         return dispatcher.submit(task, deadlineNanos);
     }
 
+    /**
+     * Executes a lifecycle-side operation only when the instance dispatcher is idle. The
+     * dispatcher holds its submit lock through the callback, making the guard atomic with submit.
+     */
+    public <T> T executeWhenIdle(HubInstance instance, Callable<T> task) {
+        HubInstanceDispatcher dispatcher = dispatchers.get(instance.getId());
+        if (dispatcher == null) {
+            throw HubErrorCodes.INSTANCE_RUNTIME_NOT_FOUND
+                .asThrowable("Instance dispatcher is not registered: " + instance.getId());
+        }
+        return dispatcher.executeWhenIdle(task);
+    }
+
     public HubInstanceRuntimeSnapshot getSnapshot(String instanceId) {
         HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
         if (dispatcher == null) {

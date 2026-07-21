@@ -208,6 +208,15 @@ class HubInstanceControllerTest {
     }
 
 
+    /** The bind endpoint has no request body and delegates only to the lifecycle service. */
+    @Test
+    void shouldBindActiveTabThroughDedicatedRoute() throws Exception {
+        mockMvc.perform(post("/api/instances/11/chatgpt-agent/bind-active-tab"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.success").value(true));
+        verify(lifecycleService).bindActiveTab("11");
+    }
+
     /** clear-queue drains pending tasks and reports the cancelled count. */
     @Test
     void shouldClearPendingQueue() throws Exception {

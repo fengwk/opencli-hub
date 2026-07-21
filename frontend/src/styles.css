@@ -490,6 +490,13 @@ h1, h2, h3 {
   margin: 0 0 16px;
 }
 
+.page-success {
+  margin: 0 0 16px;
+  color: #a8e4c1;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;

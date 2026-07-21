@@ -33,6 +33,16 @@ public interface OpenCliDaemonClient {
     OpenCliSessionLeaseRecoverResponse recoverSessionLease(OpenCliSessionLeaseRecoverRequest request);
 
     /**
+     * Binds the daemon's fixed chatgpt-agent adapter session to the active tab in the selected
+     * browser profile.
+     *
+     * @param contextId the live daemon profile context to route to
+     * @return the daemon command result; command-level failures are represented by {@code ok=false}
+     * @throws OpenCliDaemonException when the daemon is unreachable or returns an invalid response
+     */
+    OpenCliDaemonCommandResponse bindActiveTab(String contextId);
+
+    /**
      * Ensures the daemon is ready. Behaviour:
      * <ol>
      *   <li>Fetch authenticated {@code /status}; return when it reports a valid pid.</li>

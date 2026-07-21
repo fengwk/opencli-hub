@@ -113,6 +113,15 @@ public class HubInstanceController {
         return Results.ok(dto);
     }
 
+    /**
+     * Bind the server-owned chatgpt-agent session to the tab selected in the instance VNC window.
+     */
+    @PostMapping("/{id}/chatgpt-agent/bind-active-tab")
+    public Result<Void> bindActiveTab(@PathVariable String id) {
+        lifecycleService.bindActiveTab(id);
+        return Results.ok();
+    }
+
     @PostMapping("/{id}/restart")
     public Result<HubInstanceDTO> restart(@PathVariable String id) {
         lifecycleService.restart(id);
