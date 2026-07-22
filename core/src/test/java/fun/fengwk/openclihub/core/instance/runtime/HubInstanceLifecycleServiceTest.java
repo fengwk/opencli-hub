@@ -1179,7 +1179,7 @@ class HubInstanceLifecycleServiceTest {
 
     private boolean fileAccessPreference(Path chromeDir) throws IOException {
         String pointer = "/extensions/settings/"
-            + TEST_EXTENSION_ID + "/file_access";
+            + TEST_EXTENSION_ID + "/newAllowFileAccess";
         return new ObjectMapper().readTree(Files.readString(
             chromeDir.resolve("Default").resolve("Preferences"))).at(pointer).asBoolean();
     }

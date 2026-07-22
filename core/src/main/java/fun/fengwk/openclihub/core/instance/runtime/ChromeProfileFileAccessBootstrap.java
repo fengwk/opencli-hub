@@ -44,7 +44,7 @@ public final class ChromeProfileFileAccessBootstrap {
     }
 
     /**
-     * Sets the managed Bridge's {@code file_access} preference without following profile
+     * Sets the managed Bridge's {@code newAllowFileAccess} preference without following profile
      * symlinks. Chrome must be stopped by the caller before this method is invoked.
      */
     public void bootstrap(Path chromeDir) throws IOException {
@@ -84,7 +84,7 @@ public final class ChromeProfileFileAccessBootstrap {
         ObjectNode extensions = objectChild(root, "extensions");
         ObjectNode settings = objectChild(extensions, "settings");
         ObjectNode bridge = objectChild(settings, extensionId);
-        bridge.put("file_access", true);
+        bridge.put("newAllowFileAccess", true);
 
         Path temporary = null;
         boolean moved = false;

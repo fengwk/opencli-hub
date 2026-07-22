@@ -44,7 +44,7 @@ class ChromeProfileFileAccessBootstrapTest {
 
         JsonNode preferences = readPreferences();
         assertThat(preferences.at("/extensions/settings/"
-            + TEST_EXTENSION_ID + "/file_access").asBoolean())
+            + TEST_EXTENSION_ID + "/newAllowFileAccess").asBoolean())
             .isTrue();
     }
 
@@ -62,7 +62,7 @@ class ChromeProfileFileAccessBootstrapTest {
         assertThat(actual.at("/profile/name").asText()).isEqualTo("kept");
         assertThat(actual.at("/extensions/other/value").asInt()).isEqualTo(7);
         assertThat(actual.at("/extensions/settings/"
-            + TEST_EXTENSION_ID + "/file_access").asBoolean())
+            + TEST_EXTENSION_ID + "/newAllowFileAccess").asBoolean())
             .isTrue();
         try (var files = Files.list(defaultDir)) {
             assertThat(files.map(Path::getFileName).map(Path::toString)
