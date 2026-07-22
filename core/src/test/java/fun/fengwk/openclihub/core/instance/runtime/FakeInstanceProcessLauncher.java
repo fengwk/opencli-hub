@@ -12,6 +12,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
@@ -29,6 +30,7 @@ public class FakeInstanceProcessLauncher implements InstanceProcessLauncher {
         = new ConcurrentHashMap<>();
     private final AtomicLong pidSeq = new AtomicLong(1);
     private final Map<String, Boolean> killOverrides = new ConcurrentHashMap<>();
+    private volatile Consumer<List<String>> chromeLaunchHook;
 
     public FakeInstanceProcessLauncher() {
         for (HubInstanceRuntime.HubInstanceProcessKind k :
@@ -51,6 +53,11 @@ public class FakeInstanceProcessLauncher implements InstanceProcessLauncher {
 
     public int launchCount(HubInstanceRuntime.HubInstanceProcessKind kind) {
         return launched.get(kind).size();
+    }
+
+    /** Test-only callback invoked with Chrome argv immediately before the fake Chrome launch. */
+    public void setChromeLaunchHook(Consumer<List<String>> hook) {
+        chromeLaunchHook = hook;
     }
 
     /**
@@ -94,6 +101,10 @@ public class FakeInstanceProcessLauncher implements InstanceProcessLauncher {
         Path logPath) {
         List<String> args = new ArrayList<>(extraArgs);
         args.add(0, "google-chrome-stable");
+        Consumer<List<String>> hook = chromeLaunchHook;
+        if (hook != null) {
+            hook.accept(List.copyOf(args));
+        }
         return runLaunch(HubInstanceRuntime.HubInstanceProcessKind.CHROME, "chrome", args, logPath);
     }
 

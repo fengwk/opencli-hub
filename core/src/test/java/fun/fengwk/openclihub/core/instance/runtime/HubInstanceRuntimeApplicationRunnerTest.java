@@ -2,6 +2,7 @@ package fun.fengwk.openclihub.core.instance.runtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import fun.fengwk.openclihub.core.execution.runtime.HubDispatchRegistry;
 import fun.fengwk.openclihub.core.instance.runtime.test.InMemoryHubInstanceService;
 import fun.fengwk.openclihub.core.opencli.daemon.FakeOpenCliDaemonClient;
@@ -27,7 +28,10 @@ import org.springframework.boot.DefaultApplicationArguments;
  */
 class HubInstanceRuntimeApplicationRunnerTest {
 
+    private static final String TEST_EXTENSION_ID = "abcdefghijklmnopabcdefghijklmnop";
+
     private Path dataDir;
+    private Path buildInfoPath;
     private FakeOpenCliDaemonClient daemon;
     private FakeInstanceProcessLauncher launcher;
     private InMemoryHubInstanceService instanceService;
@@ -41,6 +45,9 @@ class HubInstanceRuntimeApplicationRunnerTest {
     @BeforeEach
     void setUp() throws IOException {
         dataDir = Files.createTempDirectory("m4-runner-test");
+        buildInfoPath = dataDir.resolve("opencli").resolve("crx").resolve("build-info.json");
+        Files.createDirectories(buildInfoPath.getParent());
+        Files.writeString(buildInfoPath, "{\"extensionId\":\"" + TEST_EXTENSION_ID + "\"}");
         properties = new OpenCliHubProperties();
         properties.setDataDir(dataDir.toString());
         properties.getRuntime().setDisplayBase(8400);
@@ -59,6 +66,7 @@ class HubInstanceRuntimeApplicationRunnerTest {
         lifecycle = new HubInstanceLifecycleService(
             instanceService, registry, launcher, daemon, properties,
             new FakeHubSystemSettingsService(), new ProfileSingletonCleaner(),
+            new ChromeProfileFileAccessBootstrap(new ObjectMapper(), buildInfoPath),
             new HubDispatchRegistry());
         scanner = new OrphanInstanceScanner(properties, instanceService);
         runner = new HubInstanceRuntimeApplicationRunner(lifecycle, scanner, properties);

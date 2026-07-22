@@ -67,6 +67,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     private final OpenCliHubProperties properties;
     private final HubSystemSettingsService settingsService;
     private final ProfileSingletonCleaner singletonCleaner;
+    private final ChromeProfileFileAccessBootstrap fileAccessBootstrap;
     private final HubDispatchRegistry dispatchRegistry;
     private final ReentrantLock creationLock = new ReentrantLock();
 
@@ -78,6 +79,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         OpenCliHubProperties properties,
         HubSystemSettingsService settingsService,
         ProfileSingletonCleaner singletonCleaner,
+        ChromeProfileFileAccessBootstrap fileAccessBootstrap,
         HubDispatchRegistry dispatchRegistry) {
         this.instanceService = instanceService;
         this.registry = registry;
@@ -86,6 +88,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         this.properties = properties;
         this.settingsService = settingsService;
         this.singletonCleaner = singletonCleaner;
+        this.fileAccessBootstrap = fileAccessBootstrap;
         this.dispatchRegistry = dispatchRegistry;
     }
 
@@ -556,6 +559,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             resetLog(directories.x11vncLog());
             resetLog(directories.chromeLog());
             singletonCleaner.cleanStaleSingletons(directories.chromeDir());
+            fileAccessBootstrap.bootstrap(directories.chromeDir());
 
             Map<String, String> displayEnv = Map.of("DISPLAY", ":" + allocation.displayNumber);
             InstanceProcessLauncher.LaunchedProcess xvfb = launcher.launchXvfb(

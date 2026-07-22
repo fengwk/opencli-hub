@@ -1,8 +1,10 @@
 package fun.fengwk.openclihub.core.instance.runtime;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import fun.fengwk.openclihub.core.opencli.daemon.HttpOpenCliDaemonClient;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonClient;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
+import java.nio.file.Path;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.function.BiConsumer;
@@ -18,6 +20,7 @@ import org.springframework.context.annotation.Lazy;
  *   <li>{@link HubInstanceUnexpectedExitWatcher} — receives a lifecycle consumer to break the
  *       circular dependency between the watcher and {@link HubInstanceLifecycleService}.</li>
  *   <li>{@link ProfileSingletonCleaner} — pure helper.</li>
+ *   <li>{@link ChromeProfileFileAccessBootstrap} — stopped-profile preference bootstrap.</li>
  *   <li>{@link HubInstanceAllocationService} — depends on properties only.</li>
  * </ul>
  *
@@ -30,6 +33,14 @@ public class HubInstanceRuntimeConfiguration {
     @Bean
     public ProfileSingletonCleaner profileSingletonCleaner() {
         return new ProfileSingletonCleaner();
+    }
+
+    @Bean
+    public ChromeProfileFileAccessBootstrap chromeProfileFileAccessBootstrap(
+        ObjectMapper objectMapper, OpenCliHubProperties properties) {
+        Path buildInfoPath = Path.of(
+            properties.getOpencli().getWorkdir(), "crx", "build-info.json");
+        return new ChromeProfileFileAccessBootstrap(objectMapper, buildInfoPath);
     }
 
     @Bean

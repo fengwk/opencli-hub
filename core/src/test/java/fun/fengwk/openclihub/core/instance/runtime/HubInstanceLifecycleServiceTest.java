@@ -3,6 +3,7 @@ package fun.fengwk.openclihub.core.instance.runtime;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.openclihub.core.execution.runtime.HubDispatchRegistry;
 import fun.fengwk.openclihub.core.instance.runtime.test.InMemoryHubInstanceService;
@@ -43,7 +44,10 @@ import org.junit.jupiter.api.Test;
  */
 class HubInstanceLifecycleServiceTest {
 
+    private static final String TEST_EXTENSION_ID = "abcdefghijklmnopabcdefghijklmnop";
+
     private Path dataDir;
+    private Path buildInfoPath;
     private FakeOpenCliDaemonClient daemon;
     private FakeInstanceProcessLauncher launcher;
     private InMemoryHubInstanceService instanceService;
@@ -58,6 +62,9 @@ class HubInstanceLifecycleServiceTest {
     @BeforeEach
     void setUp() throws IOException {
         dataDir = Files.createTempDirectory("m4-runtime-test");
+        buildInfoPath = dataDir.resolve("opencli").resolve("crx").resolve("build-info.json");
+        Files.createDirectories(buildInfoPath.getParent());
+        Files.writeString(buildInfoPath, "{\"extensionId\":\"" + TEST_EXTENSION_ID + "\"}");
         properties = newProps();
         // Allocation service uses real filesystem scanning — pick a base range that we
         // proactively clean below.
@@ -78,7 +85,8 @@ class HubInstanceLifecycleServiceTest {
         dispatchRegistry = new HubDispatchRegistry();
         lifecycle = new HubInstanceLifecycleService(
             instanceService, registry, launcher, daemon, properties, settingsService,
-            new ProfileSingletonCleaner(), dispatchRegistry);
+            new ProfileSingletonCleaner(), newChromeBootstrap(),
+            dispatchRegistry);
     }
 
     private static void cleanupX11BaseRange(int base) {
@@ -130,6 +138,15 @@ class HubInstanceLifecycleServiceTest {
 
     @Test
     void shouldCreateInstanceEndToEnd() throws IOException {
+        AtomicBoolean bootstrapBeforeChromeLaunch = new AtomicBoolean();
+        launcher.setChromeLaunchHook(args -> {
+            try {
+                assertThat(fileAccessPreference(chromeDirFromArgs(args))).isTrue();
+                bootstrapBeforeChromeLaunch.set(true);
+            } catch (IOException ex) {
+                throw new AssertionError("failed to inspect profile before Chrome launch", ex);
+            }
+        });
         // The daemon first observes the empty state at the pre-create snapshot (fetch #1).
         // On the second fetch (post-chrome-start) we surface the new context id.
         daemon.addConnectedContextAfterFetch("ctx-success", 2);
@@ -137,6 +154,8 @@ class HubInstanceLifecycleServiceTest {
         HubInstanceCreateDTO dto = createDto("bilibili-a");
         HubInstance created = lifecycle.create(dto);
 
+        assertThat(bootstrapBeforeChromeLaunch).as("profile bootstrap must precede Chrome launch")
+            .isTrue();
         // DB row exists with all fields populated.
         assertThat(created.getId()).matches("[0-9a-f-]{36}");
         assertThat(created.getCode()).isEqualTo("bilibili-a");
@@ -154,6 +173,7 @@ class HubInstanceLifecycleServiceTest {
         // On-disk directory layout.
         Path dir = dataDir.resolve("instances").resolve(created.getId());
         assertThat(Files.exists(dir.resolve("chrome"))).isTrue();
+        assertThat(fileAccessPreference(dir.resolve("chrome"))).isTrue();
         assertThat(Files.exists(dir.resolve("logs"))).isTrue();
         assertThat(Files.exists(dir.resolve(".creating"))).isFalse();
         for (String log : new String[] { "xvfb.log", "openbox.log", "x11vnc.log", "chrome.log" }) {
@@ -793,6 +813,7 @@ class HubInstanceLifecycleServiceTest {
         lifecycle.restart(id);
 
         assertThat(instanceService.get(id).getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(fileAccessPreference(chromeDir)).isTrue();
         // Profile marker preserved.
         assertThat(Files.exists(chromeDir.resolve("marker.txt"))).isTrue();
     }
@@ -824,7 +845,8 @@ class HubInstanceLifecycleServiceTest {
             sleepQuietly(50);
             HubInstanceLifecycleService busyLifecycle = new HubInstanceLifecycleService(
                 instanceService, registry, launcher, daemon, properties, settingsService,
-                new ProfileSingletonCleaner(), dispatcher);
+                new ProfileSingletonCleaner(), newChromeBootstrap(),
+                dispatcher);
             assertThatThrownBy(() -> busyLifecycle.delete(id))
                 .isInstanceOf(ThrowableConventionErrorCode.class)
                 .extracting("code")
@@ -1115,7 +1137,8 @@ class HubInstanceLifecycleServiceTest {
         dispatchRegistry = newDispatchRegistry;
         lifecycle = new HubInstanceLifecycleService(
             instanceService, registry, launcher, daemon, properties, settingsService,
-            new ProfileSingletonCleaner(), dispatchRegistry);
+            new ProfileSingletonCleaner(), newChromeBootstrap(),
+            dispatchRegistry);
     }
 
     private OpenCliProfileSnapshot connectedProfile(String contextId) {
@@ -1148,6 +1171,26 @@ class HubInstanceLifecycleServiceTest {
     private String lastChromeCommand() {
         return launcher.lastHandle(HubInstanceRuntime.HubInstanceProcessKind.CHROME)
             .info().commandLine().orElseThrow();
+    }
+
+    private ChromeProfileFileAccessBootstrap newChromeBootstrap() {
+        return new ChromeProfileFileAccessBootstrap(new ObjectMapper(), buildInfoPath);
+    }
+
+    private boolean fileAccessPreference(Path chromeDir) throws IOException {
+        String pointer = "/extensions/settings/"
+            + TEST_EXTENSION_ID + "/file_access";
+        return new ObjectMapper().readTree(Files.readString(
+            chromeDir.resolve("Default").resolve("Preferences"))).at(pointer).asBoolean();
+    }
+
+    private Path chromeDirFromArgs(List<String> args) {
+        String prefix = "--user-data-dir=";
+        return args.stream()
+            .filter(arg -> arg.startsWith(prefix))
+            .map(arg -> Path.of(arg.substring(prefix.length())))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("Chrome user-data-dir argument is missing"));
     }
 
     private OpenCliHubProperties newProps() {
