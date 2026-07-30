@@ -62,6 +62,23 @@ class HubInstanceValidatorTest {
     }
 
     @Test
+    void shouldAcceptCodeWithUnderscore() {
+        // Operators often use names like fengwk_jimeng; underscore is allowed mid-code.
+        assertThat(validator.validateCode("fengwk_jimeng")).isEqualTo("fengwk_jimeng");
+        assertThat(validator.validateCode("a_b-c1")).isEqualTo("a_b-c1");
+    }
+
+    @Test
+    void shouldRejectCodeStartingOrEndingWithUnderscoreOrHyphen() {
+        assertThatThrownBy(() -> validator.validateCode("_fengwk"))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        assertThatThrownBy(() -> validator.validateCode("fengwk_"))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        assertThatThrownBy(() -> validator.validateCode("-fengwk"))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+    }
+
+    @Test
     void shouldAcceptSixtyFourCharacterCode() {
         // 1 leading alphanumeric + 62 middle chars + 1 trailing alphanumeric = 64.
         String code = "a" + "b".repeat(62) + "c";

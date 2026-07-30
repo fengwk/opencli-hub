@@ -37,12 +37,12 @@ import org.springframework.stereotype.Component;
 public class HubInstanceValidator {
 
     /**
-     * Stable code format: lowercase letters, digits and single hyphens. Must start and end with
-     * an alphanumeric character. Length 1..64 inclusive. The optional middle group accepts up to
-     * 62 lowercase letters / digits / hyphens, which permits 1- and 2-character codes as well
-     * as longer ones.
+     * Stable code format: lowercase letters, digits, hyphens and underscores. Must start and end
+     * with an alphanumeric character. Length 1..64 inclusive. The optional middle group accepts
+     * up to 62 lowercase letters / digits / hyphens / underscores, which permits 1- and
+     * 2-character codes as well as longer ones (e.g. {@code fengwk_jimeng}).
      */
-    public static final Pattern CODE_PATTERN = Pattern.compile("^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$");
+    public static final Pattern CODE_PATTERN = Pattern.compile("^[a-z0-9]([a-z0-9_-]{0,62}[a-z0-9])?$");
 
     public static final int CODE_MAX_LENGTH = 64;
     public static final int DISPLAY_NAME_MAX_LENGTH = 128;

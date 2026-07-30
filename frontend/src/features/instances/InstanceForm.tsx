@@ -13,7 +13,8 @@ export interface InstanceFormProps {
   onCancel?: () => void
 }
 
-const instanceCodePattern = /^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/
+// Keep in sync with HubInstanceValidator.CODE_PATTERN (allows _ and -).
+const instanceCodePattern = /^[a-z0-9]([a-z0-9_-]{0,62}[a-z0-9])?$/
 const maximumCodeLength = 64
 const maximumDisplayNameLength = 128
 const minimumPendingCount = 1
@@ -64,7 +65,7 @@ export function InstanceForm({
     const normalizedDisplayName = displayName.trim()
     const parsedMaxPending = Number(maxPending)
     if (!instanceCodePattern.test(normalizedCode)) {
-      setValidationError('实例代码须为 1 至 64 位小写字母、数字或连字符，且必须以字母或数字开头和结尾。')
+      setValidationError('实例代码须为 1 至 64 位小写字母、数字、连字符或下划线，且必须以字母或数字开头和结尾。')
       return
     }
     if (!normalizedDisplayName || normalizedDisplayName.length > maximumDisplayNameLength) {
