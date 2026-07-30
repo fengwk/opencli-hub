@@ -71,7 +71,7 @@ RUN set -eux; \
     apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         /tmp/google-chrome-stable.deb \
         nodejs=${NODE_MAJOR}.* \
-        tini xvfb x11vnc openbox iproute2 jq git \
+        tini xvfb x11vnc openbox iproute2 jq git ffmpeg \
         fonts-liberation fonts-noto-cjk \
         libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 \
         libdbus-1-3 libgbm1 libglib2.0-0 libgtk-3-0 libnss3 libnspr4 libpango-1.0-0 \
@@ -82,6 +82,8 @@ RUN set -eux; \
     npm --version; node --version; git --version; \
     test "$(git config --system --get http.version)" = "HTTP/1.1"; \
     google-chrome-stable --version; \
+    command -v ffprobe >/dev/null; \
+    ffprobe -version | head -n1; \
     apt-get clean; rm -rf /var/lib/apt/lists/*
 
 FROM runtime-base AS opencli-assets

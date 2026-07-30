@@ -2,6 +2,12 @@
 
 本项目遵循语义化版本约定。发布版本的完整构建、部署与升级要求以根 README 和 `docs/` 为准。
 
+## Unreleased
+
+### 修复
+
+- Runtime 镜像安装 `ffmpeg`，提供 `ffprobe`，供 `jimeng-agent` 等插件做音视频时长预检。
+
 ## 1.0.0
 
 ### 新增
