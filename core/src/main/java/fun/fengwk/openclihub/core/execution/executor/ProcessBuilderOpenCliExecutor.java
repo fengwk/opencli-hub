@@ -65,7 +65,7 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
         processBuilder.directory(Path.of(properties.getOpencli().getWorkdir()).toFile());
         processBuilder.redirectErrorStream(false);
         String instanceId = instance == null ? null : instance.getId();
-        String runOwner = injectEnvironment(processBuilder, instance, executionId);
+        String runOwner = injectEnvironment(processBuilder, instance, executionId, timeoutMillis);
         log.info(
             "Starting OpenCLI process instanceId={} executionId={} runOwner={} timeoutMillis={} argvSize={} binary={}",
             instanceId,
@@ -144,12 +144,19 @@ public class ProcessBuilderOpenCliExecutor implements OpenCliExecutor {
     }
 
     private String injectEnvironment(
-        ProcessBuilder processBuilder, HubInstance instance, String executionId) {
+        ProcessBuilder processBuilder, HubInstance instance, String executionId, long timeoutMillis) {
         if (instance != null) {
             processBuilder.environment().put("OPENCLI_HUB_INSTANCE_ID", instance.getId());
             processBuilder.environment().put("OPENCLI_HUB_INSTANCE_CODE",
                 instance.getCode() == null ? "" : instance.getCode());
         }
+        // Every browser command inside the opencli child defaults to 60s
+        // (exitCode 75). Long uploads (4+ references / video refs) exceed that,
+        // so forward the execution deadline as the per-command browser timeout.
+        long browserCommandTimeoutSeconds = Math.max(
+            60L, TimeUnit.MILLISECONDS.toSeconds(Math.max(0L, timeoutMillis)));
+        processBuilder.environment().put(
+            "OPENCLI_BROWSER_COMMAND_TIMEOUT", String.valueOf(browserCommandTimeoutSeconds));
         if (instance == null || instance.getId() == null || instance.getId().isBlank()
             || executionId == null || executionId.isBlank()) {
             return null;

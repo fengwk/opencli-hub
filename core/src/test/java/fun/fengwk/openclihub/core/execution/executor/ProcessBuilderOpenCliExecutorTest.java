@@ -68,8 +68,8 @@ class ProcessBuilderOpenCliExecutorTest {
     @Test
     void shouldUseConfiguredWorkdirAndInstanceEnvironment() throws Exception {
         Path script = script("environment.sh", """
-            printf '{\"pwd\":\"%s\",\"id\":\"%s\",\"code\":\"%s\",\"owner\":\"%s\"}' \
-              "$PWD" "$OPENCLI_HUB_INSTANCE_ID" "$OPENCLI_HUB_INSTANCE_CODE" "$OPENCLI_RUN_OWNER"
+            printf '{"pwd":"%s","id":"%s","code":"%s","owner":"%s","browserTimeout":"%s"}' \
+              "$PWD" "$OPENCLI_HUB_INSTANCE_ID" "$OPENCLI_HUB_INSTANCE_CODE" "$OPENCLI_RUN_OWNER" "$OPENCLI_BROWSER_COMMAND_TIMEOUT"
             """);
         ProcessBuilderOpenCliExecutor executor = newExecutor(recoveryService);
 
@@ -83,6 +83,24 @@ class ProcessBuilderOpenCliExecutorTest {
         assertThat(json.get("code").asText()).isEqualTo("executor-test");
         assertThat(json.get("owner").asText()).isEqualTo(OpenCliRunOwner.of("9", EXECUTION_ID));
         assertThat(json.get("owner").asText()).isEqualTo("opencli-hub:9:exec-42");
+        // The execution deadline is forwarded as the per-command browser
+        // timeout so long uploads do not die on opencli's 60s default; short
+        // deadlines are floored at opencli's own 60s minimum.
+        assertThat(json.get("browserTimeout").asText()).isEqualTo("60");
+    }
+
+    @Test
+    void shouldForwardLongExecutionDeadlineAsBrowserCommandTimeout() throws Exception {
+        Path script = script("browser-timeout.sh", """
+            printf '%s' "$OPENCLI_BROWSER_COMMAND_TIMEOUT"
+            """);
+        ProcessBuilderOpenCliExecutor executor = newExecutor(recoveryService);
+
+        OpenCliExecutionResult result = executor.execute(
+            instance, List.of(script.toString()), 480_000L, EXECUTION_ID);
+
+        assertThat(result.getExitCode()).isZero();
+        assertThat(result.getStdout().trim()).isEqualTo("480");
     }
 
     @Test
