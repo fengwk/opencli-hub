@@ -1,5 +1,6 @@
 import { Activity, CirclePlus, Monitor, Server, SquareTerminal, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { createInstance, deleteInstance, listInstances, runInstanceLifecycleAction } from '@/features/instances/instances-api'
@@ -14,6 +15,22 @@ function errorMessage(error: unknown): string {
 
 function isIdle(instance: HubInstance): boolean {
   return (instance.runtime?.activeCount ?? 0) + (instance.runtime?.pendingCount ?? 0) === 0
+}
+
+function addPendingInstance(set: Dispatch<SetStateAction<Set<HubInstance['id']>>>, instanceId: HubInstance['id']) {
+  set((pending) => {
+    const next = new Set(pending)
+    next.add(instanceId)
+    return next
+  })
+}
+
+function removePendingInstance(set: Dispatch<SetStateAction<Set<HubInstance['id']>>>, instanceId: HubInstance['id']) {
+  set((pending) => {
+    const next = new Set(pending)
+    next.delete(instanceId)
+    return next
+  })
 }
 
 const instanceStateLabels: Record<HubInstance['state'], string> = {
@@ -198,11 +215,14 @@ function CreateInstancePanel({ busy, error, onClose, onSubmit }: {
 export function InstancesPage() {
   const queryClient = useQueryClient()
   const [actionError, setActionError] = useState<string | null>(null)
-  const [actionPending, setActionPending] = useState(false)
+  const [pendingInstanceIds, setPendingInstanceIds] = useState<Set<HubInstance['id']>>(() => new Set())
+  const [createPending, setCreatePending] = useState(false)
+  const [deletePendingId, setDeletePendingId] = useState<HubInstance['id'] | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<HubInstance | null>(null)
   const createTriggerRef = useRef<HTMLButtonElement | null>(null)
   const instancesQuery = useQuery({ queryKey: ['instances'], queryFn: listInstances })
+  const actionPending = createPending || pendingInstanceIds.size > 0 || deletePendingId !== null
 
   useEffect(() => {
     if (!createOpen) createTriggerRef.current?.focus()
@@ -225,7 +245,7 @@ export function InstancesPage() {
 
   async function handleCreate(properties: InstanceEditableProperties) {
     setActionError(null)
-    setActionPending(true)
+    setCreatePending(true)
     try {
       await createInstance(properties)
       closeCreatePanel()
@@ -233,35 +253,38 @@ export function InstancesPage() {
     } catch (error) {
       setActionError(errorMessage(error))
     } finally {
-      setActionPending(false)
+      setCreatePending(false)
     }
   }
 
   async function handleLifecycle(instance: HubInstance, action: 'start' | 'stop' | 'restart') {
     setActionError(null)
-    setActionPending(true)
+    addPendingInstance(setPendingInstanceIds, instance.id)
     try {
-      await runInstanceLifecycleAction(instance.id, action)
-      await refreshInstances()
+      const updatedInstance = await runInstanceLifecycleAction(instance.id, action)
+      queryClient.setQueryData<HubInstance[]>(['instances'], (instances) => (
+        instances?.map((current) => current.id === updatedInstance.id ? updatedInstance : current)
+      ))
     } catch (error) {
       setActionError(errorMessage(error))
     } finally {
-      setActionPending(false)
+      removePendingInstance(setPendingInstanceIds, instance.id)
     }
   }
 
   async function handleDelete() {
     if (!deleteTarget) return
+    const target = deleteTarget
     setActionError(null)
-    setActionPending(true)
+    setDeletePendingId(target.id)
     try {
-      await deleteInstance(deleteTarget.id)
+      await deleteInstance(target.id)
       setDeleteTarget(null)
       await refreshInstances()
     } catch (error) {
       setActionError(errorMessage(error))
     } finally {
-      setActionPending(false)
+      setDeletePendingId(null)
     }
   }
 
@@ -284,19 +307,25 @@ export function InstancesPage() {
       {instancesQuery.isSuccess && instancesQuery.data.length > 0 ? (
         <section className="instance-list" aria-label="实例列表">
           {instancesQuery.data.map((instance) => (
-            <InstanceCard key={instance.id} instance={instance} busy={actionPending} onLifecycle={handleLifecycle} onDelete={setDeleteTarget} />
+            <InstanceCard
+              key={instance.id}
+              instance={instance}
+              busy={pendingInstanceIds.has(instance.id) || deletePendingId === instance.id}
+              onLifecycle={handleLifecycle}
+              onDelete={setDeleteTarget}
+            />
           ))}
         </section>
       ) : null}
 
-      {createOpen ? <CreateInstancePanel busy={actionPending} error={actionError} onClose={closeCreatePanel} onSubmit={handleCreate} /> : null}
+      {createOpen ? <CreateInstancePanel busy={createPending} error={actionError} onClose={closeCreatePanel} onSubmit={handleCreate} /> : null}
       <ConfirmDialog
         open={deleteTarget !== null}
         title="删除实例？"
         description={<>删除 <strong>{deleteTarget?.displayName}</strong> 会永久移除其 Profile 和浏览器登录状态，且无法恢复。</>}
         confirmLabel="删除实例"
         tone="danger"
-        busy={actionPending}
+        busy={deletePendingId !== null}
         onConfirm={() => void handleDelete()}
         onCancel={() => setDeleteTarget(null)}
       />

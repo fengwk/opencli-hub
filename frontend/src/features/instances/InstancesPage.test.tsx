@@ -190,4 +190,48 @@ describe('InstancesPage', () => {
     await user.click(screen.getByRole('button', { name: '删除实例' }))
     await waitFor(() => expect(apiClient.delete).toHaveBeenCalledWith(`/instances/${instanceId}`))
   })
+
+  it('only disables the card whose lifecycle action is pending', async () => {
+    // A pending lifecycle request must not block independent browser cards or refetch the whole list.
+    const user = userEvent.setup()
+    const runningInstance: HubInstance = {
+      ...stoppedInstance,
+      id: 'running-instance',
+      code: 'running-browser',
+      displayName: 'Running browser',
+      contextId: 'ctx-running',
+      state: 'RUNNING',
+      lastErrorMessage: null,
+      runtime: { registered: true, displayNumber: 1, vncPort: 5901, activeCount: 0, pendingCount: 0 },
+    }
+    const otherInstance: HubInstance = {
+      ...stoppedInstance,
+      id: 'other-instance',
+      code: 'other-browser',
+      displayName: 'Other browser',
+    }
+    mockCatalogAndInstances([runningInstance, otherInstance])
+    let resolveAction: ((value: HubInstance) => void) | undefined
+    vi.mocked(apiClient.post).mockImplementation((url: string) => {
+      if (url === `/instances/${runningInstance.id}/restart`) {
+        return new Promise((resolve) => { resolveAction = resolve }) as never
+      }
+      return Promise.resolve(runningInstance) as never
+    })
+
+    renderPage()
+    await screen.findByRole('heading', { name: 'Running browser' })
+    const targetCard = screen.getByRole('heading', { name: 'Running browser' }).closest('article') as HTMLElement
+    const otherCard = screen.getByRole('heading', { name: 'Other browser' }).closest('article') as HTMLElement
+    const listCallsBeforeAction = vi.mocked(apiClient.get).mock.calls.filter(([url]) => url === '/instances').length
+
+    await user.click(within(targetCard).getByRole('button', { name: '重启' }))
+
+    expect(within(targetCard).getByRole('button', { name: '重启' })).toBeDisabled()
+    expect(within(otherCard).getByRole('button', { name: '启动' })).not.toBeDisabled()
+
+    resolveAction?.(runningInstance)
+    await waitFor(() => expect(within(targetCard).getByRole('button', { name: '重启' })).not.toBeDisabled())
+    expect(vi.mocked(apiClient.get).mock.calls.filter(([url]) => url === '/instances')).toHaveLength(listCallsBeforeAction)
+  })
 })

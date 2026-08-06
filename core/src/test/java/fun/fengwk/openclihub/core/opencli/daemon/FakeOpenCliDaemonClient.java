@@ -141,6 +141,14 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
         if (ensureFailure != null) {
             throw ensureFailure;
         }
+        OpenCliDaemonStatus status = nextStatus.get();
+        if (status == null) {
+            status = empty();
+        }
+        if (status.getPid() == null || status.getPid() <= 0L) {
+            status.setPid(1L);
+            nextStatus.set(status);
+        }
     }
 
     /** Lifts the current {@code /status} snapshot up to expose a single new context id. */

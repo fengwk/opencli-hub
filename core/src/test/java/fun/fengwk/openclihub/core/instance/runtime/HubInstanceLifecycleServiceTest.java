@@ -425,6 +425,30 @@ class HubInstanceLifecycleServiceTest {
     }
 
     @Test
+    void shouldNotRestartSharedDaemonWhenRestartingOneOfSeveralInstances() {
+        String otherId = seedPersistedInstance("bilibili-other-running", "ctx-other-running");
+        HubInstanceRuntime otherRuntime = new HubInstanceRuntime();
+        otherRuntime.setInstanceId(otherId);
+        registry.register(otherRuntime);
+
+        String id = seedPersistedInstance("bilibili-shared-daemon", "ctx-shared-daemon");
+        HubInstanceRuntime targetRuntime = new HubInstanceRuntime();
+        targetRuntime.setInstanceId(id);
+        registry.register(targetRuntime);
+
+        assertThatThrownBy(() -> lifecycle.restart(id))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_START_FAILED));
+
+        // An unhealthy shared daemon must fail the new start instead of disconnecting the
+        // already-running browser through `opencli daemon restart`.
+        assertThat(daemon.ensureRunningCalls()).isEmpty();
+        assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME)).isZero();
+        assertThat(registry.get(otherId)).isSameAs(otherRuntime);
+    }
+
+    @Test
     void shouldReverseOrderCleanupWhenLauncherFails() throws IOException {
         // Fail after Xvfb and openbox have started to verify partial-start rollback.
         launcher.failNextLaunch(HubInstanceRuntime.HubInstanceProcessKind.X11VNC);

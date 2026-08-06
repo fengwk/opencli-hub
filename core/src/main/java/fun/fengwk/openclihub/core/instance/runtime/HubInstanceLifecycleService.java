@@ -52,7 +52,8 @@ import org.springframework.stereotype.Service;
  * </ul>
  *
  * <p>All work happens inside either the global creation lock (sections: 16.2) or the
- * per-instance lifecycle lock (start / stop / restart / delete).
+ * per-instance lifecycle lock (start / stop / restart / delete). Shared daemon checks are
+ * additionally serialized because the daemon itself is global to the Hub process.
  *
  * @author fengwk
  */
@@ -70,6 +71,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     private final ChromeProfileFileAccessBootstrap fileAccessBootstrap;
     private final HubDispatchRegistry dispatchRegistry;
     private final ReentrantLock creationLock = new ReentrantLock();
+    private final ReentrantLock daemonEnsureLock = new ReentrantLock();
 
     public HubInstanceLifecycleService(
         HubInstanceService instanceService,
@@ -396,8 +398,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         boolean registeredRuntime = false;
         try {
             instanceService.updateState(instanceId, HubInstanceState.STARTING, null);
-            ensureDaemonRunning();
-            Set<String> beforeSnapshot = snapshotContextIds();
+            Set<String> beforeSnapshot = ensureDaemonRunning();
             runtime = startRuntime(current);
             waitForExpectedOrUniqueContext(instanceId, current, beforeSnapshot, runtime);
             if (runtime.getContextId() != null) {
@@ -481,8 +482,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         boolean registeredRuntime = false;
         boolean rowInserted = false;
         try {
-            ensureDaemonRunning();
-            Set<String> beforeSnapshot = snapshotContextIds();
+            Set<String> beforeSnapshot = ensureDaemonRunning();
             runtime = startRuntime(shadow);
             waitForExpectedOrUniqueContext(id, shadow, beforeSnapshot, runtime);
             shadow.setContextId(runtime.getContextId());
@@ -730,13 +730,35 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
                 + instanceId + ")");
     }
 
-    private void ensureDaemonRunning() {
+    /**
+     * Ensures the shared daemon is usable and returns the pre-start context snapshot.
+     * A global daemon restart is allowed only when no other runtime is registered.
+     */
+    private Set<String> ensureDaemonRunning() {
+        daemonEnsureLock.lock();
         try {
-            daemonClient.ensureRunning();
+            if (registry.list().isEmpty()) {
+                daemonClient.ensureRunning();
+                return snapshotContextIds();
+            }
+
+            OpenCliDaemonStatus status = daemonClient.fetchStatus();
+            if (!hasValidDaemonPid(status)) {
+                throw new OpenCliDaemonException(
+                    "OpenCLI daemon is not ready; refusing to restart the shared daemon "
+                        + "while another browser instance is running");
+            }
+            return new HashSet<>(status.connectedContextIds());
         } catch (OpenCliDaemonException ex) {
             throw HubErrorCodes.INSTANCE_START_FAILED.asThrowable(
                 ex, "failed to ensure OpenCLI daemon: " + ex.getMessage());
+        } finally {
+            daemonEnsureLock.unlock();
         }
+    }
+
+    private static boolean hasValidDaemonPid(OpenCliDaemonStatus status) {
+        return status != null && status.getPid() != null && status.getPid() > 0L;
     }
 
     private void requireConnectedDaemonProfile(String contextId) {

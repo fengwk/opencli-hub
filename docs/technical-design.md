@@ -908,13 +908,16 @@ opencli --profile <contextId> chatgpt image \
 
 ### 15.1 生命周期
 
-每个 Instance 创建/启动前，Hub 先通过认证的 status 请求确认 daemon；不可用时执行：
+每个 Instance 创建/启动前，Hub 先通过认证的 status 请求确认 daemon。只有当前没有其它
+已注册的 Instance runtime 时，daemon 不可用才允许执行：
 
 ```bash
 opencli daemon restart
 ```
 
-然后轮询 daemon HTTP status 接口，直到返回有效 pid：
+如果已有其它 Instance runtime，Hub 不执行这个全局 restart，而是 fail closed，避免一个
+Instance 的单卡启动/重启断开其它浏览器；管理员需要先恢复共享 daemon。允许 restart 的路径
+随后轮询 daemon HTTP status 接口，直到返回有效 pid：
 
 ```http
 GET http://127.0.0.1:19825/status
