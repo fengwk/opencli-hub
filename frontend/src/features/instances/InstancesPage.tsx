@@ -222,7 +222,6 @@ export function InstancesPage() {
   const [deleteTarget, setDeleteTarget] = useState<HubInstance | null>(null)
   const createTriggerRef = useRef<HTMLButtonElement | null>(null)
   const instancesQuery = useQuery({ queryKey: ['instances'], queryFn: listInstances })
-  const actionPending = createPending || pendingInstanceIds.size > 0 || deletePendingId !== null
 
   useEffect(() => {
     if (!createOpen) createTriggerRef.current?.focus()
@@ -296,14 +295,14 @@ export function InstancesPage() {
           <h1 className="page-title">实例管理</h1>
           <p className="page-subtitle">统一管理承载登录状态的 OpenCLI 浏览器、执行队列与远程控制台。</p>
         </div>
-        <button type="button" className="btn btn-primary" disabled={actionPending} onClick={(event) => openCreatePanel(event.currentTarget)}><CirclePlus aria-hidden="true" />创建实例</button>
+        <button type="button" className="btn btn-primary" disabled={createPending || deletePendingId !== null} onClick={(event) => openCreatePanel(event.currentTarget)}><CirclePlus aria-hidden="true" />创建实例</button>
       </header>
 
       {actionError && !createOpen ? <p className="page-error" role="alert">{actionError}</p> : null}
       {instancesQuery.isPending ? <Loading label="正在加载实例…" /> : null}
       {instancesQuery.isError ? <ErrorState title="无法加载实例" description={errorMessage(instancesQuery.error)} onRetry={() => void instancesQuery.refetch()} /> : null}
       {instancesQuery.isSuccess ? <InstanceMetrics instances={instancesQuery.data} /> : null}
-      {instancesQuery.isSuccess && instancesQuery.data.length === 0 ? <Empty title="暂无实例" description="创建实例后，可在这里管理其生命周期和浏览器状态。" action={<button type="button" className="btn btn-primary" disabled={actionPending} onClick={(event) => openCreatePanel(event.currentTarget)}>创建首个实例</button>} /> : null}
+      {instancesQuery.isSuccess && instancesQuery.data.length === 0 ? <Empty title="暂无实例" description="创建实例后，可在这里管理其生命周期和浏览器状态。" action={<button type="button" className="btn btn-primary" disabled={createPending || deletePendingId !== null} onClick={(event) => openCreatePanel(event.currentTarget)}>创建首个实例</button>} /> : null}
       {instancesQuery.isSuccess && instancesQuery.data.length > 0 ? (
         <section className="instance-list" aria-label="实例列表">
           {instancesQuery.data.map((instance) => (

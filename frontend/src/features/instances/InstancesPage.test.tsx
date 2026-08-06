@@ -229,6 +229,7 @@ describe('InstancesPage', () => {
 
     expect(within(targetCard).getByRole('button', { name: '重启' })).toBeDisabled()
     expect(within(otherCard).getByRole('button', { name: '启动' })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: '创建实例' })).not.toBeDisabled()
 
     resolveAction?.(runningInstance)
     await waitFor(() => expect(within(targetCard).getByRole('button', { name: '重启' })).not.toBeDisabled())
