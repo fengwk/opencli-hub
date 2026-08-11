@@ -15,7 +15,9 @@ interface CommandCardProps {
 }
 
 function outputArguments(command: HubCommand) {
-  return (command.args ?? []).filter((argument) => argument.valueRequired || argument.required)
+  // Positional arguments are not output-rule candidates: the backend rejects them
+  // for managed output rules (only named value arguments are eligible).
+  return (command.args ?? []).filter((argument) => !argument.positional && (argument.valueRequired || argument.required))
 }
 
 function isSafeFileName(fileName: string): boolean {

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { CommandCard } from '@/features/commands/CommandCard'
@@ -115,5 +115,71 @@ describe('CommandCard', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent('文件名只能包含')
     expect(onSaveOutputRule).not.toHaveBeenCalled()
+  })
+
+  it('does not enable output-rule editing from a positional-only command', async () => {
+    // The backend rejects positional arguments as managed output arguments, so a
+    // positional-only command without a persisted rule must not enable the editor.
+    const user = userEvent.setup()
+    renderCard({
+      ...managedRuleCommand,
+      args: [{
+        name: 'query',
+        type: 'string',
+        required: true,
+        valueRequired: true,
+        positional: true,
+        choices: null,
+        defaultValue: null,
+        help: 'Search query',
+      }],
+      outputRule: null,
+    })
+
+    await user.click(screen.getByRole('button', { name: '查看详情与策略' }))
+
+    expect(screen.getByRole('button', { name: '编辑输出规则' })).toBeDisabled()
+    expect(screen.getByText('该命令没有可用于输出规则的参数。')).toBeInTheDocument()
+  })
+
+  it('keeps positional arguments out of the output-argument select', async () => {
+    // Named value arguments remain candidates; positional ones never appear in the
+    // editor select, while the persisted-rule fallback stays available (covered by
+    // the hidden-argument test above).
+    const user = userEvent.setup()
+    renderCard({
+      ...managedRuleCommand,
+      args: [
+        {
+          name: 'query',
+          type: 'string',
+          required: true,
+          valueRequired: true,
+          positional: true,
+          choices: null,
+          defaultValue: null,
+          help: 'Search query',
+        },
+        {
+          name: 'limit',
+          type: 'int',
+          required: false,
+          valueRequired: true,
+          positional: false,
+          choices: null,
+          defaultValue: null,
+          help: 'Max items',
+        },
+      ],
+      outputRule: null,
+    })
+
+    await user.click(screen.getByRole('button', { name: '查看详情与策略' }))
+    await user.click(screen.getByRole('button', { name: '编辑输出规则' }))
+
+    const argumentSelect = screen.getByRole('combobox', { name: '输出参数' })
+    expect(within(argumentSelect).getByRole('option', { name: 'limit' })).toBeInTheDocument()
+    expect(within(argumentSelect).queryByRole('option', { name: 'query' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '保存输出规则' })).toBeEnabled()
   })
 })
