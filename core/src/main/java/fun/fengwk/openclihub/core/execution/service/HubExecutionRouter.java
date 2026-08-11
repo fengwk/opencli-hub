@@ -13,7 +13,7 @@ import java.util.List;
 import org.springframework.stereotype.Component;
 
 /**
- * Picks the {@link HubInstance} that will run a synchronization execution. Mirrors the
+ * Picks the {@link HubInstance} that will run an asynchronous execution task. Mirrors the
  * contract from {@code docs/technical-design.md §20}:
  * <ul>
  *   <li><b>Explicit instanceId</b> — strict, no failover.</li>

@@ -12,11 +12,12 @@ import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * MyBatis implementation (MySQL/H2 shared SQL) backed by the auto-generated
+ * MyBatis implementation shared by the PostgreSQL, MySQL and SQLite build variants,
+ * backed by the auto-generated
  * {@code hub_command_output_rule} mapper.
  *
- * <p>Schema management lives in {@code schema-{h2,mysql}.sql}; this class must not call any
- * DDL. Audit timestamps are owned by the service layer and are copied through verbatim.
+ * <p>Schema management lives in the selected {@code schema-database.sql}; this class must not
+ * call DDL. Audit timestamps are owned by the service layer and are copied through verbatim.
  *
  * @author fengwk
  */

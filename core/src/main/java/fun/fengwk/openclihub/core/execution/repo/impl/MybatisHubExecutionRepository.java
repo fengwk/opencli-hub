@@ -20,7 +20,7 @@ import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * MyBatis implementation (MySQL/H2 shared SQL) backed by the generated hub_execution mapper.
+ * MyBatis implementation shared by the PostgreSQL, MySQL and SQLite build variants.
  *
  * <p>Audit timestamps are owned by the service layer: this class only converts whatever
  * {@link HubExecution} carries and never invents {@code gmt_create}/{@code gmt_modified}

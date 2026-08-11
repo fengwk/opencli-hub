@@ -16,7 +16,7 @@ import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * MyBatis implementation (MySQL/H2 shared SQL) backed by the generated hub_instance mapper.
+ * MyBatis implementation shared by the PostgreSQL, MySQL and SQLite build variants.
  *
  * <p>Audit timestamps are owned by the service layer and are copied through verbatim.
  *

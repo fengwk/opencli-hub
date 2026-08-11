@@ -9,7 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * MyBatis repository (MySQL/H2 shared SQL) for the id=1 system settings singleton.
+ * MyBatis repository shared by all production database variants for the id=1 settings singleton.
  *
  * <p>Audit timestamps are owned by the service layer and are copied through verbatim.
  *

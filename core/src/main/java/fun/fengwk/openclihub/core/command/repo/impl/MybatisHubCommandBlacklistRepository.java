@@ -11,11 +11,12 @@ import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * MyBatis implementation (MySQL/H2 shared SQL) backed by the auto-generated
+ * MyBatis implementation shared by the PostgreSQL, MySQL and SQLite build variants,
+ * backed by the auto-generated
  * {@code hub_command_blacklist} mapper.
  *
  * <p>The repository is responsible only for ID generation, DO conversion and mapper
- * invocation. Schema management lives in {@code schema-{h2,mysql}.sql}; this class must
+ * invocation. Schema management lives in the selected {@code schema-database.sql}; this class must
  * not call any DDL at runtime. Audit timestamps are owned by the service layer and are
  * copied through verbatim.
  *

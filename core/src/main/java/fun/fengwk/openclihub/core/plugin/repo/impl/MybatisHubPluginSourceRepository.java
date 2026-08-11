@@ -15,7 +15,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * MyBatis repository (MySQL/H2 shared SQL) for configured plugin sources.
+ * MyBatis repository shared by the PostgreSQL, MySQL and SQLite build variants.
  *
  * <p>Audit timestamps are owned by the service layer and are copied through verbatim.
  *
