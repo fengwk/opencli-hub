@@ -25,8 +25,8 @@ where table_schema = database()
   and table_name = 'hub_instance'
   and column_name = 'state_changed_at';
 
--- Removing ON UPDATE is a no-op when it is already absent, so re-running the
--- script (rehearsal, verification, rollback checks) is safe.
+-- Re-running the ALTER may rebuild the table, but it is idempotent in the resulting
+-- column definition and is therefore safe for rehearsal and verification.
 alter table hub_instance
     modify column state_changed_at timestamp(3) not null default current_timestamp(3);
 
