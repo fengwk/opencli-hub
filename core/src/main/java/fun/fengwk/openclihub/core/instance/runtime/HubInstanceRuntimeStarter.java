@@ -17,7 +17,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
@@ -28,9 +27,8 @@ import org.springframework.stereotype.Component;
  *
  * @author fengwk
  */
-@Slf4j
 @Component
-public class HubInstanceRuntimeStarter {
+class HubInstanceRuntimeStarter {
 
     private final HubInstanceRuntimeRegistry registry;
     private final InstanceProcessLauncher launcher;
@@ -40,7 +38,7 @@ public class HubInstanceRuntimeStarter {
     private final OpenCliHubProperties properties;
     private final HubSystemSettingsService settingsService;
 
-    public HubInstanceRuntimeStarter(
+    HubInstanceRuntimeStarter(
         HubInstanceRuntimeRegistry registry,
         InstanceProcessLauncher launcher,
         HubInstanceFiles files,
@@ -63,7 +61,7 @@ public class HubInstanceRuntimeStarter {
      * released, so the caller never observes a half-started runtime and the allocation is
      * freed exactly once.
      */
-    public HubInstanceRuntime start(HubInstance descriptor) {
+    HubInstanceRuntime start(HubInstance descriptor) {
         String id = descriptor.getId();
         HubInstanceAllocationService.Allocation allocation = registry.allocationService().allocate();
         HubInstanceRuntime runtime = new HubInstanceRuntime();
@@ -120,7 +118,7 @@ public class HubInstanceRuntimeStarter {
      * exited. Called during startup and by the context wait so a dying process is never
      * silently accepted.
      */
-    public void ensureProcessesAlive(HubInstanceRuntime runtime) {
+    void ensureProcessesAlive(HubInstanceRuntime runtime) {
         for (Map.Entry<HubInstanceProcessKind, ProcessHandle> entry
             : runtime.getProcesses().entrySet()) {
             if (!entry.getValue().isAlive()) {
@@ -135,7 +133,7 @@ public class HubInstanceRuntimeStarter {
      * rollback), mirroring what {@link HubInstanceRuntimeRegistry#unregister(String)} does
      * for registered runtimes.
      */
-    public void releaseAllocation(HubInstanceRuntime runtime) {
+    void releaseAllocation(HubInstanceRuntime runtime) {
         if (runtime == null) {
             return;
         }

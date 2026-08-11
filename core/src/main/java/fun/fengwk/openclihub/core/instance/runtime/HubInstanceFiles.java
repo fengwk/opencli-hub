@@ -25,12 +25,12 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
-public class HubInstanceFiles {
+class HubInstanceFiles {
 
     /**
      * Result of ensuring an instance directory tree. Log paths are derived from the logs dir.
      */
-    public record InstanceDirectories(
+    record InstanceDirectories(
         Path instanceDir,
         Path chromeDir,
         Path xvfbLog,
@@ -41,7 +41,7 @@ public class HubInstanceFiles {
 
     private final String dataDir;
 
-    public HubInstanceFiles(OpenCliHubProperties properties) {
+    HubInstanceFiles(OpenCliHubProperties properties) {
         this.dataDir = properties.getDataDir();
     }
 
@@ -49,7 +49,7 @@ public class HubInstanceFiles {
      * Creates the instances root, instance dir and fixed child dirs when absent and verifies
      * none of them became a symbolic link or a non-directory.
      */
-    public InstanceDirectories ensureDirectories(String instanceId) throws IOException {
+    InstanceDirectories ensureDirectories(String instanceId) throws IOException {
         Path instancesRoot = HubInstanceDirectoryLayout.ensureRealInstancesRoot(dataDir);
         Path instanceDir = HubInstanceDirectoryLayout.ensureRealInstanceDirectory(instancesRoot, instanceId);
         Path chromeDir = HubInstanceDirectoryLayout.ensureRealInstanceChildDirectory(
@@ -72,7 +72,7 @@ public class HubInstanceFiles {
      * directory, never a symbolic link). Fails with the given domain error code when the
      * tree is unsafe.
      */
-    public void requireSafeDirectories(String instanceId, HubErrorCodes errorCode) {
+    void requireSafeDirectories(String instanceId, HubErrorCodes errorCode) {
         try {
             Path instancesRoot = HubInstanceDirectoryLayout.requireRealInstancesRoot(dataDir);
             Path instanceDir = HubInstanceDirectoryLayout.requireRealInstanceDirectory(
@@ -93,7 +93,7 @@ public class HubInstanceFiles {
      * marker already exists so a leftover marker from a crashed create is never silently
      * reused.
      */
-    public void createCreatingMarker(String instanceId) throws IOException {
+    void createCreatingMarker(String instanceId) throws IOException {
         Path instancesRoot = HubInstanceDirectoryLayout.ensureRealInstancesRoot(dataDir);
         Path instanceDir = HubInstanceDirectoryLayout.ensureRealInstanceDirectory(
             instancesRoot, instanceId);
@@ -101,7 +101,7 @@ public class HubInstanceFiles {
     }
 
     /** Removes the {@code .creating} marker when present. */
-    public void deleteCreatingMarker(String instanceId) throws IOException {
+    void deleteCreatingMarker(String instanceId) throws IOException {
         Path instancesRoot = HubInstanceDirectoryLayout.requireRealInstancesRoot(dataDir);
         Path instanceDir = HubInstanceDirectoryLayout.requireRealInstanceDirectory(
             instancesRoot, instanceId);
@@ -112,7 +112,7 @@ public class HubInstanceFiles {
      * Recursively deletes the instance directory. Fails with {@code INSTANCE_DELETE_FAILED}
      * when the tree cannot be validated as real or the deletion cannot complete.
      */
-    public void deleteInstanceDirectory(String instanceId) {
+    void deleteInstanceDirectory(String instanceId) {
         try {
             Path instancesRoot = HubInstanceDirectoryLayout.requireRealInstancesRoot(dataDir);
             Path dir = HubInstanceDirectoryLayout.requireRealInstanceDirectory(
@@ -132,7 +132,7 @@ public class HubInstanceFiles {
      * removes the instance directory. Failures are logged, never thrown — the create failure
      * itself is what propagates to the caller.
      */
-    public void cleanupCreateFailureArtifacts(String instanceId) {
+    void cleanupCreateFailureArtifacts(String instanceId) {
         try {
             deleteCreatingMarker(instanceId);
         } catch (IOException ex) {

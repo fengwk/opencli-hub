@@ -19,14 +19,19 @@ import org.springframework.stereotype.Component;
  * connected contexts, waits for the expected-or-unique context of a starting browser, and
  * performs the active-tab bind against a connected profile.
  *
- * <p>Every caller runs inside the {@link HubInstanceStartCoordinator} global start lock, so
- * daemon restart, context snapshot and context discovery never overlap between starts.
+ * <p>The startup paths — {@link #ensureDaemonReady()} and
+ * {@link #waitForExpectedOrUniqueContext(String, HubInstance, java.util.Set, HubInstanceRuntime)}
+ * — are only ever invoked from {@code create}/{@code start}/{@code restart} inside the
+ * {@link HubInstanceStartCoordinator} global start lock, so daemon restart, context snapshot
+ * and context discovery never overlap between starts. {@link #bindActiveTab(String, String)}
+ * is a different guard: it runs under the per-instance lifecycle lock plus the dispatcher
+ * idle guard, never restarts the daemon and only fetches status / issues one bind command.
  *
  * @author fengwk
  */
 @Slf4j
 @Component
-public class HubInstanceDaemonContextService {
+class HubInstanceDaemonContextService {
 
     private final OpenCliDaemonClient daemonClient;
     private final OpenCliHubProperties properties;
@@ -34,7 +39,7 @@ public class HubInstanceDaemonContextService {
     private final HubInstanceRuntimeRegistry registry;
     private final HubInstanceRuntimeStarter runtimeStarter;
 
-    public HubInstanceDaemonContextService(
+    HubInstanceDaemonContextService(
         OpenCliDaemonClient daemonClient,
         OpenCliHubProperties properties,
         HubInstanceService instanceService,
@@ -54,7 +59,7 @@ public class HubInstanceDaemonContextService {
      * <p>Serialised by the coordinator's global start lock: every caller already runs inside
      * {@link HubInstanceStartCoordinator}, so two starts can never race the daemon.
      */
-    public Set<String> ensureDaemonReady() {
+    Set<String> ensureDaemonReady() {
         try {
             if (registry.list().isEmpty()) {
                 daemonClient.ensureRunning();
@@ -81,7 +86,7 @@ public class HubInstanceDaemonContextService {
      * a timeout maps to {@code EXTENSION_CONNECT_TIMEOUT}. The chosen context is recorded on
      * the runtime; the process tree is checked for liveness on every poll.
      */
-    public void waitForExpectedOrUniqueContext(
+    void waitForExpectedOrUniqueContext(
         String instanceId, HubInstance instance, Set<String> before, HubInstanceRuntime runtime) {
         long startup = properties.getBrowser().getStartupTimeoutMillis();
         long deadline = System.currentTimeMillis() + startup;
@@ -132,7 +137,7 @@ public class HubInstanceDaemonContextService {
      * command-level rejection maps to {@code INSTANCE_TAB_BIND_FAILED} preserving the
      * daemon's error code / message / hint.
      */
-    public void bindActiveTab(String contextId, String session) {
+    void bindActiveTab(String contextId, String session) {
         requireConnectedDaemonProfile(contextId);
         OpenCliDaemonCommandResponse response;
         try {

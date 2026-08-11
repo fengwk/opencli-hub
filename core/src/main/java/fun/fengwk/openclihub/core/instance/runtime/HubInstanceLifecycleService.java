@@ -37,9 +37,11 @@ import org.springframework.stereotype.Service;
  * </ul>
  *
  * <p>All work happens inside either the coordinator's global start lock (sections: 16.2)
- * or the per-instance lifecycle lock (start / stop / restart / delete). Shared daemon checks
- * are serialized by the same global start lock because the daemon itself is global to the
- * Hub process.
+ * or the per-instance lifecycle lock (start / stop / restart / delete). Daemon startup,
+ * context snapshot and context discovery during create/start/restart are serialized by the
+ * same global start lock because the daemon itself is global to the Hub process; the
+ * active-tab bind path is guarded only by the per-instance lifecycle lock plus the
+ * dispatcher idle guard and never restarts the daemon.
  *
  * @author fengwk
  */
