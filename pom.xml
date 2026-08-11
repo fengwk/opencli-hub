@@ -4,12 +4,16 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <parent>
-        <groupId>fun.fengwk.convention4j</groupId>
-        <artifactId>convention4j-parent</artifactId>
-        <version>1.2.1</version>
-    </parent>
-
+    <!--
+        opencli-hub deliberately does not inherit from convention4j-parent 1.2.1: that parent
+        injects lombok, mapstruct-processor, auto-mapper-processor and auto-service into every
+        module, while this project has no MapStruct or AutoService usage and AutoMapper
+        processing is required only by core (which declares auto-mapper-processor itself).
+        Maven 3.9 does not honor combine.self="override" on <dependencies> (the attribute only
+        applies to plugin configuration), so the parent is consumed as a plain BOM import
+        instead and its essential build configuration is mirrored below. Lombok stays globally
+        available (provided) to every module.
+    -->
     <groupId>fun.fengwk.opencli-hub</groupId>
     <artifactId>opencli-hub-parent</artifactId>
     <version>1.0.0</version>
@@ -22,25 +26,56 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <opencli-hub.version>1.0.0</opencli-hub.version>
         <spring-boot.version>3.5.16</spring-boot.version>
-        <!-- Override convention4j-parent's managed Spring Boot dependencies BOM (3.5.0) with
-             3.5.16. Imported by convention4j-parent via ${spring-boot-dependencies.version}. -->
+        <!-- Override convention4j-parent's embedded Spring Boot dependencies BOM (3.5.0) with
+             3.5.16. The project-level import below is declared before the parent BOM import
+             because among imported BOMs the first declaration wins. -->
         <spring-boot-dependencies.version>3.5.16</spring-boot-dependencies.version>
         <!-- Spring Boot 3.5.16 ships Jackson 2.21.4; the project contract pins the Jackson
-             BOM to 2.21.5 via an explicit import that is closer than the parent's BOM. -->
+             BOM to 2.21.5 via an explicit import that is declared before the parent BOM. -->
         <jackson-bom.version>2.21.5</jackson-bom.version>
         <!-- Override convention4j-parent's managed 0.0.48 with the Maven Central 1.0.0
              release so the build works without a locally installed AutoMapper snapshot. -->
         <auto-mapper.version>1.0.0</auto-mapper.version>
+        <!-- Plugin versions previously pinned by convention4j-parent, mirrored here so the
+             project keeps the same compile/test/coverage behavior without inheriting it. -->
+        <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
+        <maven-surefire-plugin.version>3.5.3</maven-surefire-plugin.version>
+        <jacoco-maven-plugin.version>0.8.11</jacoco-maven-plugin.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
-            <!-- Project-level Jackson BOM wins over the one embedded in the inherited
-                 spring-boot-dependencies BOM (nearest declaration wins). -->
+            <!-- Project-level BOM imports come first: among imported BOMs the first
+                 declaration wins for overlapping entries, so these overrides beat the
+                 versions embedded in the convention4j-parent BOM below. -->
             <dependency>
                 <groupId>com.fasterxml.jackson</groupId>
                 <artifactId>jackson-bom</artifactId>
                 <version>${jackson-bom.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>fun.fengwk.auto-mapper</groupId>
+                <artifactId>auto-mapper-parent</artifactId>
+                <version>${auto-mapper.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot-dependencies.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- convention4j-parent 1.2.1 imported as a plain BOM: contributes the
+                 convention4j-* artifact versions and mybatis-spring-boot-starter without its
+                 global annotation-processor dependencies. -->
+            <dependency>
+                <groupId>fun.fengwk.convention4j</groupId>
+                <artifactId>convention4j-parent</artifactId>
+                <version>1.2.1</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -62,11 +97,44 @@
         </dependencies>
     </dependencyManagement>
 
+    <!-- The only annotation processor every module needs: Lombok. mapstruct-processor and
+         auto-service are unused, and auto-mapper-processor is declared by core alone. -->
+    <dependencies>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
     <modules>
         <module>share</module>
         <module>core</module>
         <module>web</module>
     </modules>
+
+    <!-- Mirror of the build configuration convention4j-parent 1.2.1 used to provide. -->
+    <build>
+        <plugins>
+            <!-- 携带参数名进行编译 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven-compiler-plugin.version}</version>
+                <configuration>
+                    <compilerArgs>
+                        <arg>-parameters</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+            <!-- 显示指定surefire版本，防止低版本的maven工具使用低版本的surefire插件导致无法兼容junit5 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven-surefire-plugin.version}</version>
+            </plugin>
+        </plugins>
+    </build>
 
     <!--
         Compile-time database variants: exactly one profile is active per clean build and
@@ -75,6 +143,37 @@
         PostgreSQL is the default variant; no runtime multi-datasource exists.
     -->
     <profiles>
+        <!-- Same jacoco coverage profile convention4j-parent activated by default. -->
+        <profile>
+            <id>dev</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <version>${jacoco-maven-plugin.version}</version>
+                        <executions>
+                            <execution>
+                                <id>prepare-agent</id>
+                                <goals>
+                                    <goal>prepare-agent</goal>
+                                </goals>
+                            </execution>
+                            <execution>
+                                <id>report</id>
+                                <phase>test</phase>
+                                <goals>
+                                    <goal>report</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
         <profile>
             <id>postgresql</id>
             <activation>
