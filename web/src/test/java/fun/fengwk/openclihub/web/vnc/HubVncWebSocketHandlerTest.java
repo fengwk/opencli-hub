@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -22,6 +23,9 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URI;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -223,6 +227,108 @@ class HubVncWebSocketHandlerTest {
         }
     }
 
+    /** The connection slot semaphore is the hard cap: 32 live sessions fit, the 33rd is rejected without a TCP attempt, and a normal close returns its slot. */
+    @Test
+    void shouldEnforceConnectionSlotLimitAndReleaseOnNormalClose() throws Exception {
+        try (MultiPeerVncServer server = new MultiPeerVncServer()) {
+            handler = newHandler(server.getPort());
+            List<SessionFixture> live = new ArrayList<>();
+            for (int i = 0; i < 32; i++) {
+                SessionFixture fixture = newSession("live-" + i, "11", ignored -> {
+                });
+                handler.afterConnectionEstablished(fixture.session);
+                live.add(fixture);
+            }
+            server.awaitPeerCount(32);
+
+            SessionFixture extra = newSession("extra", "11", ignored -> {
+            });
+            handler.afterConnectionEstablished(extra.session);
+            assertEquals(CloseStatus.POLICY_VIOLATION.getCode(), extra.awaitClose().getCode());
+            assertEquals(32, server.peerCount());
+
+            // A normal close must return the slot: the replacement session can connect now.
+            live.get(0).open.set(false);
+            handler.afterConnectionClosed(live.get(0).session, CloseStatus.NORMAL);
+            SessionFixture replacement = newSession("replacement", "11", ignored -> {
+            });
+            handler.afterConnectionEstablished(replacement.session);
+            server.awaitPeerCount(33);
+
+            byte[] backendBytes = {4, 2, 0};
+            server.writeTo(32, backendBytes);
+            assertArrayEquals(backendBytes, replacement.awaitBinary());
+        }
+    }
+
+    /** Failed connect attempts must release their slot exactly once: afterwards 32 live sessions still fit and the 33rd is still rejected (no leak, no over-release). */
+    @Test
+    void shouldRestoreSlotExactlyOnceAfterConnectFailures() throws Exception {
+        int unusedPort;
+        try (ServerSocket socket = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) {
+            unusedPort = socket.getLocalPort();
+        }
+        HubInstanceService instanceService = mock(HubInstanceService.class);
+        HubInstanceLifecycleService lifecycleService = mock(HubInstanceLifecycleService.class);
+        when(instanceService.get(anyString())).thenReturn(runningInstance());
+        when(lifecycleService.getSnapshot("11"))
+            .thenReturn(new HubInstanceRuntimeSnapshot(true, 99, unusedPort, 0, 0));
+        handler = new HubVncWebSocketHandler(instanceService, lifecycleService);
+
+        for (int i = 0; i < 5; i++) {
+            SessionFixture fixture = newSession("failed-" + i, "11", ignored -> {
+            });
+            handler.afterConnectionEstablished(fixture.session);
+            assertEquals(CloseStatus.SERVER_ERROR.getCode(), fixture.awaitClose().getCode());
+        }
+
+        try (MultiPeerVncServer server = new MultiPeerVncServer()) {
+            // Point the same handler at a live port for the healthy phase.
+            when(lifecycleService.getSnapshot("11"))
+                .thenReturn(new HubInstanceRuntimeSnapshot(true, 99, server.getPort(), 0, 0));
+            for (int i = 0; i < 32; i++) {
+                SessionFixture fixture = newSession("live-" + i, "11", ignored -> {
+                });
+                handler.afterConnectionEstablished(fixture.session);
+            }
+            server.awaitPeerCount(32);
+
+            SessionFixture extra = newSession("extra", "11", ignored -> {
+            });
+            handler.afterConnectionEstablished(extra.session);
+            assertEquals(CloseStatus.POLICY_VIOLATION.getCode(), extra.awaitClose().getCode());
+        }
+    }
+
+    /** A transport error followed by the framework's repeated close callback must release the slot exactly once. */
+    @Test
+    void shouldReleaseSlotExactlyOnceOnTransportErrorAndRepeatedClose() throws Exception {
+        try (MultiPeerVncServer server = new MultiPeerVncServer()) {
+            handler = newHandler(server.getPort());
+            SessionFixture doomed = newSession("doomed", "11", ignored -> {
+            });
+            handler.afterConnectionEstablished(doomed.session);
+            server.awaitPeerCount(1);
+
+            handler.handleTransportError(doomed.session, new IOException("simulated transport failure"));
+            assertEquals(CloseStatus.SERVER_ERROR.getCode(), doomed.awaitClose().getCode());
+            // The framework may deliver afterConnectionClosed again after a transport error.
+            handler.afterConnectionClosed(doomed.session, CloseStatus.SERVER_ERROR);
+
+            for (int i = 0; i < 32; i++) {
+                SessionFixture fixture = newSession("live-" + i, "11", ignored -> {
+                });
+                handler.afterConnectionEstablished(fixture.session);
+            }
+            server.awaitPeerCount(33);
+
+            SessionFixture extra = newSession("extra", "11", ignored -> {
+            });
+            handler.afterConnectionEstablished(extra.session);
+            assertEquals(CloseStatus.POLICY_VIOLATION.getCode(), extra.awaitClose().getCode());
+        }
+    }
+
     private HubVncWebSocketHandler newHandler(int vncPort) {
         HubInstanceService instanceService = mock(HubInstanceService.class);
         HubInstanceLifecycleService lifecycleService = mock(HubInstanceLifecycleService.class);
@@ -245,12 +351,17 @@ class HubVncWebSocketHandlerTest {
     }
 
     private SessionFixture newSession(String instanceId, Consumer<CloseStatus> beforeClose) {
+        return newSession("session-" + instanceId, instanceId, beforeClose);
+    }
+
+    /** Builds a session with an explicit session id but the shared stubbed instance id. */
+    private SessionFixture newSession(String sessionId, String instanceId, Consumer<CloseStatus> beforeClose) {
         WebSocketSession session = mock(WebSocketSession.class);
         AtomicBoolean open = new AtomicBoolean(true);
         AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
         CountDownLatch closeLatch = new CountDownLatch(1);
         BlockingQueue<byte[]> binaryMessages = new LinkedBlockingQueue<>();
-        when(session.getId()).thenReturn("session-" + instanceId);
+        when(session.getId()).thenReturn(sessionId);
         when(session.getUri()).thenReturn(URI.create("ws://localhost/api/instances/" + instanceId + "/vnc"));
         when(session.isOpen()).thenAnswer(ignored -> open.get());
         try {
@@ -362,6 +473,61 @@ class HubVncWebSocketHandlerTest {
         @Override
         public void close() throws IOException {
             if (peer != null) {
+                peer.close();
+            }
+            serverSocket.close();
+            acceptExecutor.shutdownNow();
+        }
+
+    }
+
+    /** Accepts many loopback peers so tests can fill the handler's connection slot limit. */
+    private static final class MultiPeerVncServer implements AutoCloseable {
+
+        private final ServerSocket serverSocket;
+        private final ExecutorService acceptExecutor = Executors.newSingleThreadExecutor();
+        private final List<Socket> peers = Collections.synchronizedList(new ArrayList<>());
+
+        private MultiPeerVncServer() throws IOException {
+            serverSocket = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
+            acceptExecutor.execute(() -> {
+                try {
+                    while (true) {
+                        Socket peer = serverSocket.accept();
+                        peer.setSoTimeout(2000);
+                        peers.add(peer);
+                    }
+                } catch (IOException ignored) {
+                    // close() deliberately unblocks accept during test cleanup.
+                }
+            });
+        }
+
+        private int getPort() {
+            return serverSocket.getLocalPort();
+        }
+
+        private int peerCount() {
+            return peers.size();
+        }
+
+        private void awaitPeerCount(int count) throws InterruptedException {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (peers.size() < count && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            assertTrue(peers.size() >= count, "accepted peers=" + peers.size() + " expected=" + count);
+        }
+
+        private void writeTo(int index, byte[] bytes) throws IOException {
+            Socket peer = peers.get(index);
+            peer.getOutputStream().write(bytes);
+            peer.getOutputStream().flush();
+        }
+
+        @Override
+        public void close() throws IOException {
+            for (Socket peer : peers) {
                 peer.close();
             }
             serverSocket.close();

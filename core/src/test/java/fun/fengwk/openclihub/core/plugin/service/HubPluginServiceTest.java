@@ -6,12 +6,20 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandCatalog;
 import fun.fengwk.openclihub.core.plugin.cli.OpenCliPluginCli;
 import fun.fengwk.openclihub.core.plugin.repo.HubPluginSourceRepository;
+import fun.fengwk.openclihub.share.constant.HubErrorCodes;
+import fun.fengwk.openclihub.share.model.plugin.HubPluginSourceDTO;
 import fun.fengwk.openclihub.share.model.plugin.HubPluginSourceStatus;
 import fun.fengwk.openclihub.share.model.plugin.HubPluginSourceUpsertDTO;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class HubPluginServiceTest {
@@ -260,6 +268,126 @@ class HubPluginServiceTest {
             .hasMessageContaining("invalid manifest");
         assertThat(repo.findById(created.getId()).getLastStatus()).isEqualTo(HubPluginSourceStatus.FAILED);
         assertThat(repo.findById(created.getId()).getLastError()).contains("invalid manifest");
+    }
+
+    /** All source mutations share one fence: while a sync runs, create/update/delete and other syncs are rejected with PLUGIN_SYNC_BUSY. */
+    @Test
+    void shouldRejectConcurrentMutationsWhileSyncRuns() throws Exception {
+        InMemoryRepo repo = new InMemoryRepo();
+        OpenCliPluginCli pluginCli = mock(OpenCliPluginCli.class);
+        HubPluginService service = new HubPluginService(
+            repo, pluginCli, mock(OpenCliCommandCatalog.class));
+
+        HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
+        request.setName("demo");
+        request.setSource("github:acme/opencli-plugins");
+        request.setEnabled(true);
+        var created = service.createSource(request);
+
+        CountDownLatch cliEntered = new CountDownLatch(1);
+        CountDownLatch releaseCli = new CountDownLatch(1);
+        when(pluginCli.run(List.of("install", request.getSource()))).thenAnswer(invocation -> {
+            cliEntered.countDown();
+            assertThat(releaseCli.await(2, TimeUnit.SECONDS)).isTrue();
+            return new OpenCliPluginCli.CliResult(0, "installed", "");
+        });
+        when(pluginCli.run(List.of("list"))).thenReturn(new OpenCliPluginCli.CliResult(0, "ok", ""));
+
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            Future<HubPluginSourceDTO> sync = pool.submit(() -> service.syncSource(created.getId()));
+            assertThat(cliEntered.await(2, TimeUnit.SECONDS)).isTrue();
+
+            HubPluginSourceUpsertDTO update = new HubPluginSourceUpsertDTO();
+            update.setName("demo-renamed");
+            update.setSource(request.getSource());
+            update.setEnabled(true);
+            assertBusy(() -> service.updateSource(created.getId(), update));
+            assertBusy(() -> service.deleteSource(created.getId()));
+            assertBusy(() -> service.syncSource(created.getId()));
+            assertBusy(() -> service.updateInstalledFromSource(created.getId()));
+            HubPluginSourceUpsertDTO another = new HubPluginSourceUpsertDTO();
+            another.setName("other");
+            another.setSource("github:acme/other-plugins");
+            assertBusy(() -> service.createSource(another));
+
+            releaseCli.countDown();
+            assertThat(sync.get(5, TimeUnit.SECONDS).getLastStatus())
+                .isEqualTo(HubPluginSourceStatus.SUCCEEDED);
+            assertThat(repo.findById(created.getId()).getLastStatus())
+                .isEqualTo(HubPluginSourceStatus.SUCCEEDED);
+            assertThat(repo.findById(created.getId()).getName()).isEqualTo("demo");
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private static void assertBusy(org.assertj.core.api.ThrowableAssert.ThrowingCallable callable) {
+        assertThatThrownBy(callable)
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(error -> assertThat(((ThrowableConventionErrorCode) error).getCode())
+                .isEqualTo(HubErrorCodes.PLUGIN_SYNC_BUSY.getCode()));
+    }
+
+    /** A disabled source must be rejected for both sync and update-installed operations. */
+    @Test
+    void shouldRejectSyncOfDisabledSource() {
+        InMemoryRepo repo = new InMemoryRepo();
+        HubPluginService service = new HubPluginService(
+            repo, mock(OpenCliPluginCli.class), mock(OpenCliCommandCatalog.class));
+
+        HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
+        request.setName("demo");
+        request.setSource("github:acme/opencli-plugins");
+        request.setEnabled(true);
+        var created = service.createSource(request);
+
+        HubPluginSourceUpsertDTO disable = new HubPluginSourceUpsertDTO();
+        disable.setName("demo");
+        disable.setSource(request.getSource());
+        disable.setEnabled(false);
+        service.updateSource(created.getId(), disable);
+
+        assertThatThrownBy(() -> service.syncSource(created.getId()))
+            .hasMessageContaining("disabled");
+        assertThatThrownBy(() -> service.updateInstalledFromSource(created.getId()))
+            .hasMessageContaining("disabled");
+        assertThat(repo.findById(created.getId()).getLastStatus())
+            .isEqualTo(HubPluginSourceStatus.IDLE);
+    }
+
+    /** An update that omits the enabled flag must preserve the current value instead of silently re-enabling a disabled source. */
+    @Test
+    void shouldPreserveEnabledFlagWhenUpdateOmitsIt() {
+        InMemoryRepo repo = new InMemoryRepo();
+        HubPluginService service = new HubPluginService(
+            repo, mock(OpenCliPluginCli.class), mock(OpenCliCommandCatalog.class));
+
+        HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
+        request.setName("demo");
+        request.setSource("github:acme/opencli-plugins");
+        request.setEnabled(true);
+        var created = service.createSource(request);
+        assertThat(created.isEnabled()).isTrue();
+
+        HubPluginSourceUpsertDTO disable = new HubPluginSourceUpsertDTO();
+        disable.setName("demo");
+        disable.setSource(request.getSource());
+        disable.setEnabled(false);
+        assertThat(service.updateSource(created.getId(), disable).isEnabled()).isFalse();
+
+        // A partial update without the enabled flag must keep the source disabled.
+        HubPluginSourceUpsertDTO rename = new HubPluginSourceUpsertDTO();
+        rename.setName("demo-renamed");
+        rename.setSource(request.getSource());
+        assertThat(service.updateSource(created.getId(), rename).isEnabled()).isFalse();
+        assertThat(repo.findById(created.getId()).isEnabled()).isFalse();
+
+        // Create with an omitted flag still defaults to enabled.
+        HubPluginSourceUpsertDTO defaulted = new HubPluginSourceUpsertDTO();
+        defaulted.setName("fresh");
+        defaulted.setSource("github:acme/fresh-plugins");
+        assertThat(service.createSource(defaulted).isEnabled()).isTrue();
     }
 
     private static final class InMemoryRepo implements HubPluginSourceRepository {

@@ -585,26 +585,44 @@ class HubResourceServiceTest {
     // -- Sanitization ----------------------------------------------------------------------
 
     /**
-     * The uploaded file name must be sanitized to keep upload items filesystem safe: path
-     * separators are replaced, Windows drive prefixes are stripped, NUL bytes are removed.
+     * Uploaded file names are reduced to a single safe basename: directory components and
+     * Windows drive prefixes are consumed, exact {@code .}/{@code ..} tokens and empty
+     * input map to {@code file}, control characters are neutralized, and ordinary
+     * single-segment names pass through unchanged.
      */
     @Test
     void shouldSanitizeUploadFileNames() {
+        // Traversal attempts collapse to their basename and never keep separators/tokens.
         assertThat(HubResourcePaths.sanitizeUploadFileName("../../etc/passwd"))
-            .isNotEqualTo("../../etc/passwd")
-            .doesNotContain("..")
-            .doesNotContain("/");
+            .isEqualTo("passwd");
+        assertThat(HubResourcePaths.sanitizeUploadFileName("..\\..\\etc\\passwd"))
+            .isEqualTo("passwd");
+        assertThat(HubResourcePaths.sanitizeUploadFileName("/etc/passwd"))
+            .isEqualTo("passwd");
+        assertThat(HubResourcePaths.sanitizeUploadFileName("a/b/c.txt"))
+            .isEqualTo("c.txt");
+        // Windows drive prefixes are stripped before the basename is taken.
         assertThat(HubResourcePaths.sanitizeUploadFileName("C:\\Windows\\evil.exe"))
-            .contains("evil.exe")
-            .doesNotContain(":");
+            .isEqualTo("evil.exe");
+        assertThat(HubResourcePaths.sanitizeUploadFileName("C:evil.exe"))
+            .isEqualTo("evil.exe");
+        // Exact navigation tokens, bare separators and empty input map to a neutral name.
+        assertThat(HubResourcePaths.sanitizeUploadFileName(".")).isEqualTo("file");
+        assertThat(HubResourcePaths.sanitizeUploadFileName("..")).isEqualTo("file");
+        assertThat(HubResourcePaths.sanitizeUploadFileName("")).isEqualTo("file");
+        assertThat(HubResourcePaths.sanitizeUploadFileName("/")).isEqualTo("file");
+        assertThat(HubResourcePaths.sanitizeUploadFileName("\\")).isEqualTo("file");
+        assertThat(HubResourcePaths.sanitizeUploadFileName("a/..")).isEqualTo("file");
+        // Control characters are neutralized.
         assertThat(HubResourcePaths.sanitizeUploadFileName("naughty\u0000name.txt"))
             .isEqualTo("naughty_name.txt");
         assertThat(HubResourcePaths.sanitizeUploadFileName("line\nbreak.txt"))
             .isEqualTo("line_break.txt");
-        assertThat(HubResourcePaths.sanitizeUploadFileName(".."))
-            .isEqualTo("file");
-        assertThat(HubResourcePaths.sanitizeUploadFileName(""))
-            .isEqualTo("file");
+        // Ordinary file names pass through unchanged.
+        assertThat(HubResourcePaths.sanitizeUploadFileName("invoice.pdf"))
+            .isEqualTo("invoice.pdf");
+        assertThat(HubResourcePaths.sanitizeUploadFileName("my report (final).txt"))
+            .isEqualTo("my report (final).txt");
     }
 
     // -- Resource not found ----------------------------------------------------------------

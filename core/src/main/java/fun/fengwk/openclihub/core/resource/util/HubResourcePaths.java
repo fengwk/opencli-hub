@@ -208,6 +208,18 @@ public final class HubResourcePaths {
     /**
      * Validate and convert an arbitrary string into a safe filesystem segment for an upload
      * file name. The returned name is deduped against siblings by the caller.
+     *
+     * <p>The strategy is deliberately simple and exact:
+     * <ul>
+     *   <li>a basename is extracted — only the last path component after any {@code /} or
+     *       {@code \} separator or Windows drive prefix survives, so directory structure can
+     *       never leak into the stored name;</li>
+     *   <li>the exact tokens {@code .} and {@code ..} (and empty input) map to {@code file};</li>
+     *   <li>NUL and other control characters are replaced with {@code _};</li>
+     *   <li>trailing dots/spaces are stripped (Windows-incompatible) and the name is capped
+     *       at 200 characters.</li>
+     * </ul>
+     * Ordinary single-segment file names pass through unchanged.
      */
     public static String sanitizeUploadFileName(String original) {
         String name = original == null ? "" : original.trim();
@@ -218,14 +230,19 @@ public final class HubResourcePaths {
         if (name.length() >= 2 && Character.isLetter(name.charAt(0)) && name.charAt(1) == ':') {
             name = name.substring(2);
         }
-        if (name.startsWith("/") || name.startsWith("\\")) {
-            name = name.replaceFirst("^[\\\\/]+", "");
+        // Basename: keep only the last path component; separators are consumed here rather
+        // than being rewritten into the file name.
+        int lastSeparator = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+        if (lastSeparator >= 0) {
+            name = name.substring(lastSeparator + 1);
         }
-        // Replace path separators and control characters that the virtual-path contract
-        // deliberately refuses to expose after upload.
+        if (name.isEmpty() || ".".equals(name) || "..".equals(name)) {
+            return "file";
+        }
+        // Replace control characters that the virtual-path contract deliberately refuses to
+        // expose after upload.
         name = sanitizeRelativeSegmentCharacters(name);
-        // Drop any remaining navigation tokens and trailing dots/spaces.
-        name = name.replace("..", "_");
+        // Drop trailing dots/spaces that Windows file systems treat specially.
         while (name.endsWith(".") || name.endsWith(" ")) {
             name = name.substring(0, name.length() - 1);
         }
@@ -297,34 +314,6 @@ public final class HubResourcePaths {
         } catch (FileAlreadyExistsException ex) {
             return null;
         }
-    }
-
-    /**
-     * Legacy non-atomic conflict resolver kept for unit tests that exercise the
-     * sanitize-only path. New code paths must use {@link #reserveFileName(Path, String)}.
-     */
-    static String resolveFileNameConflict(Path groupDir, String desired) {
-        Path candidate = groupDir.resolve(desired);
-        if (!Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
-            return desired;
-        }
-        int dot = desired.lastIndexOf('.');
-        String base;
-        String ext;
-        if (dot > 0 && dot < desired.length() - 1) {
-            base = desired.substring(0, dot);
-            ext = desired.substring(dot);
-        } else {
-            base = desired;
-            ext = "";
-        }
-        for (int i = 2; i < 10_000; i++) {
-            String candidateName = base + " (" + i + ")" + ext;
-            if (!Files.exists(groupDir.resolve(candidateName), LinkOption.NOFOLLOW_LINKS)) {
-                return candidateName;
-            }
-        }
-        return desired + "-" + UUID.randomUUID();
     }
 
     /**

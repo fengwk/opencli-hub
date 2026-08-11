@@ -1,11 +1,16 @@
 package fun.fengwk.openclihub.core.opencli.catalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandCatalog;
 import fun.fengwk.openclihub.share.model.execution.SiteSessionMode;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -69,6 +74,36 @@ class DefaultOpenCliCommandCatalogTest {
         var bilibili = catalog.findPublicCommand("bilibili", "hot");
         assertThat(bilibili).isPresent();
         assertThat(bilibili.get().getSiteSession()).isNull();
+    }
+
+    /**
+     * A failed reload must leave the previous snapshot fully served: the catalog builds a
+     * fresh index and atomically swaps it, so a broken source can never clear the cache into
+     * an empty fail-open state.
+     */
+    @Test
+    void shouldKeepServingPreviousSnapshotWhenReloadFails() throws IOException {
+        AtomicInteger opens = new AtomicInteger();
+        OpenCliCatalogSource flakySource = new OpenCliCatalogSource() {
+            @Override
+            public InputStream open() throws IOException {
+                if (opens.getAndIncrement() == 0) {
+                    return Files.newInputStream(FIXTURE);
+                }
+                throw new IOException("manifest temporarily unavailable");
+            }
+        };
+        DefaultOpenCliCommandCatalog catalog = new DefaultOpenCliCommandCatalog(flakySource);
+        assertThat(catalog.findPublicCommand("bilibili", "hot")).isPresent();
+
+        assertThatThrownBy(catalog::reload)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("Failed to load OpenCLI catalog");
+
+        // The previous snapshot must still be served — no empty window after the failure.
+        assertThat(catalog.findPublicCommand("bilibili", "hot")).isPresent();
+        assertThat(catalog.listPublicCommands()).isNotEmpty();
+        assertThat(catalog.listWebsites()).contains("bilibili");
     }
 
 }

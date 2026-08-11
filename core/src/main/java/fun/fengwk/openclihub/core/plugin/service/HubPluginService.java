@@ -52,7 +52,15 @@ public class HubPluginService {
     private final HubPluginSourceRepository repository;
     private final OpenCliPluginCli pluginCli;
     private final OpenCliCommandCatalog commandCatalog;
-    private final ReentrantLock syncLock = new ReentrantLock();
+    /**
+     * Single mutation fence for every plugin source mutation (create/update/delete/sync/
+     * update-installed). Serializing the read-modify-write sequences under one lock prevents
+     * one call from silently overwriting the state written by another (for example the final
+     * sync status write racing a concurrent source edit). The lock is process-local; the
+     * optimistic {@code version} column still protects against concurrent writers outside
+     * this process.
+     */
+    private final ReentrantLock mutationLock = new ReentrantLock();
 
     public List<HubPluginSourceDTO> listSources() {
         return repository.listAll().stream().map(this::toDTO).toList();
@@ -64,67 +72,94 @@ public class HubPluginService {
     }
 
     public HubPluginSourceDTO createSource(HubPluginSourceUpsertDTO request) {
-        HubPluginSource source = fromUpsert(null, request);
-        if (repository.findByName(source.getName()) != null) {
-            throw HubErrorCodes.PLUGIN_SOURCE_NAME_CONFLICT.asThrowable(
-                "plugin source name already exists: " + source.getName());
+        if (!mutationLock.tryLock()) {
+            throw HubErrorCodes.PLUGIN_SYNC_BUSY.asThrowable("another plugin mutation is running");
         }
-        source.setId(UUID.randomUUID().toString());
-        source.setLastStatus(HubPluginSourceStatus.IDLE);
-        source.setCreateTime(LocalDateTime.now());
-        source.setVersion(0L);
-        if (!repository.add(source)) {
-            throw HubErrorCodes.PLUGIN_SOURCE_ARGUMENT_INVALID.asThrowable("failed to persist plugin source");
+        try {
+            HubPluginSource source = fromUpsert(null, request);
+            if (repository.findByName(source.getName()) != null) {
+                throw HubErrorCodes.PLUGIN_SOURCE_NAME_CONFLICT.asThrowable(
+                    "plugin source name already exists: " + source.getName());
+            }
+            source.setId(UUID.randomUUID().toString());
+            source.setLastStatus(HubPluginSourceStatus.IDLE);
+            source.setCreateTime(LocalDateTime.now());
+            source.setVersion(0L);
+            if (!repository.add(source)) {
+                throw HubErrorCodes.PLUGIN_SOURCE_ARGUMENT_INVALID.asThrowable("failed to persist plugin source");
+            }
+            log.info("Created plugin source id={} name={} source={}", source.getId(), source.getName(), source.getSource());
+            return toDTO(repository.findById(source.getId()));
+        } finally {
+            mutationLock.unlock();
         }
-        log.info("Created plugin source id={} name={} source={}", source.getId(), source.getName(), source.getSource());
-        return toDTO(repository.findById(source.getId()));
     }
 
     public HubPluginSourceDTO updateSource(String id, HubPluginSourceUpsertDTO request) {
-        HubPluginSource existing = requireSource(id);
-        HubPluginSource updated = fromUpsert(existing, request);
-        HubPluginSource byName = repository.findByName(updated.getName());
-        if (byName != null && !byName.getId().equals(id)) {
-            throw HubErrorCodes.PLUGIN_SOURCE_NAME_CONFLICT.asThrowable(
-                "plugin source name already exists: " + updated.getName());
+        if (!mutationLock.tryLock()) {
+            throw HubErrorCodes.PLUGIN_SYNC_BUSY.asThrowable("another plugin mutation is running");
         }
-        updated.setId(existing.getId());
-        updated.setLastStatus(existing.getLastStatus());
-        updated.setLastError(existing.getLastError());
-        updated.setLastSyncedAt(existing.getLastSyncedAt());
-        updated.setLastResult(existing.getLastResult());
-        updated.setCreateTime(existing.getCreateTime());
-        updated.setVersion(existing.getVersion());
-        if (!repository.update(updated)) {
-            throw HubErrorCodes.PLUGIN_SOURCE_UPDATE_CONFLICT.asThrowable(
-                "plugin source changed concurrently: " + id);
+        try {
+            HubPluginSource existing = requireSource(id);
+            HubPluginSource updated = fromUpsert(existing, request);
+            HubPluginSource byName = repository.findByName(updated.getName());
+            if (byName != null && !byName.getId().equals(id)) {
+                throw HubErrorCodes.PLUGIN_SOURCE_NAME_CONFLICT.asThrowable(
+                    "plugin source name already exists: " + updated.getName());
+            }
+            updated.setId(existing.getId());
+            updated.setLastStatus(existing.getLastStatus());
+            updated.setLastError(existing.getLastError());
+            updated.setLastSyncedAt(existing.getLastSyncedAt());
+            updated.setLastResult(existing.getLastResult());
+            updated.setCreateTime(existing.getCreateTime());
+            updated.setVersion(existing.getVersion());
+            if (!repository.update(updated)) {
+                throw HubErrorCodes.PLUGIN_SOURCE_UPDATE_CONFLICT.asThrowable(
+                    "plugin source changed concurrently: " + id);
+            }
+            log.info("Updated plugin source id={} name={} source={}", id, updated.getName(), updated.getSource());
+            return toDTO(repository.findById(id));
+        } finally {
+            mutationLock.unlock();
         }
-        log.info("Updated plugin source id={} name={} source={}", id, updated.getName(), updated.getSource());
-        return toDTO(repository.findById(id));
     }
 
     public void deleteSource(String id) {
-        requireSource(id);
-        if (!repository.deleteById(id)) {
-            throw HubErrorCodes.PLUGIN_SOURCE_NOT_FOUND.asThrowable("plugin source not found: " + id);
+        if (!mutationLock.tryLock()) {
+            throw HubErrorCodes.PLUGIN_SYNC_BUSY.asThrowable("another plugin mutation is running");
         }
-        log.info("Deleted plugin source id={}", id);
+        try {
+            requireSource(id);
+            if (!repository.deleteById(id)) {
+                throw HubErrorCodes.PLUGIN_SOURCE_NOT_FOUND.asThrowable("plugin source not found: " + id);
+            }
+            log.info("Deleted plugin source id={}", id);
+        } finally {
+            mutationLock.unlock();
+        }
     }
 
     public HubPluginSourceDTO syncSource(String id) {
-        HubPluginSource source = requireSource(id);
-        if (!source.isEnabled()) {
-            throw HubErrorCodes.PLUGIN_SOURCE_ARGUMENT_INVALID.asThrowable(
-                "plugin source is disabled: " + id);
+        if (!mutationLock.tryLock()) {
+            throw HubErrorCodes.PLUGIN_SYNC_BUSY.asThrowable("another plugin mutation is running");
         }
-        if (!syncLock.tryLock()) {
-            throw HubErrorCodes.PLUGIN_SYNC_BUSY.asThrowable("another plugin sync is running");
-        }
+        HubPluginSource source = null;
         List<String> commands = new ArrayList<>();
         try {
+            // Read under the fence so the enabled check and the version-based writes below
+            // operate on the same snapshot no other mutation can invalidate.
+            source = requireSource(id);
+            if (!source.isEnabled()) {
+                throw HubErrorCodes.PLUGIN_SOURCE_ARGUMENT_INVALID.asThrowable(
+                    "plugin source is disabled: " + id);
+            }
             source.setLastStatus(HubPluginSourceStatus.SYNCING);
             source.setLastError(null);
-            repository.update(source);
+            if (!repository.update(source)) {
+                throw HubErrorCodes.PLUGIN_SOURCE_UPDATE_CONFLICT.asThrowable(
+                    "plugin source changed concurrently: " + id);
+            }
             log.info(
                 "Plugin sync started id={} name={} source={} desiredPlugins={}",
                 source.getId(),
@@ -165,13 +200,16 @@ public class HubPluginService {
             latest.setLastError(null);
             latest.setLastSyncedAt(LocalDateTime.now());
             latest.setLastResult(String.join("\n", commands));
-            repository.update(latest);
+            if (!repository.update(latest)) {
+                throw HubErrorCodes.PLUGIN_SOURCE_UPDATE_CONFLICT.asThrowable(
+                    "plugin source changed concurrently: " + id);
+            }
             log.info("Plugin sync succeeded id={} name={}", id, latest.getName());
             return toDTO(repository.findById(id));
         } catch (RuntimeException ex) {
-            throw recordUnexpectedSyncFailure(source, commands, ex);
+            throw source == null ? ex : recordUnexpectedSyncFailure(source, commands, ex);
         } finally {
-            syncLock.unlock();
+            mutationLock.unlock();
         }
     }
 
@@ -188,19 +226,25 @@ public class HubPluginService {
      * </ul>
      */
     public HubPluginSourceDTO updateInstalledFromSource(String id) {
-        HubPluginSource source = requireSource(id);
-        if (!source.isEnabled()) {
-            throw HubErrorCodes.PLUGIN_SOURCE_ARGUMENT_INVALID.asThrowable(
-                "plugin source is disabled: " + id);
+        if (!mutationLock.tryLock()) {
+            throw HubErrorCodes.PLUGIN_SYNC_BUSY.asThrowable("another plugin mutation is running");
         }
-        if (!syncLock.tryLock()) {
-            throw HubErrorCodes.PLUGIN_SYNC_BUSY.asThrowable("another plugin sync is running");
-        }
+        HubPluginSource source = null;
         List<String> commands = new ArrayList<>();
         try {
+            // Read under the fence so the enabled check and the version-based writes below
+            // operate on the same snapshot no other mutation can invalidate.
+            source = requireSource(id);
+            if (!source.isEnabled()) {
+                throw HubErrorCodes.PLUGIN_SOURCE_ARGUMENT_INVALID.asThrowable(
+                    "plugin source is disabled: " + id);
+            }
             source.setLastStatus(HubPluginSourceStatus.SYNCING);
             source.setLastError(null);
-            repository.update(source);
+            if (!repository.update(source)) {
+                throw HubErrorCodes.PLUGIN_SOURCE_UPDATE_CONFLICT.asThrowable(
+                    "plugin source changed concurrently: " + id);
+            }
             log.info(
                 "Plugin update-installed started id={} name={} source={} desiredPlugins={}",
                 source.getId(),
@@ -229,13 +273,16 @@ public class HubPluginService {
             latest.setLastError(null);
             latest.setLastSyncedAt(LocalDateTime.now());
             latest.setLastResult(String.join("\n", commands));
-            repository.update(latest);
+            if (!repository.update(latest)) {
+                throw HubErrorCodes.PLUGIN_SOURCE_UPDATE_CONFLICT.asThrowable(
+                    "plugin source changed concurrently: " + id);
+            }
             log.info("Plugin update-installed succeeded id={} name={} targets={}", id, latest.getName(), targets);
             return toDTO(repository.findById(id));
         } catch (RuntimeException ex) {
-            throw recordUnexpectedSyncFailure(source, commands, ex);
+            throw source == null ? ex : recordUnexpectedSyncFailure(source, commands, ex);
         } finally {
-            syncLock.unlock();
+            mutationLock.unlock();
         }
     }
 
@@ -296,7 +343,9 @@ public class HubPluginService {
         latest.setLastError(error == null || error.isBlank() ? "plugin sync failed" : error.trim());
         latest.setLastSyncedAt(LocalDateTime.now());
         latest.setLastResult(String.join("\n", commands));
-        repository.update(latest);
+        if (!repository.update(latest)) {
+            log.error("Failed to persist plugin sync failure id={} (row changed concurrently)", source.getId());
+        }
         log.error(
             "Plugin sync failed id={} name={} error={}",
             latest.getId(),
@@ -358,7 +407,12 @@ public class HubPluginService {
         target.setName(name);
         target.setSource(source);
         target.setDesiredPlugins(desired);
-        target.setEnabled(request.getEnabled() == null || Boolean.TRUE.equals(request.getEnabled()));
+        // Backend-enabled semantics: an omitted enabled flag defaults to enabled on create
+        // and preserves the current value on update so a partial update can never silently
+        // re-enable a deliberately disabled source.
+        target.setEnabled(request.getEnabled() == null
+            ? existing == null || existing.isEnabled()
+            : request.getEnabled());
         return target;
     }
 
