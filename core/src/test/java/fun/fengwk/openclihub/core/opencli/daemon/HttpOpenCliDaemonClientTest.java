@@ -175,7 +175,7 @@ class HttpOpenCliDaemonClientTest {
     void shouldPostBindActiveTabWithAdapterPersistentCommand() throws Exception {
         server.setCommandBody("{\"id\":\"unused\",\"ok\":true}");
 
-        OpenCliDaemonCommandResponse response = client.bindActiveTab("ctx-bind");
+        OpenCliDaemonCommandResponse response = client.bindActiveTab("ctx-bind", "site:chatgpt-agent");
 
         assertThat(response.getOk()).isTrue();
         assertThat(server.lastMethodAndPath()).isEqualTo("POST /command");
@@ -190,13 +190,33 @@ class HttpOpenCliDaemonClientTest {
         assertThat(request.get("contextId").asText()).isEqualTo("ctx-bind");
     }
 
+    /** The transport forwards the caller's session contract instead of hardcoding one. */
+    @Test
+    void shouldForwardCallerSuppliedSessionInBindCommand() throws Exception {
+        server.setCommandBody("{\"id\":\"unused\",\"ok\":true}");
+
+        client.bindActiveTab("ctx-bind", "site:custom-session");
+
+        var request = new ObjectMapper().readTree(server.lastBody());
+        assertThat(request.get("session").asText()).isEqualTo("site:custom-session");
+        assertThat(request.get("surface").asText()).isEqualTo("adapter");
+        assertThat(request.get("siteSession").asText()).isEqualTo("persistent");
+    }
+
+    @Test
+    void shouldRejectBlankSessionInBindCommand() {
+        assertThatThrownBy(() -> client.bindActiveTab("ctx-bind", " "))
+            .isInstanceOf(OpenCliDaemonException.class)
+            .hasMessageContaining("session is required");
+    }
+
     @Test
     void shouldReturnCommandLevelBindFailureFromSuccessfulHttpResponse() {
         server.setCommandBody("{\"id\":\"unused\",\"ok\":false,"
             + "\"errorCode\":\"bound_tab_not_found\",\"error\":\"No tab\","
             + "\"errorHint\":\"Focus the tab\"}");
 
-        OpenCliDaemonCommandResponse response = client.bindActiveTab("ctx-bind");
+        OpenCliDaemonCommandResponse response = client.bindActiveTab("ctx-bind", "site:chatgpt-agent");
 
         assertThat(response.getOk()).isFalse();
         assertThat(response.getErrorCode()).isEqualTo("bound_tab_not_found");
@@ -208,7 +228,7 @@ class HttpOpenCliDaemonClientTest {
     void shouldThrowWhenBindCommandIsNonTwoXx() {
         server.setCommandStatusCode(503);
 
-        assertThatThrownBy(() -> client.bindActiveTab("ctx-bind"))
+        assertThatThrownBy(() -> client.bindActiveTab("ctx-bind", "site:chatgpt-agent"))
             .isInstanceOf(OpenCliDaemonException.class)
             .hasMessageContaining("HTTP 503");
     }
@@ -217,7 +237,7 @@ class HttpOpenCliDaemonClientTest {
     void shouldThrowWhenBindCommandResponseBodyIsInvalid() {
         server.setCommandBody("{\"ok\":true}");
 
-        assertThatThrownBy(() -> client.bindActiveTab("ctx-bind"))
+        assertThatThrownBy(() -> client.bindActiveTab("ctx-bind", "site:chatgpt-agent"))
             .isInstanceOf(OpenCliDaemonException.class)
             .hasMessageContaining("invalid bind response");
     }

@@ -51,15 +51,22 @@ import org.springframework.stereotype.Service;
  *   <li>{@link OpenCliDaemonClient} — daemon context discovery.</li>
  * </ul>
  *
- * <p>All work happens inside either the global creation lock (sections: 16.2) or the
- * per-instance lifecycle lock (start / stop / restart / delete). Shared daemon checks are
- * additionally serialized because the daemon itself is global to the Hub process.
+ * <p>All work happens inside either the coordinator's global start lock (sections: 16.2)
+ * or the per-instance lifecycle lock (start / stop / restart / delete). Shared daemon checks
+ * are serialized by the same global start lock because the daemon itself is global to the
+ * Hub process.
  *
  * @author fengwk
  */
 @Slf4j
 @Service
 public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceConsumer {
+
+    /**
+     * Fixed adapter session bound by
+     * {@code POST /api/instances/{id}/chatgpt-agent/bind-active-tab}.
+     */
+    public static final String CHATGPT_AGENT_ADAPTER_SESSION = "site:chatgpt-agent";
 
     private final HubInstanceService instanceService;
     private final HubInstanceRuntimeRegistry registry;
@@ -70,8 +77,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     private final ProfileSingletonCleaner singletonCleaner;
     private final ChromeProfileFileAccessBootstrap fileAccessBootstrap;
     private final HubDispatchRegistry dispatchRegistry;
-    private final ReentrantLock creationLock = new ReentrantLock();
-    private final ReentrantLock daemonEnsureLock = new ReentrantLock();
+    private final HubInstanceStartCoordinator startCoordinator;
 
     public HubInstanceLifecycleService(
         HubInstanceService instanceService,
@@ -82,7 +88,8 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         HubSystemSettingsService settingsService,
         ProfileSingletonCleaner singletonCleaner,
         ChromeProfileFileAccessBootstrap fileAccessBootstrap,
-        HubDispatchRegistry dispatchRegistry) {
+        HubDispatchRegistry dispatchRegistry,
+        HubInstanceStartCoordinator startCoordinator) {
         this.instanceService = instanceService;
         this.registry = registry;
         this.launcher = launcher;
@@ -92,6 +99,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         this.singletonCleaner = singletonCleaner;
         this.fileAccessBootstrap = fileAccessBootstrap;
         this.dispatchRegistry = dispatchRegistry;
+        this.startCoordinator = startCoordinator;
     }
 
     // ---------------------------------------------------------------------------------------
@@ -120,15 +128,12 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         preset.setState(HubInstanceState.STARTING);
         preset.setStateChangedAt(LocalDateTime.now());
         instanceService.validateAndNormalizeForCreate(preset);
-        creationLock.lock();
-        try {
-            // Recheck uniqueness after entering the global create critical section so two
-            // concurrent requests with the same code do not both start browser processes.
+        return startCoordinator.runStart(() -> {
+            // Recheck uniqueness inside the global start critical section so two concurrent
+            // requests with the same code do not both start browser processes.
             instanceService.validateAndNormalizeForCreate(preset);
             return createUnderLock(preset);
-        } finally {
-            creationLock.unlock();
-        }
+        });
     }
 
     /**
@@ -151,13 +156,15 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
      * Starts an existing instance (no DB insert). Follows the priority rules in design §17.3.
      */
     public HubInstance start(String instanceId) {
-        ReentrantLock lock = lockExistingInstance(instanceId);
-        try {
-            HubInstance current = loadInstance(instanceId);
-            return startUnderLock(instanceId, current);
-        } finally {
-            lock.unlock();
-        }
+        return startCoordinator.runStart(() -> {
+            ReentrantLock lock = lockExistingInstance(instanceId);
+            try {
+                HubInstance current = loadInstance(instanceId);
+                return startUnderLock(instanceId, current);
+            } finally {
+                lock.unlock();
+            }
+        });
     }
 
     /**
@@ -178,14 +185,17 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
      * Restarts an instance: stop + start, preserving the on-disk Profile.
      */
     public void restart(String instanceId) {
-        ReentrantLock lock = lockExistingInstance(instanceId);
-        try {
-            loadInstance(instanceId);
-            stopUnderLock(instanceId);
-            startUnderLock(instanceId, loadInstance(instanceId));
-        } finally {
-            lock.unlock();
-        }
+        startCoordinator.runStart(() -> {
+            ReentrantLock lock = lockExistingInstance(instanceId);
+            try {
+                loadInstance(instanceId);
+                stopUnderLock(instanceId);
+                startUnderLock(instanceId, loadInstance(instanceId));
+            } finally {
+                lock.unlock();
+            }
+            return null;
+        });
     }
 
 
@@ -201,9 +211,10 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     }
 
     /**
-     * Binds the fixed chatgpt-agent adapter session to the tab currently focused in the
-     * instance's VNC browser. The dispatcher idle guard remains held for the complete daemon
-     * round trip, so no execution can be accepted while the tab is being replaced.
+     * Binds the fixed chatgpt-agent adapter session (see {@link #CHATGPT_AGENT_ADAPTER_SESSION})
+     * to the tab currently focused in the instance's VNC browser. The dispatcher idle guard
+     * remains held for the complete daemon round trip, so no execution can be accepted while
+     * the tab is being replaced.
      */
     public void bindActiveTab(String instanceId) {
         ReentrantLock lock = lockExistingInstance(instanceId);
@@ -229,7 +240,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
                 requireConnectedDaemonProfile(contextId);
                 OpenCliDaemonCommandResponse response;
                 try {
-                    response = daemonClient.bindActiveTab(contextId);
+                    response = daemonClient.bindActiveTab(contextId, CHATGPT_AGENT_ADAPTER_SESSION);
                 } catch (OpenCliDaemonException ex) {
                     throw HubErrorCodes.INSTANCE_START_FAILED.asThrowable(
                         ex, "failed to bind active tab through OpenCLI daemon: " + ex.getMessage());
@@ -361,12 +372,23 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     /**
      * Single-threaded recovery over the supplied instance list. Failures are isolated and
      * the loop continues — the Hub itself MUST stay healthy even when every Instance fails.
+     *
+     * <p>Called from inside the {@link HubInstanceStartCoordinator#runRecovery(Callable)}
+     * sweep; each start serialises on the coordinator's global start lock without waiting on
+     * the recovery barrier.
      */
     public void recoverAll(List<HubInstance> orderedByCreationTime) {
         for (HubInstance instance : orderedByCreationTime) {
             String id = instance.getId();
             try {
-                start(id);
+                startCoordinator.runRecoveryStart(() -> {
+                    ReentrantLock lock = lockExistingInstance(id);
+                    try {
+                        return startUnderLock(id, loadInstance(id));
+                    } finally {
+                        lock.unlock();
+                    }
+                });
             } catch (RuntimeException ex) {
                 log.warn("startup recovery of instance {} failed: {}", id, ex.getMessage());
                 if (Thread.currentThread().isInterrupted()) {
@@ -523,7 +545,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             if (registeredRuntime) {
                 registry.unregister(id);
             } else if (runtime != null) {
-                registry.allocationService().release(runtime);
+                releaseAllocation(runtime);
             }
             cleanupCreateFailureArtifacts(id);
             // Preserve the precise domain code (e.g. CONTEXT_ID_AMBIGUOUS, EXTENSION_CONNECT_TIMEOUT)
@@ -733,9 +755,11 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     /**
      * Ensures the shared daemon is usable and returns the pre-start context snapshot.
      * A global daemon restart is allowed only when no other runtime is registered.
+     *
+     * <p>Serialised by the coordinator's global start lock: every caller already runs inside
+     * {@link HubInstanceStartCoordinator}, so two starts can never race the daemon.
      */
     private Set<String> ensureDaemonRunning() {
-        daemonEnsureLock.lock();
         try {
             if (registry.list().isEmpty()) {
                 daemonClient.ensureRunning();
@@ -752,8 +776,6 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         } catch (OpenCliDaemonException ex) {
             throw HubErrorCodes.INSTANCE_START_FAILED.asThrowable(
                 ex, "failed to ensure OpenCLI daemon: " + ex.getMessage());
-        } finally {
-            daemonEnsureLock.unlock();
         }
     }
 
@@ -841,12 +863,25 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         if (registeredRuntime) {
             registry.unregister(instanceId);
         } else if (runtime != null) {
-            registry.allocationService().release(runtime);
+            releaseAllocation(runtime);
         }
     }
 
     private HubInstance loadInstance(String instanceId) {
         return instanceService.get(instanceId);
+    }
+
+    /**
+     * Releases the display/VNC allocation of a runtime that was never registered (start
+     * rollback), mirroring what {@link HubInstanceRuntimeRegistry#unregister(String)} does
+     * for registered runtimes.
+     */
+    private void releaseAllocation(HubInstanceRuntime runtime) {
+        if (runtime == null) {
+            return;
+        }
+        registry.allocationService().release(new HubInstanceAllocationService.Allocation(
+            runtime.getDisplayNumber(), runtime.getVncPort()));
     }
 
     private ReentrantLock lockExistingInstance(String instanceId) {

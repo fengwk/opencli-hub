@@ -24,6 +24,10 @@ import org.springframework.stereotype.Component;
  *       on a single-thread executor; failures are isolated and do not block Spring ready.</li>
  * </ol>
  *
+ * <p>The whole sweep runs inside {@link HubInstanceStartCoordinator#runRecovery(Callable)}:
+ * while it is in progress, API start/create/restart wait (bounded) behind the recovery
+ * barrier instead of racing the sweep.
+ *
  * <p>The executor is owned by this bean so {@code DisposableBean#destroy} can shut it down
  * during Hub shutdown; running threads are daemon threads, so a stuck lifecycle flow will not
  * prevent JVM exit.
@@ -37,15 +41,18 @@ public class HubInstanceRuntimeApplicationRunner implements ApplicationRunner, D
     private final HubInstanceLifecycleService lifecycleService;
     private final OrphanInstanceScanner orphanScanner;
     private final OpenCliHubProperties properties;
+    private final HubInstanceStartCoordinator startCoordinator;
     private final ExecutorService recoveryExecutor;
 
     public HubInstanceRuntimeApplicationRunner(
         HubInstanceLifecycleService lifecycleService,
         OrphanInstanceScanner orphanScanner,
-        OpenCliHubProperties properties) {
+        OpenCliHubProperties properties,
+        HubInstanceStartCoordinator startCoordinator) {
         this.lifecycleService = lifecycleService;
         this.orphanScanner = orphanScanner;
         this.properties = properties;
+        this.startCoordinator = startCoordinator;
         this.recoveryExecutor = Executors.newSingleThreadExecutor(recoveryThreadFactory());
     }
 
@@ -60,16 +67,19 @@ public class HubInstanceRuntimeApplicationRunner implements ApplicationRunner, D
 
     private void runRecovery() {
         try {
-            OrphanInstanceScanner.Result result = orphanScanner.scan();
-            log.info("Hub startup: orphan scan complete, normalising instance states");
-            lifecycleService.normalizeAllStatesToStarting();
-            List<HubInstance> instances = lifecycleService.listInstancesOrderedByCreationTime();
-            log.info("Hub startup: starting recovery for {} instances", instances.size());
-            lifecycleService.recoverAll(instances);
-            log.info("Hub recovery complete: creatingOrphanDeleted={} creatingMarkerRemoved={} "
-                + "managedOrphanDeleted={} unsafeNameProtected={}",
-                result.creatingOrphanDeleted, result.creatingMarkerRemoved,
-                result.managedOrphanDeleted, result.unsafeNameProtected);
+            startCoordinator.runRecovery(() -> {
+                OrphanInstanceScanner.Result result = orphanScanner.scan();
+                log.info("Hub startup: orphan scan complete, normalising instance states");
+                lifecycleService.normalizeAllStatesToStarting();
+                List<HubInstance> instances = lifecycleService.listInstancesOrderedByCreationTime();
+                log.info("Hub startup: starting recovery for {} instances", instances.size());
+                lifecycleService.recoverAll(instances);
+                log.info("Hub recovery complete: creatingOrphanDeleted={} creatingMarkerRemoved={} "
+                    + "managedOrphanDeleted={} unsafeNameProtected={}",
+                    result.creatingOrphanDeleted, result.creatingMarkerRemoved,
+                    result.managedOrphanDeleted, result.unsafeNameProtected);
+                return null;
+            });
         } catch (RuntimeException ex) {
             log.error("Hub recovery sweep failed: {}", ex.getMessage(), ex);
         }

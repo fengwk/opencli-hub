@@ -205,15 +205,18 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
     }
 
     @Override
-    public OpenCliDaemonCommandResponse bindActiveTab(String contextId) {
+    public OpenCliDaemonCommandResponse bindActiveTab(String contextId, String session) {
         if (contextId == null || contextId.isBlank()) {
             throw new OpenCliDaemonException("bind active tab contextId is required");
+        }
+        if (session == null || session.isBlank()) {
+            throw new OpenCliDaemonException("bind active tab session is required");
         }
         String commandId = UUID.randomUUID().toString();
         Map<String, Object> command = new LinkedHashMap<>();
         command.put("id", commandId);
         command.put("action", "bind");
-        command.put("session", "site:chatgpt-agent");
+        command.put("session", session);
         command.put("surface", "adapter");
         command.put("siteSession", "persistent");
         command.put("contextId", contextId);

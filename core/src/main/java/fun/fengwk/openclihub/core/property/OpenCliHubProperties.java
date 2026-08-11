@@ -64,6 +64,12 @@ public class OpenCliHubProperties {
         private boolean startupRecoveryEnabled = true;
 
         /**
+         * Bounded wait for API start/create/restart while a startup recovery sweep is in
+         * progress. On timeout the caller receives INSTANCE_START_RECOVERY_IN_PROGRESS.
+         */
+        private long recoveryBarrierTimeoutMillis = 60000L;
+
+        /**
          * Starting X display number for allocation. The scanner skips already in-use numbers.
          */
         private int displayBase = 99;

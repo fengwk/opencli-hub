@@ -5,12 +5,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import fun.fengwk.openclihub.core.execution.runtime.HubDispatchRegistry;
 import fun.fengwk.openclihub.core.instance.runtime.test.InMemoryHubInstanceService;
+import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.core.opencli.daemon.FakeOpenCliDaemonClient;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import fun.fengwk.openclihub.core.settings.service.FakeHubSystemSettingsService;
+import fun.fengwk.openclihub.share.model.instance.HubInstanceCreateDTO;
+import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,6 +49,7 @@ class HubInstanceRuntimeApplicationRunnerTest {
     private HubInstanceRuntimeRegistry registry;
     private OpenCliHubProperties properties;
     private OrphanInstanceScanner scanner;
+    private HubInstanceStartCoordinator startCoordinator;
     private HubInstanceRuntimeApplicationRunner runner;
 
     @BeforeEach
@@ -63,13 +73,15 @@ class HubInstanceRuntimeApplicationRunnerTest {
         allocationService = new HubInstanceAllocationService(properties);
         registry = new HubInstanceRuntimeRegistry(launcher, allocationService,
             new FakeUnexpectedExitListener());
+        startCoordinator = new HubInstanceStartCoordinator(properties);
         lifecycle = new HubInstanceLifecycleService(
             instanceService, registry, launcher, daemon, properties,
             new FakeHubSystemSettingsService(), new ProfileSingletonCleaner(),
             new ChromeProfileFileAccessBootstrap(new ObjectMapper(), buildInfoPath),
-            new HubDispatchRegistry());
+            new HubDispatchRegistry(), startCoordinator);
         scanner = new OrphanInstanceScanner(properties, instanceService);
-        runner = new HubInstanceRuntimeApplicationRunner(lifecycle, scanner, properties);
+        runner = new HubInstanceRuntimeApplicationRunner(lifecycle, scanner, properties,
+            startCoordinator);
     }
 
     @AfterEach
@@ -84,9 +96,9 @@ class HubInstanceRuntimeApplicationRunnerTest {
         String a = seedRow("bilibili-a");
         String b = seedRow("bilibili-b");
         String c = seedRow("bilibili-c");
-        instanceService.updateState(a, fun.fengwk.openclihub.share.model.instance.HubInstanceState.RUNNING, null);
-        instanceService.updateState(b, fun.fengwk.openclihub.share.model.instance.HubInstanceState.RUNNING, null);
-        instanceService.updateState(c, fun.fengwk.openclihub.share.model.instance.HubInstanceState.RUNNING, null);
+        instanceService.updateState(a, HubInstanceState.RUNNING, null);
+        instanceService.updateState(b, HubInstanceState.RUNNING, null);
+        instanceService.updateState(c, HubInstanceState.RUNNING, null);
         daemon.setFirstWinsStrategy("ctx-a");
 
         long start = System.currentTimeMillis();
@@ -102,11 +114,11 @@ class HubInstanceRuntimeApplicationRunnerTest {
         runner.destroy();
 
         assertThat(instanceService.get(a).getState())
-            .isEqualTo(fun.fengwk.openclihub.share.model.instance.HubInstanceState.RUNNING);
+            .isEqualTo(HubInstanceState.RUNNING);
         assertThat(instanceService.get(b).getState())
-            .isEqualTo(fun.fengwk.openclihub.share.model.instance.HubInstanceState.ERROR);
+            .isEqualTo(HubInstanceState.ERROR);
         assertThat(instanceService.get(c).getState())
-            .isEqualTo(fun.fengwk.openclihub.share.model.instance.HubInstanceState.ERROR);
+            .isEqualTo(HubInstanceState.ERROR);
     }
 
     @Test
@@ -120,15 +132,102 @@ class HubInstanceRuntimeApplicationRunnerTest {
         assertThat(b.vncPort).isEqualTo(a.vncPort);
     }
 
+    /**
+     * The recovery sweep runs inside the coordinator barrier: an API create issued while the
+     * sweep is mid-flight waits, and after the sweep finishes exactly one Chrome launch per
+     * instance has happened (no duplicate runtime from the racing entry point).
+     */
+    @Test
+    void shouldKeepApiStartBehindRecoveryBarrierUntilSweepFinishes() throws Exception {
+        BlockingStartingService blocking = new BlockingStartingService();
+        instanceService = blocking;
+        lifecycle = new HubInstanceLifecycleService(
+            instanceService, registry, launcher, daemon, properties,
+            new FakeHubSystemSettingsService(), new ProfileSingletonCleaner(),
+            new ChromeProfileFileAccessBootstrap(new ObjectMapper(), buildInfoPath),
+            new HubDispatchRegistry(), startCoordinator);
+        runner = new HubInstanceRuntimeApplicationRunner(lifecycle, scanner, properties,
+            startCoordinator);
+        String recoveredId = seedRow("bilibili-recovered");
+        // Recovery consumes fetches 1-2 (snapshot + context poll); the API create consumes
+        // fetches 3-4, so its own context appears only after recovery has finished.
+        daemon.addConnectedContextAfterFetch("ctx-recovered", 2);
+        daemon.addConnectedContextAfterFetch("ctx-api", 4);
+
+        runner.run(new DefaultApplicationArguments(new String[0]));
+        assertThat(blocking.startingEntered.await(2, TimeUnit.SECONDS))
+            .as("recovery must enter the first instance start")
+            .isTrue();
+
+        ExecutorService apiExecutor = Executors.newSingleThreadExecutor();
+        try {
+            Future<HubInstance> apiCreate = apiExecutor.submit(() -> lifecycle.create(createDto("bilibili-api")));
+            Thread.sleep(100);
+            assertThat(apiCreate.isDone())
+                .as("API create must wait behind the recovery barrier")
+                .isFalse();
+
+            blocking.releaseStarting.countDown();
+            assertThat(apiCreate.get(2, TimeUnit.SECONDS).getState())
+                .isEqualTo(HubInstanceState.RUNNING);
+        } finally {
+            apiExecutor.shutdownNow();
+        }
+
+        // Wait for the sweep itself to finish before asserting global state.
+        runner.destroy();
+
+        assertThat(instanceService.get(recoveredId).getState())
+            .isEqualTo(HubInstanceState.RUNNING);
+        assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
+            .as("recovery + API create must each launch exactly one Chrome")
+            .isEqualTo(2);
+    }
+
     private String seedRow(String code) {
-        var inst = new fun.fengwk.openclihub.core.instance.service.model.HubInstance();
+        var inst = new HubInstance();
         inst.setCode(code);
         inst.setDisplayName(code);
-        inst.setWebsites(java.util.List.of("bilibili"));
+        inst.setWebsites(List.of("bilibili"));
         inst.setMaxPending(5);
-        inst.setState(fun.fengwk.openclihub.share.model.instance.HubInstanceState.STOPPED);
+        inst.setState(HubInstanceState.STOPPED);
         instanceService.create(inst);
         return inst.getId();
+    }
+
+    private static HubInstanceCreateDTO createDto(String code) {
+        HubInstanceCreateDTO dto = new HubInstanceCreateDTO();
+        dto.setCode(code);
+        dto.setDisplayName(code + " display");
+        dto.setWebsites(List.of("bilibili"));
+        dto.setMaxPending(5);
+        return dto;
+    }
+
+    /**
+     * Blocks inside the STARTING state write so tests can hold the recovery sweep mid-start
+     * while the coordinator lock is still held.
+     */
+    private static final class BlockingStartingService extends InMemoryHubInstanceService {
+
+        private final CountDownLatch startingEntered = new CountDownLatch(1);
+        private final CountDownLatch releaseStarting = new CountDownLatch(1);
+
+        @Override
+        public void updateState(String id, HubInstanceState newState, String errorMessage) {
+            if (newState == HubInstanceState.STARTING) {
+                startingEntered.countDown();
+                try {
+                    if (!releaseStarting.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("timed out waiting for test release");
+                    }
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("test wait interrupted", ex);
+                }
+            }
+            super.updateState(id, newState, errorMessage);
+        }
     }
 
     private static void deleteRecursively(Path root) throws IOException {

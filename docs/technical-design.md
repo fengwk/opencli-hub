@@ -1154,6 +1154,22 @@ load all instances order by gmt_create asc, id asc
 - 多个新增：`CONTEXT_ID_AMBIGUOUS`；
 - 已占用：`CONTEXT_ID_CONFLICT`。
 
+### 17.4 统一启动协调与恢复屏障
+
+所有启动路径（API `create` / `start` / `restart`、启动恢复 sweep、孤儿扫描）通过同一个
+`HubInstanceStartCoordinator` 协调：
+
+- 一把全局公平启动锁串行化所有启动。daemon restart、context 快照与唯一新 ID 发现因此
+  永不重叠，替换了原先分散的全局 create 锁与 daemon ensure 锁；
+- 启动恢复 sweep（orphan scan → 状态归一 → 逐实例启动）全程持有该锁作为恢复屏障；
+- 恢复期间到达的 API 启动请求在屏障前等待，上限为
+  `runtime.recovery-barrier-timeout-millis`（默认 60000ms，env
+  `OPENCLI_HUB_RECOVERY_BARRIER_TIMEOUT_MILLIS`）。等待超时返回
+  `INSTANCE_START_RECOVERY_IN_PROGRESS`（恢复仍持锁）或 `INSTANCE_BUSY`（其他 API 启动
+  持锁）；等待被中断时返回 `INSTANCE_START_FAILED` 并保留中断标志；
+- 锁序恒为 coordinator 锁 → 每实例 lifecycle 锁，stop/delete/update 只取每实例锁，
+  不会死锁。
+
 ## 18. Instance 停止、重启和删除
 
 ### 18.1 停止

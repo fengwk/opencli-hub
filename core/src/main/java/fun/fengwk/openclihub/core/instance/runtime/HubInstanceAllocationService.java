@@ -88,14 +88,6 @@ public class HubInstanceAllocationService {
         reservedVncPorts.remove(allocation.vncPort);
     }
 
-    /** Backward-compatible helper: unpack a runtime and release its allocation. */
-    public void release(HubInstanceRuntime runtime) {
-        if (runtime == null) {
-            return;
-        }
-        release(new Allocation(runtime.getDisplayNumber(), runtime.getVncPort()));
-    }
-
     private int nextDisplayNumber() {
         int base = Math.max(0, runtimeProps.getDisplayBase());
         int upper = base + 1024;

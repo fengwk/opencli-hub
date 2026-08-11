@@ -126,7 +126,7 @@ class OpenCliSessionLeaseRecoveryServiceTest {
             }
 
             @Override
-            public OpenCliDaemonCommandResponse bindActiveTab(String contextId) {
+            public OpenCliDaemonCommandResponse bindActiveTab(String contextId, String session) {
                 throw new AssertionError("bind must not be called");
             }
 

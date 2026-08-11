@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -58,6 +59,7 @@ class HubInstanceLifecycleServiceTest {
     private OpenCliHubProperties properties;
     private FakeHubSystemSettingsService settingsService;
     private HubDispatchRegistry dispatchRegistry;
+    private HubInstanceStartCoordinator startCoordinator;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -83,10 +85,8 @@ class HubInstanceLifecycleServiceTest {
         registry = new HubInstanceRuntimeRegistry(launcher, allocationService, watcher);
         settingsService = new FakeHubSystemSettingsService();
         dispatchRegistry = new HubDispatchRegistry();
-        lifecycle = new HubInstanceLifecycleService(
-            instanceService, registry, launcher, daemon, properties, settingsService,
-            new ProfileSingletonCleaner(), newChromeBootstrap(),
-            dispatchRegistry);
+        startCoordinator = new HubInstanceStartCoordinator(properties);
+        lifecycle = newLifecycle();
     }
 
     private static void cleanupX11BaseRange(int base) {
@@ -732,6 +732,9 @@ class HubInstanceLifecycleServiceTest {
         lifecycle.bindActiveTab(id);
 
         assertThat(daemon.bindContextIds()).containsExactly("ctx-bind-success");
+        assertThat(daemon.bindSessions())
+            .as("the endpoint must bind the fixed chatgpt-agent adapter session")
+            .containsExactly(HubInstanceLifecycleService.CHATGPT_AGENT_ADAPTER_SESSION);
     }
 
     @Test
@@ -867,10 +870,7 @@ class HubInstanceLifecycleServiceTest {
             // Wait for the dispatched task to actually be running.
             assertThat(taskStarted.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             sleepQuietly(50);
-            HubInstanceLifecycleService busyLifecycle = new HubInstanceLifecycleService(
-                instanceService, registry, launcher, daemon, properties, settingsService,
-                new ProfileSingletonCleaner(), newChromeBootstrap(),
-                dispatcher);
+            HubInstanceLifecycleService busyLifecycle = newLifecycle(instanceService, dispatcher);
             assertThatThrownBy(() -> busyLifecycle.delete(id))
                 .isInstanceOf(ThrowableConventionErrorCode.class)
                 .extracting("code")
@@ -988,6 +988,195 @@ class HubInstanceLifecycleServiceTest {
         assertThat(registry.contains(a)).isTrue();
         assertThat(registry.contains(b)).isFalse();
         assertThat(registry.contains(c)).isFalse();
+    }
+
+    /**
+     * The recovery sweep holds the coordinator barrier: an API start issued while the sweep
+     * is mid-flight waits, then runs after the sweep — and both entry points together launch
+     * exactly one Chrome per instance.
+     */
+    @Test
+    void shouldHoldApiStartBehindRecoveryBarrierUntilSweepFinishes() throws Exception {
+        BlockingUpdateStateService blocking = new BlockingUpdateStateService();
+        useInstanceService(blocking, new HubDispatchRegistry());
+        String recoveredId = seedPersistedInstance("bilibili-recovered", null);
+        String apiId = seedPersistedInstance("bilibili-api", null);
+        // Recovery consumes fetches 1-2 (snapshot + context poll); the API start consumes
+        // fetches 3-4, so its own context appears only after recovery has finished.
+        daemon.addConnectedContextAfterFetch("ctx-recovered", 2);
+        daemon.addConnectedContextAfterFetch("ctx-api", 4);
+
+        ExecutorService recoveryExecutor = Executors.newSingleThreadExecutor();
+        ExecutorService apiExecutor = Executors.newSingleThreadExecutor();
+        try {
+            Future<Void> recovery = recoveryExecutor.submit(() -> {
+                startCoordinator.runRecovery(() -> {
+                    // Recover only the blocked instance; the API instance must not be
+                    // touched by the sweep so the API start exercises the barrier itself.
+                    lifecycle.recoverAll(List.of(instanceService.get(recoveredId)));
+                    return null;
+                });
+                return null;
+            });
+            assertThat(blocking.startingUpdateEntered.await(2, TimeUnit.SECONDS))
+                .as("recovery must enter the first instance start")
+                .isTrue();
+
+            Future<HubInstance> apiStart = apiExecutor.submit(() -> lifecycle.start(apiId));
+            Thread.sleep(100);
+            assertThat(apiStart.isDone())
+                .as("API start must wait behind the recovery barrier")
+                .isFalse();
+            assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
+                .as("no Chrome may launch while recovery is blocked before its first start")
+                .isZero();
+
+            blocking.releaseStartingUpdate.countDown();
+            assertThat(apiStart.get(2, TimeUnit.SECONDS).getState())
+                .isEqualTo(HubInstanceState.RUNNING);
+            recovery.get(2, TimeUnit.SECONDS);
+        } finally {
+            blocking.releaseStartingUpdate.countDown();
+            recoveryExecutor.shutdownNow();
+            apiExecutor.shutdownNow();
+        }
+
+        assertThat(instanceService.get(recoveredId).getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(instanceService.get(apiId).getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
+            .as("recovery + API start must each launch exactly one Chrome")
+            .isEqualTo(2);
+    }
+
+    /**
+     * Concurrent API starts of the same instance must never launch a duplicate runtime: the
+     * coordinator serialises them and the per-instance lock makes the loser fail with
+     * INSTANCE_BUSY before touching any process.
+     */
+    @Test
+    void shouldNotLaunchDuplicateRuntimeForConcurrentStartsOfSameInstance() throws Exception {
+        String id = seedPersistedInstance("bilibili-concurrent-start", null);
+        daemon.addConnectedContextAfterFetch("ctx-concurrent-start", 2);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<HubInstance> first = executor.submit(() -> lifecycle.start(id));
+            Future<HubInstance> second = executor.submit(() -> lifecycle.start(id));
+
+            HubInstance winner = null;
+            RuntimeException loser = null;
+            for (Future<HubInstance> future : List.of(first, second)) {
+                try {
+                    HubInstance result = future.get(3, TimeUnit.SECONDS);
+                    assertThat(winner).as("only one concurrent start may win").isNull();
+                    winner = result;
+                } catch (ExecutionException ex) {
+                    assertThat(loser).as("only one concurrent start may lose").isNull();
+                    loser = (RuntimeException) ex.getCause();
+                }
+            }
+            assertThat(winner).isNotNull();
+            assertThat(winner.getState()).isEqualTo(HubInstanceState.RUNNING);
+            assertThat(loser).isNotNull();
+            assertThat(loser).isInstanceOf(ThrowableConventionErrorCode.class)
+                .extracting("code")
+                .isEqualTo(prefixed(HubErrorCodes.INSTANCE_BUSY));
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
+            .as("the losing start must not launch a second Chrome")
+            .isEqualTo(1);
+        assertThat(registry.get(id)).isNotNull();
+    }
+
+    /**
+     * Concurrent API starts of different instances are globally serialised so daemon context
+     * discovery never overlaps: both succeed with their own unique context and exactly one
+     * Chrome launch each.
+     */
+    @Test
+    void shouldSerializeConcurrentStartsOfDifferentInstances() throws Exception {
+        String a = seedPersistedInstance("bilibili-concurrent-a", null);
+        String b = seedPersistedInstance("bilibili-concurrent-b", null);
+        // Whichever start wins the lock consumes fetches 1-2, the other fetches 3-4.
+        daemon.addConnectedContextAfterFetch("ctx-concurrent-a", 2);
+        daemon.addConnectedContextAfterFetch("ctx-concurrent-b", 4);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<HubInstance> first = executor.submit(() -> lifecycle.start(a));
+            Future<HubInstance> second = executor.submit(() -> lifecycle.start(b));
+            assertThat(first.get(3, TimeUnit.SECONDS).getState()).isEqualTo(HubInstanceState.RUNNING);
+            assertThat(second.get(3, TimeUnit.SECONDS).getState()).isEqualTo(HubInstanceState.RUNNING);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
+            .as("two serialised starts must launch exactly two Chromes")
+            .isEqualTo(2);
+        assertThat(instanceService.get(a).getContextId()).isEqualTo("ctx-concurrent-a");
+        assertThat(instanceService.get(b).getContextId()).isEqualTo("ctx-concurrent-b");
+    }
+
+    /** Concurrent restarts of the same instance are serialised; each restart launches Chrome once. */
+    @Test
+    void shouldSerializeConcurrentRestarts() throws Exception {
+        String id = seedPersistedInstance("bilibili-restart-race", "ctx-restart-race");
+        daemon.addConnectedContextAfterFetch("ctx-restart-race", 2);
+        lifecycle.start(id);
+        assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME)).isEqualTo(1);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Void> first = executor.submit(() -> {
+                lifecycle.restart(id);
+                return null;
+            });
+            Future<Void> second = executor.submit(() -> {
+                lifecycle.restart(id);
+                return null;
+            });
+            first.get(3, TimeUnit.SECONDS);
+            second.get(3, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(instanceService.get(id).getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(registry.get(id)).isNotNull();
+        assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
+            .as("initial start + one Chrome per restart")
+            .isEqualTo(3);
+    }
+
+    /**
+     * A failed start rolls back completely (ERROR state, no runtime, no leftover process) and
+     * the same instance can be started again afterwards.
+     */
+    @Test
+    void shouldRetryStartAfterFailureRollback() throws Exception {
+        String id = seedPersistedInstance("bilibili-retry", "ctx-retry");
+        launcher.failNextLaunch(HubInstanceRuntime.HubInstanceProcessKind.CHROME);
+
+        assertThatThrownBy(() -> lifecycle.start(id))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_START_FAILED));
+        assertThat(instanceService.get(id).getState()).isEqualTo(HubInstanceState.ERROR);
+        assertThat(registry.get(id)).isNull();
+        assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME)).isEqualTo(1);
+
+        daemon.addConnectedContextAfterFetch("ctx-retry", 2);
+        HubInstance restarted = lifecycle.start(id);
+        assertThat(restarted.getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(restarted.getContextId()).isEqualTo("ctx-retry");
+        assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
+            .as("retry must launch exactly one more Chrome")
+            .isEqualTo(2);
+        assertThat(registry.get(id)).isNotNull();
     }
 
     // ---------------------------------------------------------------------------------
@@ -1159,10 +1348,19 @@ class HubInstanceLifecycleServiceTest {
         HubDispatchRegistry newDispatchRegistry) {
         instanceService = service;
         dispatchRegistry = newDispatchRegistry;
-        lifecycle = new HubInstanceLifecycleService(
-            instanceService, registry, launcher, daemon, properties, settingsService,
+        lifecycle = newLifecycle();
+    }
+
+    private HubInstanceLifecycleService newLifecycle() {
+        return newLifecycle(instanceService, dispatchRegistry);
+    }
+
+    private HubInstanceLifecycleService newLifecycle(InMemoryHubInstanceService service,
+        HubDispatchRegistry newDispatchRegistry) {
+        return new HubInstanceLifecycleService(
+            service, registry, launcher, daemon, properties, settingsService,
             new ProfileSingletonCleaner(), newChromeBootstrap(),
-            dispatchRegistry);
+            newDispatchRegistry, startCoordinator);
     }
 
     private OpenCliProfileSnapshot connectedProfile(String contextId) {
