@@ -25,7 +25,7 @@
 - 服务启动后顺序拉起数据库中的全部 Instance；
 - 基于网站、Instance 状态和队列负载的命令路由；
 - 每个 Instance 同时最多执行一个 OpenCLI 命令；
-- 同步 OpenCLI Execute API；
+- 异步 OpenCLI Execute API：submit 返回 202 + PENDING，客户端轮询终态，PENDING 可取消；
 - Command Catalog 加载、参数校验、命令黑名单和输出资源规则；
 - 资源上传、OpenCLI 输出收集、在线预览、下载和管理员手工删除；
 - Java WebSocket 到本地 VNC TCP 的代理；
@@ -46,8 +46,7 @@
 - Hub 内的用户、认证、授权、JWT、Session 或角色系统；
 - 资源自动过期和定时删除；
 - 日志 Elasticsearch、Loki、SSE 或 WebSocket 实时流；
-- Instance 软删除、回收站和 Profile 恢复；
-- 异步 Execute API。
+- Instance 软删除、回收站和 Profile 恢复。
 
 ## 3. 已确认设计决策
 
@@ -69,7 +68,7 @@
 | 命令开放 | website browser commands 默认允许，使用黑名单禁用 |
 | 参数开放 | 只允许 Command Catalog 声明的业务参数；OpenCLI 控制参数由 Hub 独占 |
 | 持久页面 | 遵循 OpenCLI `siteSession`；后续请求用显式 `instanceId` 保持 affinity |
-| 执行模式 | 同步 Execute API |
+| 执行模式 | 异步 Execute API：submit 返回 HTTP 202 + PENDING DTO，客户端轮询终态，PENDING 可取消 |
 | 超时 | API `timeoutMillis` 控制端到端排队和执行 deadline；默认 10 分钟，最大 30 分钟 |
 | HTTP 断开 | 已开始的任务继续执行到完成或业务 deadline，不自动重试 |
 | 资源 | 每日目录；上传和执行输出用资源组命名区分；管理员手工删除 |
@@ -1339,9 +1338,11 @@ Persistent 指定 Instance 不可用时直接失败，不允许 failover 或重�
 
 同一 Instance 的同一网站 persistent tab 可能被多个调用方共享。MVP 约定需要独立上下文的调用方使用独立 Instance；不修改 OpenCLI session key。
 
-## 22. 同步 Execution
+## 22. 异步 Execution
 
 ### 22.1 流程
+
+执行采用异步 submit/poll 契约：
 
 ```mermaid
 sequenceDiagram
@@ -1353,17 +1354,25 @@ sequenceDiagram
     participant OpenCLI
     participant DB
 
-    Client->>Service: execute(argv, instanceId?, timeoutMillis?)
+    Client->>Service: submit(argv, instanceId?, timeoutMillis?)
     Service->>Catalog: validate and normalize
     Service->>Router: choose instance
     Service->>DB: insert PENDING execution
-    Service->>Dispatcher: submit with deadline
-    Dispatcher->>DB: update RUNNING
+    Service->>Dispatcher: submit with deadline + discard callback
+    Service-->>Client: HTTP 202 + PENDING Execution DTO
+    Dispatcher->>DB: CAS PENDING->RUNNING
     Dispatcher->>OpenCLI: ProcessBuilder
     OpenCLI-->>Dispatcher: exit/stdout/stderr
     Dispatcher->>DB: update terminal status
+    Client->>Service: GET /api/executions/{id}?waitSeconds=N (long-poll)
     Service-->>Client: terminal Execution DTO
 ```
+
+- `POST /api/opencli/execute` 只做验证、持久化 PENDING 和入队，然后立即返回 **HTTP 202 Accepted**，body 为 PENDING 状态的 Execution DTO（含 `executionId`）；
+- 客户端轮询 `GET /api/executions/{id}?waitSeconds=N`（N 最大 120，long-poll 直到终态或超时）获取终态结果；
+- 排队期间可调用 `POST /api/executions/{id}/cancel` 取消（仅 PENDING 可取消；RUNNING 返回 `EXECUTION_NOT_CANCELLABLE`）。
+
+所有 Execution 状态迁移（PENDING→RUNNING、PENDING→CANCELLED、PENDING→终态）都通过应用 Service 的 Repository CAS 完成；Dispatcher/Registry 只管理调度句柄和队列。当排队中的任务因 clear queue、强制 shutdown 或取消被丢弃时，dispatcher 通过 discard 回调通知 Service，Service 以 CAS PENDING→CANCELLED 持久化，因此清理后不会残留 DB PENDING 行。
 
 ### 22.2 Deadline
 
@@ -1419,7 +1428,13 @@ opencli
 
 请求、路由、校验失败使用明确 4xx/429。
 
-一旦 Execution 已创建并实际进入执行流程，HTTP 正常返回终态 DTO，即使状态是 `FAILED` 或 `TIMED_OUT`；调用方以 `status` 判断命令结果，避免丢失 executionId、stderr 和资源信息。
+`POST /api/opencli/execute` 在 Execution 已持久化 PENDING 并成功入队后返回 **HTTP 202 Accepted**，body 为 PENDING 状态的 Execution DTO（含 `executionId`）；即使后续执行以 `FAILED` 或 `TIMED_OUT` 结束，submit 本身仍是成功的 202。HTTP 客户端注意事项：
+
+- 202 是"已接受"而非"已完成"，客户端必须继续轮询 `GET /api/executions/{id}?waitSeconds=N`（或调用 cancel）获取终态；
+- 202 属于 2xx，`curl --fail` 等按成功处理的客户端不会报错；
+- Gateway/代理若把 202 当作异常状态拦截，需要放行 202 并保持足够长的响应超时覆盖排队和执行时间。
+
+取消语义：`POST /api/executions/{id}/cancel` 仅对 PENDING 生效（CAS PENDING→CANCELLED），成功后返回 CANCELLED DTO 并同步释放 dispatcher 队列句柄；RUNNING 或已终态返回对应错误或终态 DTO。clear-queue 和强制 shutdown 丢弃的排队任务同样持久化为 CANCELLED，不会残留 DB PENDING。
 
 ## 23. 资源中心
 

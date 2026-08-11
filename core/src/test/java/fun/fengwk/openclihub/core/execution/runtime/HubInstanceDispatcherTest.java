@@ -615,4 +615,117 @@ class HubInstanceDispatcherTest {
         }
     }
 
+    /**
+     * clearPending cancels queued tasks and notifies each discard owner exactly once;
+     * a repeated clear sees an empty queue and never re-notifies.
+     */
+    @Test
+    void shouldNotifyDiscardOwnerExactlyOnceWhenQueueCleared() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("clear-notify", 4);
+        CountDownLatch activeStarted = new CountDownLatch(1);
+        CountDownLatch releaseActive = new CountDownLatch(1);
+        AtomicInteger discards = new AtomicInteger();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        try {
+            dispatcher.submit(() -> {
+                activeStarted.countDown();
+                releaseActive.await(5, TimeUnit.SECONDS);
+                return "active";
+            }, deadline);
+            assertThat(activeStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            Future<String> first = dispatcher.submit(
+                "e1", () -> "first", deadline, discards::incrementAndGet);
+            Future<String> second = dispatcher.submit(
+                "e2", () -> "second", deadline, discards::incrementAndGet);
+            assertThat(dispatcher.pendingCount()).isEqualTo(2);
+
+            assertThat(dispatcher.clearPending()).isEqualTo(2);
+            assertThat(discards.get()).isEqualTo(2);
+            assertThat(first.isCancelled()).isTrue();
+            assertThat(second.isCancelled()).isTrue();
+            assertThat(dispatcher.pendingCount()).isZero();
+
+            // A second clear has nothing to drop and must not re-notify.
+            assertThat(dispatcher.clearPending()).isZero();
+            assertThat(discards.get()).isEqualTo(2);
+        } finally {
+            releaseActive.countDown();
+            dispatcher.shutdownNow();
+        }
+    }
+
+    /**
+     * Force shutdown drops queued tasks and notifies their discard owners once.
+     */
+    @Test
+    void shouldNotifyDiscardOwnerOnForcedShutdown() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("shutdown-notify", 2);
+        CountDownLatch activeStarted = new CountDownLatch(1);
+        CountDownLatch releaseActive = new CountDownLatch(1);
+        AtomicInteger discards = new AtomicInteger();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        try {
+            dispatcher.submit(() -> {
+                activeStarted.countDown();
+                try {
+                    releaseActive.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                }
+                return "active";
+            }, deadline);
+            assertThat(activeStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            Future<String> pending = dispatcher.submit(
+                "e9", () -> "pending", deadline, discards::incrementAndGet);
+
+            dispatcher.shutdownNow();
+            assertThat(discards.get()).isEqualTo(1);
+            assertThat(pending.isCancelled()).isTrue();
+        } finally {
+            releaseActive.countDown();
+        }
+    }
+
+    /**
+     * cancelPending finds and cancels exactly the matching queued handle, releasing the
+     * slot and notifying the owner; unknown or already-cancelled ids are no-ops.
+     */
+    @Test
+    void shouldCancelSinglePendingTaskByExecutionId() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("cancel-one", 4);
+        CountDownLatch activeStarted = new CountDownLatch(1);
+        CountDownLatch releaseActive = new CountDownLatch(1);
+        AtomicInteger discards = new AtomicInteger();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        try {
+            dispatcher.submit(() -> {
+                activeStarted.countDown();
+                releaseActive.await(5, TimeUnit.SECONDS);
+                return "active";
+            }, deadline);
+            assertThat(activeStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            Future<String> target = dispatcher.submit(
+                "t1", () -> "target", deadline, discards::incrementAndGet);
+            Future<String> other = dispatcher.submit(
+                "t2", () -> "other", deadline, discards::incrementAndGet);
+            assertThat(dispatcher.pendingCount()).isEqualTo(2);
+
+            assertThat(dispatcher.cancelPending("t1")).isTrue();
+            assertThat(target.isCancelled()).isTrue();
+            assertThat(other.isCancelled()).isFalse();
+            assertThat(dispatcher.pendingCount()).isEqualTo(1);
+            assertThat(discards.get()).isEqualTo(1);
+
+            // The handle is gone and unknown ids never notify.
+            assertThat(dispatcher.cancelPending("t1")).isFalse();
+            assertThat(dispatcher.cancelPending("unknown")).isFalse();
+            assertThat(discards.get()).isEqualTo(1);
+        } finally {
+            releaseActive.countDown();
+            dispatcher.shutdownNow();
+        }
+    }
+
 }

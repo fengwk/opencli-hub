@@ -250,13 +250,18 @@ export INSTANCE_ID='<instance-id>'
 curl --fail --show-error "$HUB_URL/api/instances/$INSTANCE_ID/vnc/status"
 curl --fail --show-error --request POST "$HUB_URL/api/instances/$INSTANCE_ID/restart"
 # 示例命令必须存在于当前 Catalog，且 Instance 已完成网站登录。
+# submit 返回 HTTP 202 Accepted，body 为 PENDING 状态 DTO（含 executionId）。
 curl --fail --show-error --request POST "$HUB_URL/api/opencli/execute" \
   --header 'Content-Type: application/json' \
   --data "{\"instanceId\":\"$INSTANCE_ID\",\"argv\":[\"bilibili\",\"hot\",\"--limit\",\"5\"],\"timeoutMillis\":60000}"
+# 用返回的 executionId 轮询终态；waitSeconds 最大 120，服务端 long-poll 至终态或超时。
+curl --fail --show-error "$HUB_URL/api/executions/$EXECUTION_ID?waitSeconds=30"
+# 排队期间可取消（仅 PENDING 可取消）。
+curl --fail --show-error --request POST "$HUB_URL/api/executions/$EXECUTION_ID/cancel"
 curl --fail --show-error "$HUB_URL/api/executions?instanceId=$INSTANCE_ID&pageNumber=1&pageSize=20"
 ```
 
-`POST /api/opencli/execute` 是同步接口。客户端或 Gateway 断开连接不会取消已被 Hub 接受的任务；Gateway timeout 应覆盖业务所需的排队和执行时间。
+`POST /api/opencli/execute` 是异步接口：立即返回 HTTP 202 Accepted，body 为 PENDING 状态的 Execution DTO（含 `executionId`），客户端必须轮询 `GET /api/executions/{id}?waitSeconds=N`（N 最大 120，long-poll 直到终态或超时）获取终态结果，或在排队期间调用 `POST /api/executions/{id}/cancel` 取消（仅 PENDING 可取消，RUNNING 返回 `EXECUTION_NOT_CANCELLABLE`）。客户端或 Gateway 断开连接不会取消已被 Hub 接受的任务；任务会继续到完成或 deadline。HTTP 客户端需把 202 视为提交成功并继续轮询（`curl --fail` 对 2xx 均视为成功），Gateway timeout 应覆盖业务所需的排队和执行时间。
 
 ### VNC、日志、资源与代理
 

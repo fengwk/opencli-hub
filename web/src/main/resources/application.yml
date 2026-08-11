@@ -7,6 +7,17 @@ spring:
       request-timeout: 1860000
     converters:
       preferred-json-mapper: jackson
+  task:
+    execution:
+      # Bounded pool for async execute workers; queue absorbs bursts, overflow fails fast
+      # (TaskExecutionAutoConfiguration's applicationTaskExecutor).
+      pool:
+        core-size: 8
+        max-size: 64
+        queue-capacity: 256
+        keep-alive: 60s
+        allow-core-thread-timeout: true
+      thread-name-prefix: hub-execute-
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://${OPENCLI_HUB_MYSQL_HOST:127.0.0.1}:${OPENCLI_HUB_MYSQL_PORT:3306}/${OPENCLI_HUB_MYSQL_DATABASE:opencli_hub}?useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&connectTimeout=3000&socketTimeout=3000&useSSL=false&allowPublicKeyRetrieval=true&defaultAuthenticationPlugin=mysql_native_password

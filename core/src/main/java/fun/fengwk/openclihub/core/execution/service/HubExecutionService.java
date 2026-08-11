@@ -128,26 +128,34 @@ public class HubExecutionService {
         try {
             // Enqueue without FutureTask-level deadline abort (that would complete the Future
             // exceptionally without our terminal DB write). Worker checks deadline itself.
-            dispatchRegistry.submit(instance, () -> {
-                try {
-                    if (System.nanoTime() >= deadline.deadlineNanos()) {
-                        terminalAfterDispatchFailure(
-                            executionId,
-                            HubErrorCodes.QUEUE_WAIT_TIMEOUT.asThrowable(
-                                "Execution deadline elapsed while queued"));
-                        return null;
+            // onQueuedDiscard persists CANCELLED when the queue handle is discarded before
+            // running (clear queue, force shutdown, client cancel) so a dropped handle can
+            // never leave the DB row PENDING.
+            dispatchRegistry.submit(
+                instance,
+                executionId,
+                () -> {
+                    try {
+                        if (System.nanoTime() >= deadline.deadlineNanos()) {
+                            terminalAfterDispatchFailure(
+                                executionId,
+                                HubErrorCodes.QUEUE_WAIT_TIMEOUT.asThrowable(
+                                    "Execution deadline elapsed while queued"));
+                            return null;
+                        }
+                        runOnInstance(executionId, instance, normalized, outputRule, deadline);
+                    } catch (RuntimeException ex) {
+                        if (isError(ex, HubErrorCodes.EXECUTION_PERSIST_FAILED)) {
+                            log.error("Execution persist failed in worker id={}", executionId, ex);
+                        } else {
+                            log.warn("Execution worker failed id={} error={}", executionId, ex.getMessage());
+                            terminalAfterDispatchFailure(executionId, ex);
+                        }
                     }
-                    runOnInstance(executionId, instance, normalized, outputRule, deadline);
-                } catch (RuntimeException ex) {
-                    if (isError(ex, HubErrorCodes.EXECUTION_PERSIST_FAILED)) {
-                        log.error("Execution persist failed in worker id={}", executionId, ex);
-                    } else {
-                        log.warn("Execution worker failed id={} error={}", executionId, ex.getMessage());
-                        terminalAfterDispatchFailure(executionId, ex);
-                    }
-                }
-                return null;
-            }, Long.MAX_VALUE);
+                    return null;
+                },
+                Long.MAX_VALUE,
+                () -> persistQueuedTaskDiscard(executionId));
         } catch (RuntimeException ex) {
             if (isError(ex, HubErrorCodes.EXECUTION_PERSIST_FAILED)) {
                 throw ex;
@@ -220,7 +228,9 @@ public class HubExecutionService {
     }
 
     /**
-     * Cancel a still-queued execution by CAS PENDING → CANCELLED.
+     * Cancel a still-queued execution by CAS PENDING → CANCELLED, then release the
+     * matching dispatcher queue handle so the slot frees immediately and the worker
+     * never attempts a doomed PENDING→RUNNING CAS.
      */
     public HubExecutionDTO cancel(String id) {
         if (!HubIds.isSupported(id)) {
@@ -230,6 +240,9 @@ public class HubExecutionService {
         if (executionRepository.markCancelledIfPending(id, "Cancelled by client", now)) {
             log.info("Execution cancelled id={}", id);
             HubExecution cancelled = executionRepository.findById(id);
+            if (cancelled != null) {
+                dispatchRegistry.cancelPending(cancelled.getInstanceId(), id);
+            }
             return converter.toDTO(cancelled, List.of());
         }
         HubExecution execution = executionRepository.findById(id);
@@ -242,6 +255,28 @@ public class HubExecutionService {
         // RUNNING (or unexpected non-pending)
         throw HubErrorCodes.EXECUTION_NOT_CANCELLABLE.asThrowable(
             "Execution is " + execution.getStatus() + " and cannot be cancelled");
+    }
+
+    /**
+     * Persists a CANCELLED terminal state for an execution whose queue handle was
+     * discarded before it could run (instance queue cleared, dispatcher force-shutdown,
+     * or client cancel). Invoked from the dispatcher under its submit lock; must never
+     * throw so queue-clear/shutdown callers are not broken by a persistence failure.
+     * CAS semantics keep the write idempotent against a concurrent cancel or a worker
+     * that already won PENDING→RUNNING.
+     */
+    private void persistQueuedTaskDiscard(String executionId) {
+        try {
+            if (executionRepository.markCancelledIfPending(
+                executionId,
+                "Cancelled because the task was discarded from the instance queue",
+                LocalDateTime.now())) {
+                log.info("Execution cancelled after queue discard id={}", executionId);
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Failed to persist queue-discard cancellation id={} error={}",
+                executionId, ex.getMessage());
+        }
     }
 
     private void runOnInstance(

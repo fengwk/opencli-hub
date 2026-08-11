@@ -10,6 +10,7 @@ import fun.fengwk.openclihub.share.model.execution.HubExecutionDTO;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionRequestDTO;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,9 +19,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * OpenCLI execution API (scheme B):
+ * OpenCLI execution API (async submit/poll):
  * <ul>
- *   <li>{@code POST /api/opencli/execute} — accept work, return PENDING id immediately,</li>
+ *   <li>{@code POST /api/opencli/execute} — accept work, HTTP 202 with PENDING id immediately,</li>
  *   <li>{@code GET /api/executions/{id}?waitSeconds=N} — optional long-poll,</li>
  *   <li>{@code POST /api/executions/{id}/cancel} — cancel while still PENDING.</li>
  * </ul>
@@ -34,12 +35,14 @@ public class HubExecutionController {
     private final HubExecutionService executionService;
 
     /**
-     * Submit an execution. Returns as soon as the row is PENDING and work is enqueued.
-     * Poll {@code GET /api/executions/{id}} (optionally with {@code waitSeconds}) for the terminal result.
+     * Submit an execution. Returns as soon as the row is PENDING and work is enqueued,
+     * with HTTP 202 Accepted so clients treat acceptance as asynchronous. Poll
+     * {@code GET /api/executions/{id}} (optionally with {@code waitSeconds}) for the terminal result.
      */
     @PostMapping("/api/opencli/execute")
-    public Result<HubExecutionDTO> execute(@Valid @RequestBody HubExecutionRequestDTO request) {
-        return Results.ok(executionService.submit(request));
+    public ResponseEntity<Result<HubExecutionDTO>> execute(
+        @Valid @RequestBody HubExecutionRequestDTO request) {
+        return ResponseEntity.accepted().body(Results.ok(executionService.submit(request)));
     }
 
     @GetMapping("/api/executions")

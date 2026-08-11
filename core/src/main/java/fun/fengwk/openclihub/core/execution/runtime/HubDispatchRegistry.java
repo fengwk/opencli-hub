@@ -59,12 +59,26 @@ public class HubDispatchRegistry {
     public <T> Future<T> submit(HubInstance instance,
                                 Callable<T> task,
                                 long deadlineNanos) {
+        return submit(instance, null, task, deadlineNanos, null);
+    }
+
+    /**
+     * Submit with an owning {@code executionId} and a one-shot {@code onQueuedDiscard}
+     * callback fired when the queued task is discarded before running (queue clear,
+     * force shutdown, cancel). The execution service uses the callback to persist the
+     * execution CANCELLED; the registry itself never touches execution persistence.
+     */
+    public <T> Future<T> submit(HubInstance instance,
+                                String executionId,
+                                Callable<T> task,
+                                long deadlineNanos,
+                                Runnable onQueuedDiscard) {
         HubInstanceDispatcher dispatcher = dispatchers.get(instance.getId());
         if (dispatcher == null) {
             throw HubErrorCodes.INSTANCE_RUNTIME_NOT_FOUND
                 .asThrowable("Instance dispatcher is not registered: " + instance.getId());
         }
-        return dispatcher.submit(task, deadlineNanos);
+        return dispatcher.submit(executionId, task, deadlineNanos, onQueuedDiscard);
     }
 
     /**
@@ -102,7 +116,8 @@ public class HubDispatchRegistry {
 
     /**
      * Cancel all pending (not running) tasks for an instance. Returns 0 when no
-     * dispatcher is registered.
+     * dispatcher is registered. Each discarded task notifies its execution owner so
+     * the DB rows are persisted CANCELLED.
      */
     public int clearPending(String instanceId) {
         HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
@@ -110,6 +125,19 @@ public class HubDispatchRegistry {
             return 0;
         }
         return dispatcher.clearPending();
+    }
+
+    /**
+     * Cancel a single still-queued execution handle. Returns {@code false} when the
+     * dispatcher is not registered or the execution is not queued (running/completed);
+     * the DB row must already be terminal in those cases.
+     */
+    public boolean cancelPending(String instanceId, String executionId) {
+        HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
+        if (dispatcher == null) {
+            return false;
+        }
+        return dispatcher.cancelPending(executionId);
     }
 
     public void updateMaxPending(String instanceId, int maxPending) {

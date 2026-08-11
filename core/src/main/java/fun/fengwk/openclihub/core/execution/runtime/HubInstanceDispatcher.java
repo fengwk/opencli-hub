@@ -14,9 +14,10 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.function.BooleanSupplier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
 
 /**
  * Single-threaded bounded execution queue for one instance. Mirrors the design contract in
@@ -128,7 +129,19 @@ public class HubInstanceDispatcher {
      * and {@link HubErrorCodes#CLIENT_DISCONNECTED} is thrown so opencli never starts.
      */
     public <T> T dispatch(Callable<T> task, long deadlineNanos, BooleanSupplier stillWanted) {
-        Future<T> future = submit(task, deadlineNanos, stillWanted);
+        if (task == null) {
+            throw new IllegalArgumentException("task must not be null");
+        }
+        // Preserve the worker-side liveness check of the legacy dispatch path: the body
+        // must never start once the client is gone, even if await() has not polled yet.
+        Callable<T> guarded = () -> {
+            if (stillWanted != null && !stillWanted.getAsBoolean()) {
+                throw HubErrorCodes.CLIENT_DISCONNECTED.asThrowable(
+                    "Client disconnected before execution started");
+            }
+            return task.call();
+        };
+        Future<T> future = submit(null, guarded, deadlineNanos, null);
         return await(future, stillWanted);
     }
 
@@ -148,10 +161,33 @@ public class HubInstanceDispatcher {
      * </ol>
      */
     public <T> Future<T> submit(Callable<T> task, long deadlineNanos) {
-        return submit(task, deadlineNanos, null);
+        return submit(null, task, deadlineNanos, null);
     }
 
-    public <T> Future<T> submit(Callable<T> task, long deadlineNanos, BooleanSupplier stillWanted) {
+    /**
+     * Submit {@code task} to the underlying executor without blocking the caller, associating
+     * it with the owning {@code executionId} (may be {@code null} for non-execution tasks).
+     *
+     * <p>When a not-yet-running task is discarded — queue clear, force shutdown, queued
+     * cancel, or client-disconnect cancel — {@code onQueuedDiscard} (may be {@code null})
+     * is invoked exactly once. The execution service uses this callback to persist the
+     * DB row as CANCELLED so a discarded queue handle can never leave the execution
+     * PENDING. The callback must be idempotent: it may race with the worker's own
+     * PENDING→RUNNING CAS and with other discard paths.
+     *
+     * <p>Failure modes (in evaluation order):
+     * <ol>
+     *   <li>{@code task == null} → {@link IllegalArgumentException},</li>
+     *   <li>{@link #isShuttingDown()} → {@code INSTANCE_QUEUE_FULL},</li>
+     *   <li>deadline already elapsed → {@code QUEUE_WAIT_TIMEOUT} without enqueueing,</li>
+     *   <li>logical pending limit reached or executor rejected during shutdown →
+     *       {@code INSTANCE_QUEUE_FULL}.</li>
+     * </ol>
+     */
+    public <T> Future<T> submit(String executionId,
+                                Callable<T> task,
+                                long deadlineNanos,
+                                Runnable onQueuedDiscard) {
         if (task == null) {
             throw new IllegalArgumentException("task must not be null");
         }
@@ -165,16 +201,13 @@ public class HubInstanceDispatcher {
                 throw HubErrorCodes.QUEUE_WAIT_TIMEOUT.asThrowable(
                     "Queue deadline already exceeded before enqueue");
             }
-            if (stillWanted != null && !stillWanted.getAsBoolean()) {
-                throw HubErrorCodes.CLIENT_DISCONNECTED.asThrowable(
-                    "Client disconnected before enqueue");
-            }
             if (executor.getQueue().size() >= maxPending) {
                 throw HubErrorCodes.INSTANCE_QUEUE_FULL.asThrowable(
                     "Instance pending queue reached maxPending=" + maxPending);
             }
             TrackedFutureTask<T> future = new TrackedFutureTask<>(
-                new DeadlineAwareCallable<>(task, deadlineNanos, stillWanted));
+                executionId, onQueuedDiscard,
+                new DeadlineAwareCallable<>(task, deadlineNanos, null));
             acceptedNotTerminalCount++;
             try {
                 executor.execute(future);
@@ -239,6 +272,8 @@ public class HubInstanceDispatcher {
     /**
      * Drain pending (queued, not yet running) tasks and cancel them so blocked
      * {@link #dispatch} callers receive {@link HubErrorCodes#INSTANCE_QUEUE_CLEARED}.
+     * Every discarded task notifies its {@code onQueuedDiscard} owner so the execution
+     * row is persisted CANCELLED instead of being left PENDING.
      * The active worker task is left running.
      *
      * @return number of pending tasks that were cancelled
@@ -255,6 +290,9 @@ public class HubInstanceDispatcher {
             for (Runnable task : drained) {
                 if (task instanceof Future<?> future && future.cancel(false)) {
                     cleared++;
+                    if (task instanceof TrackedFutureTask<?> tracked) {
+                        tracked.notifyQueuedDiscard();
+                    }
                 }
             }
             return cleared;
@@ -263,6 +301,36 @@ public class HubInstanceDispatcher {
         }
     }
 
+    /**
+     * Cancel a single still-queued task by its execution id, releasing the queue slot
+     * and notifying the discard owner so the DB row is persisted CANCELLED. Used by
+     * {@code HubExecutionService.cancel} after the PENDING→CANCELLED CAS succeeds.
+     *
+     * @return {@code true} when the matching task was found queued and cancelled;
+     *         {@code false} when it is not queued (already running or completed) or unknown
+     */
+    public boolean cancelPending(String executionId) {
+        if (executionId == null) {
+            return false;
+        }
+        submitLock.lock();
+        try {
+            for (Runnable command : executor.getQueue()) {
+                if (command instanceof TrackedFutureTask<?> task
+                    && executionId.equals(task.getExecutionId())) {
+                    if (task.cancel(false)) {
+                        executor.getQueue().remove(command);
+                        task.notifyQueuedDiscard();
+                        return true;
+                    }
+                    return false;
+                }
+            }
+            return false;
+        } finally {
+            submitLock.unlock();
+        }
+    }
 
     /**
      * Idle-only shutdown guarded by the same lock as {@link #submit(Callable, long)} so
@@ -297,6 +365,9 @@ public class HubInstanceDispatcher {
             for (Runnable task : dropped) {
                 if (task instanceof Future<?> future) {
                     future.cancel(false);
+                    if (task instanceof TrackedFutureTask<?> tracked) {
+                        tracked.notifyQueuedDiscard();
+                    }
                 }
             }
             shutdown = true;
@@ -318,12 +389,34 @@ public class HubInstanceDispatcher {
 
     private final class TrackedFutureTask<T> extends FutureTask<T> {
 
+        private final String executionId;
+        private final Runnable onQueuedDiscard;
+        private final AtomicBoolean discardNotified = new AtomicBoolean();
         private boolean accepted;
         private boolean terminal;
         private boolean terminalCounted;
 
-        private TrackedFutureTask(Callable<T> callable) {
+        private TrackedFutureTask(String executionId, Runnable onQueuedDiscard,
+                                  Callable<T> callable) {
             super(callable);
+            this.executionId = executionId;
+            this.onQueuedDiscard = onQueuedDiscard;
+        }
+
+        private String getExecutionId() {
+            return executionId;
+        }
+
+        /**
+         * Notify the owner that this task was discarded before it started running.
+         * At most one notification is delivered even when multiple discard paths
+         * (clear, shutdown, cancel, client disconnect) overlap.
+         */
+        private void notifyQueuedDiscard() {
+            if (executionId != null && onQueuedDiscard != null
+                && discardNotified.compareAndSet(false, true)) {
+                onQueuedDiscard.run();
+            }
         }
 
         /** Caller holds submitLock; done() may have run before executor.execute returned. */
@@ -399,11 +492,15 @@ public class HubInstanceDispatcher {
 
     /**
      * Cancel a not-yet-running task and drop it from the executor queue so it does not
-     * occupy a pending slot until the active worker happens to poll it.
+     * occupy a pending slot until the active worker happens to poll it. The discard owner
+     * is notified so a client-disconnect cancel never leaves the execution PENDING.
      */
     private void cancelQueued(Future<?> future) {
         future.cancel(false);
         executor.getQueue().remove(future);
+        if (future instanceof TrackedFutureTask<?> tracked) {
+            tracked.notifyQueuedDiscard();
+        }
     }
 
     /**

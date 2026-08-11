@@ -465,6 +465,184 @@ class HubExecutionServiceTest {
             .containsExactly(HubExecutionStatus.RUNNING, HubExecutionStatus.SUCCEEDED);
     }
 
+    // ---------------------------------------------------------------------------------------
+    //  Cancel / clear-queue / shutdown persistence and concurrency contracts
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * A queued execution cancelled through the service must persist CANCELLED and release
+     * its dispatcher queue handle synchronously; the worker must never run OpenCLI.
+     */
+    @Test
+    void shouldCancelQueuedExecutionPersistCancelledAndReleaseQueueSlot() throws Exception {
+        CountDownLatch active = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        dispatchRegistry.submit(instance, () -> {
+            active.countDown();
+            release.await(5, TimeUnit.SECONDS);
+            return null;
+        }, System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
+        assertThat(active.await(1, TimeUnit.SECONDS)).isTrue();
+
+        HubExecutionDTO submitted = service.submit(request(instance.getId(), 30_000L));
+        assertThat(submitted.getStatus()).isEqualTo(HubExecutionStatus.PENDING);
+        assertThat(dispatchRegistry.getSnapshot(instance.getId()).getPendingCount()).isOne();
+
+        HubExecutionDTO cancelled = service.cancel(submitted.getId());
+        assertThat(cancelled.getStatus()).isEqualTo(HubExecutionStatus.CANCELLED);
+        // Queue handle released synchronously: the slot is free and OpenCLI never starts.
+        assertThat(dispatchRegistry.getSnapshot(instance.getId()).getPendingCount()).isZero();
+        assertThat(executor.invocationCount()).isZero();
+
+        release.countDown();
+        Thread.sleep(150L);
+        HubExecutionDTO latest = service.getById(submitted.getId(), 0);
+        assertThat(latest.getStatus()).isEqualTo(HubExecutionStatus.CANCELLED);
+        assertThat(repository.updatedStatuses).doesNotContain(HubExecutionStatus.RUNNING);
+    }
+
+    /**
+     * clear-queue keeps its cleared-count semantics and persists every discarded row
+     * CANCELLED through the service, leaving no queued handle or DB PENDING behind.
+     */
+    @Test
+    void shouldPersistCancelledWhenQueueCleared() throws Exception {
+        CountDownLatch active = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        dispatchRegistry.submit(instance, () -> {
+            active.countDown();
+            release.await(5, TimeUnit.SECONDS);
+            return null;
+        }, System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
+        assertThat(active.await(1, TimeUnit.SECONDS)).isTrue();
+
+        HubExecutionDTO first = service.submit(request(instance.getId(), 30_000L));
+        HubExecutionDTO second = service.submit(request(instance.getId(), 30_000L));
+        assertThat(dispatchRegistry.getSnapshot(instance.getId()).getPendingCount()).isEqualTo(2);
+
+        int cleared = dispatchRegistry.clearPending(instance.getId());
+        assertThat(cleared).isEqualTo(2);
+        assertThat(dispatchRegistry.getSnapshot(instance.getId()).getPendingCount()).isZero();
+        assertThat(service.getById(first.getId(), 0).getStatus())
+            .isEqualTo(HubExecutionStatus.CANCELLED);
+        assertThat(service.getById(second.getId(), 0).getStatus())
+            .isEqualTo(HubExecutionStatus.CANCELLED);
+        assertThat(executor.invocationCount()).isZero();
+
+        release.countDown();
+        Thread.sleep(150L);
+        assertThat(service.getById(first.getId(), 0).getStatus())
+            .isEqualTo(HubExecutionStatus.CANCELLED);
+        assertThat(service.getById(second.getId(), 0).getStatus())
+            .isEqualTo(HubExecutionStatus.CANCELLED);
+    }
+
+    /**
+     * Force dispatcher teardown (unexpected exit / app shutdown) must persist the dropped
+     * queued execution CANCELLED instead of leaving a DB PENDING row.
+     */
+    @Test
+    void shouldPersistCancelledWhenDispatcherShutsDown() throws Exception {
+        CountDownLatch active = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        dispatchRegistry.submit(instance, () -> {
+            active.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+            return null;
+        }, System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
+        assertThat(active.await(1, TimeUnit.SECONDS)).isTrue();
+
+        HubExecutionDTO queued = service.submit(request(instance.getId(), 30_000L));
+        assertThat(dispatchRegistry.getSnapshot(instance.getId()).getPendingCount()).isOne();
+
+        dispatchRegistry.unregister(instance.getId());
+        assertThat(dispatchRegistry.getSnapshot(instance.getId()).isRegistered()).isFalse();
+        assertThat(service.getById(queued.getId(), 0).getStatus())
+            .isEqualTo(HubExecutionStatus.CANCELLED);
+        assertThat(executor.invocationCount()).isZero();
+
+        release.countDown();
+    }
+
+    /**
+     * Cancel loses the PENDING→CANCELLED race once the worker has CASed PENDING→RUNNING:
+     * it is refused, and the running execution still completes to a terminal state.
+     */
+    @Test
+    void shouldRejectCancelAfterWorkerStartedRunning() throws Exception {
+        CountDownLatch workerEntered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        executor.setBehavior(() -> {
+            workerEntered.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+            return FakeOpenCliExecutor.Behaviour.successJson("{\"ok\":true}");
+        });
+
+        HubExecutionDTO submitted = service.submit(request(instance.getId(), 30_000L));
+        // The worker has already CASed PENDING->RUNNING once it entered the fake executor.
+        assertThat(workerEntered.await(2, TimeUnit.SECONDS)).isTrue();
+
+        assertThatThrownBy(() -> service.cancel(submitted.getId()))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                .isEqualTo(HubErrorCodes.EXECUTION_NOT_CANCELLABLE.getCode()));
+
+        release.countDown();
+        HubExecutionDTO completed = service.getById(submitted.getId(), 3);
+        assertThat(completed.getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
+        assertThat(repository.updatedStatuses)
+            .containsExactly(HubExecutionStatus.RUNNING, HubExecutionStatus.SUCCEEDED);
+    }
+
+    /**
+     * A long-poll getById must be woken by the terminal row shortly after completion,
+     * not wait out the requested waitSeconds window.
+     */
+    @Test
+    void shouldWakeLongPollWhenExecutionCompletes() throws Exception {
+        CountDownLatch active = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        dispatchRegistry.submit(instance, () -> {
+            active.countDown();
+            release.await(5, TimeUnit.SECONDS);
+            return null;
+        }, System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
+        assertThat(active.await(1, TimeUnit.SECONDS)).isTrue();
+
+        executor.setBehavior(() -> FakeOpenCliExecutor.Behaviour.successJson("{\"ok\":true}"));
+        HubExecutionDTO submitted = service.submit(request(instance.getId(), 30_000L));
+        assertThat(service.getById(submitted.getId(), 0).getStatus())
+            .isEqualTo(HubExecutionStatus.PENDING);
+
+        CountDownLatch pollEntered = new CountDownLatch(1);
+        AtomicReference<HubExecutionDTO> polled = new AtomicReference<>();
+        Thread poller = new Thread(() -> {
+            pollEntered.countDown();
+            polled.set(service.getById(submitted.getId(), 30));
+        });
+        poller.setDaemon(true);
+        poller.start();
+        assertThat(pollEntered.await(1, TimeUnit.SECONDS)).isTrue();
+        Thread.sleep(250L); // let the long-poll observe the PENDING row at least once
+
+        long startNanos = System.nanoTime();
+        release.countDown();
+        poller.join(10_000L);
+        assertThat(poller.isAlive()).isFalse();
+        assertThat(polled.get()).isNotNull();
+        assertThat(polled.get().getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
+        // Woken by the completed row, not by the 30s wait window.
+        assertThat(System.nanoTime() - startNanos).isLessThan(TimeUnit.SECONDS.toNanos(8));
+    }
+
 
     /** Commands declaring --op are auto-managed so callers do not supply container paths. */
     @Test

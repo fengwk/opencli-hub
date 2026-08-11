@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.web.servlet.MultipartProperties;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
@@ -29,6 +31,10 @@ class WebApplicationTest {
     @Autowired
     private MultipartProperties multipartProperties;
 
+    @Autowired
+    @Qualifier("applicationTaskExecutor")
+    private ThreadPoolTaskExecutor applicationTaskExecutor;
+
     @Test
     void contextLoads() {
     }
@@ -47,6 +53,23 @@ class WebApplicationTest {
     void shouldBindMultipleVncAllowedOrigins() {
         assertThat(hubProperties.getVnc().getAllowedOrigins())
             .containsExactly("https://opencli.example", "https://admin.example");
+    }
+
+    /**
+     * The async execute pool must come from Spring Boot's spring.task.execution
+     * configuration (applicationTaskExecutor), replacing the removed custom
+     * HubExecutionAsyncConfiguration bean with identical sizing.
+     */
+    @Test
+    void shouldBindApplicationTaskExecutorFromSpringTaskExecutionProperties() {
+        assertThat(applicationTaskExecutor.getCorePoolSize()).isEqualTo(8);
+        assertThat(applicationTaskExecutor.getMaxPoolSize()).isEqualTo(64);
+        assertThat(applicationTaskExecutor.getThreadNamePrefix()).isEqualTo("hub-execute-");
+        assertThat(applicationTaskExecutor.getThreadPoolExecutor().getQueue().remainingCapacity())
+            .isEqualTo(256);
+        assertThat(applicationTaskExecutor.getThreadPoolExecutor().allowsCoreThreadTimeOut())
+            .isTrue();
+        assertThat(applicationTaskExecutor.getKeepAliveSeconds()).isEqualTo(60L);
     }
 
 }

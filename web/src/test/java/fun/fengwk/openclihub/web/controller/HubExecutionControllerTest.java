@@ -55,7 +55,7 @@ class HubExecutionControllerTest {
         mockMvc.perform(post("/api/opencli/execute")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsBytes(request())))
-            .andExpect(status().isOk())
+            .andExpect(status().isAccepted())
             .andExpect(jsonPath("$.data.id").value("e1"))
             .andExpect(jsonPath("$.data.status").value("PENDING"));
         verify(executionService).submit(any());
