@@ -385,7 +385,7 @@ curl --fail --show-error --request PUT "$HUB_URL/api/settings" \
 | 取消/清队列持久化 | `POST /api/executions/{id}/cancel`、`POST /api/instances/{id}/clear-queue` 与强制 shutdown 丢弃的 PENDING 任务一律持久化为 **CANCELLED**（CAS PENDING→CANCELLED），不会残留 DB PENDING 行。 |
 | 时间语义 | 所有时间戳（`queued_at`/`started_at`/`finished_at`/`state_changed_at`/`gmt_create`/`gmt_modified`）均为 **UTC LocalDateTime**，API 直接返回 UTC 值；`gmt_*` 列名保留以兼容旧客户端。应用使用 `Clock.systemUTC()`，各数据库连接被强制 UTC 会话。 |
 | 数据库 | 生产默认 PostgreSQL 16；MySQL 8.4 与 SQLite 为编译期变体；**H2 退出生产**（仅测试）。镜像按 `OPENCLI_HUB_DATABASE` 构建，JAR 名为 `opencli-hub-web-1.0.0-{postgresql|mysql|sqlite}.jar`。 |
-| Output Rule | 保存/upsert 时基于**当前 Catalog metadata** 校验：命令必须是公开 browser command，参数必须是具名、接受值的输出参数（positional 与布尔 flag 拒绝）；`targetType` 为 `DIRECTORY`/`FILE`，`FILE` 必填安全文件名。校验通过后规则以不可变快照原子生效；命令 DTO 返回真实规则 metadata（argumentName/targetType/fileName）。执行时按 commandKey 直接使用已保存规则注入托管输出参数，不逐次重验 catalog；调用方传入被托管参数返回 `OPENCLI_RESOURCE_OUTPUT_ARGUMENT_MANAGED`。 |
+| Output Rule | 保存/upsert 时基于**当前 Catalog metadata** 校验：命令必须是公开 browser command，argument 可以是命令声明的任意具名、非 positional、可接收值的参数（无值 boolean flag 拒绝）；`targetType` 为 `DIRECTORY`/`FILE`，`FILE` 必填 fileName（匹配 `[A-Za-z0-9._-]+`，不得为 `.`/`..`）。校验通过后规则以不可变快照原子生效；命令 DTO 返回真实规则 metadata（argumentName/targetType/fileName）。执行时按 commandKey 直接使用已保存规则注入托管输出参数，不逐次重验 catalog；调用方传入被托管参数返回 `OPENCLI_RESOURCE_OUTPUT_ARGUMENT_MANAGED`。 |
 | startup recovery barrier | 启动时 `ApplicationRunner` 先声明恢复屏障再调度恢复 sweep；期间 API `create`/`start`/`restart` 有界等待（默认 60s，`OPENCLI_HUB_START_COORDINATION_TIMEOUT_MILLIS`），超时返回 `INSTANCE_START_RECOVERY_IN_PROGRESS`。 |
 | 部署 | 三套 Compose（`compose.yml`/`compose.mysql.yml`/`compose.sqlite.yml`）与三套发布 tag（`postgresql`/`mysql`/`sqlite`，PostgreSQL 另有 `latest`/`docker`，均含 `sha-<db>-<short>`）。 |
 

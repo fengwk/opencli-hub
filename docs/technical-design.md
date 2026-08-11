@@ -889,18 +889,18 @@ commandKey -> argumentName + targetType + optional fileName
 ```
 
 - `DIRECTORY`：Hub 注入 execution 资源组目录；
-- `FILE`：Hub 注入 execution 资源组下的固定安全文件名。
+- `FILE`：Hub 注入 execution 资源组下的固定 fileName（须匹配 `[A-Za-z0-9._-]+` 且不得为 `.`/`..`）。
 
 ### 14.2 校验
 
-保存规则时校验：
+保存规则时校验（基于当前 Catalog）：
 
 - command 存在且是公开 browser command；
-- argument 存在且接受值；
+- argument 是命令声明的任意具名、非 positional、可接收值的参数（无值 boolean flag 拒绝）；
 - targetType 合法；
 - `FILE` 必须有 fileName；
 - `DIRECTORY` 不允许 fileName；
-- fileName 不得包含目录、控制字符、`.` 或 `..` 逃逸。
+- fileName 必须匹配安全字符 `[A-Za-z0-9._-]+`（因此不含目录分隔符与控制字符），且不得等于 `.` 或 `..`。
 
 ### 14.3 执行
 
@@ -927,11 +927,11 @@ opencli --profile <contextId> chatgpt image \
 
 执行后递归扫描该组目录，忽略符号链接，返回资源 DTO。空目录可以删除。
 
-规则在保存/upsert 时按当前 Catalog 校验（命令必须是公开 browser command，参数必须是具名、接受值的
-输出参数）；校验通过后规则以不可变快照原子生效，命令 DTO 返回真实规则 metadata。执行时不重验
-catalog 兼容性：Hub 按 commandKey 直接使用已保存规则注入托管输出参数，调用方传入被托管参数时返回
-`OPENCLI_RESOURCE_OUTPUT_ARGUMENT_MANAGED`。规则与 Catalog 不再兼容时，Commands 页面显示不兼容警告；
-提交时不会对 stale 规则做静默重验或替换。
+规则在保存/upsert 时按当前 Catalog 校验（命令必须是公开 browser command，argument 可以是任意具名、
+非 positional、可接收值的参数，无值 boolean flag 拒绝）；校验通过后规则以不可变快照原子生效，命令
+DTO 返回真实规则 metadata。执行时不重验 catalog 兼容性：Hub 按 commandKey 直接使用已保存规则注入
+托管输出参数，调用方传入被托管参数时返回 `OPENCLI_RESOURCE_OUTPUT_ARGUMENT_MANAGED`。stale 规则
+（命令升级后 Catalog 变化）不会在执行时被重验或自动提示，管理员需重新保存或删除规则后按新 Catalog 配置。
 
 ## 15. OpenCLI daemon 管理
 
@@ -1879,8 +1879,7 @@ frontend/src/
 - 站点、read/write、session、启用状态过滤；
 - 参数详情；
 - 黑名单启用/解除；
-- 输出规则创建、更新、删除；
-- Catalog/规则不兼容警告。
+- 输出规则创建、更新、删除。
 
 ### 28.7 Resources
 
