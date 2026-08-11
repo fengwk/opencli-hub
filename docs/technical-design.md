@@ -199,7 +199,7 @@ instance/
 ├── repo/
 │   ├── HubInstanceRepository.java
 │   └── impl/
-│       ├── MysqlHubInstanceRepository.java
+│       ├── MybatisHubInstanceRepository.java
 │       ├── mapper/HubInstanceMapper.java
 │       └── model/HubInstanceDO.java
 └── runtime/

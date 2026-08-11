@@ -30,7 +30,7 @@ class HubPluginServiceTest {
         HubPluginService service = new HubPluginService(
             mock(HubPluginSourceRepository.class),
             mock(OpenCliPluginCli.class),
-            mock(OpenCliCommandCatalog.class));
+            mock(OpenCliCommandCatalog.class), java.time.Clock.systemUTC());
 
         HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
         request.setName("bad");
@@ -68,7 +68,7 @@ class HubPluginServiceTest {
         HubPluginService service = new HubPluginService(
             repo,
             mock(OpenCliPluginCli.class),
-            mock(OpenCliCommandCatalog.class));
+            mock(OpenCliCommandCatalog.class), java.time.Clock.systemUTC());
 
         HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
         request.setName("demo");
@@ -87,7 +87,7 @@ class HubPluginServiceTest {
         HubPluginService service = new HubPluginService(
             mock(HubPluginSourceRepository.class),
             mock(OpenCliPluginCli.class),
-            mock(OpenCliCommandCatalog.class));
+            mock(OpenCliCommandCatalog.class), java.time.Clock.systemUTC());
 
         HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
         request.setName("generic");
@@ -105,7 +105,7 @@ class HubPluginServiceTest {
         HubPluginService service = new HubPluginService(
             mock(HubPluginSourceRepository.class),
             pluginCli,
-            mock(OpenCliCommandCatalog.class));
+            mock(OpenCliCommandCatalog.class), java.time.Clock.systemUTC());
         when(pluginCli.run(List.of("list", "-f", "json"))).thenReturn(new OpenCliPluginCli.CliResult(
             0,
             """
@@ -132,7 +132,7 @@ class HubPluginServiceTest {
         HubPluginService service = new HubPluginService(
             mock(HubPluginSourceRepository.class),
             pluginCli,
-            mock(OpenCliCommandCatalog.class));
+            mock(OpenCliCommandCatalog.class), java.time.Clock.systemUTC());
         when(pluginCli.run(List.of("list", "-f", "json"))).thenReturn(
             new OpenCliPluginCli.CliResult(
                 0,
@@ -154,7 +154,7 @@ class HubPluginServiceTest {
         HubPluginService service = new HubPluginService(
             mock(HubPluginSourceRepository.class),
             pluginCli,
-            mock(OpenCliCommandCatalog.class));
+            mock(OpenCliCommandCatalog.class), java.time.Clock.systemUTC());
         when(pluginCli.run(List.of("list", "-f", "json"))).thenReturn(new OpenCliPluginCli.CliResult(
             0,
             "No plugins installed.\n Install one with: opencli plugin install github:user/repo\n",
@@ -171,7 +171,7 @@ class HubPluginServiceTest {
         HubPluginService service = new HubPluginService(
             mock(HubPluginSourceRepository.class),
             pluginCli,
-            mock(OpenCliCommandCatalog.class));
+            mock(OpenCliCommandCatalog.class), java.time.Clock.systemUTC());
         when(pluginCli.run(List.of("list", "-f", "json")))
             .thenReturn(new OpenCliPluginCli.CliResult(0, "not-json", ""));
 
@@ -186,7 +186,7 @@ class HubPluginServiceTest {
         InMemoryRepo repo = new InMemoryRepo();
         OpenCliPluginCli pluginCli = mock(OpenCliPluginCli.class);
         OpenCliCommandCatalog catalog = mock(OpenCliCommandCatalog.class);
-        HubPluginService service = new HubPluginService(repo, pluginCli, catalog);
+        HubPluginService service = new HubPluginService(repo, pluginCli, catalog, java.time.Clock.systemUTC());
 
         HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
         request.setName("demo");
@@ -224,7 +224,7 @@ class HubPluginServiceTest {
         InMemoryRepo repo = new InMemoryRepo();
         OpenCliPluginCli pluginCli = mock(OpenCliPluginCli.class);
         OpenCliCommandCatalog catalog = mock(OpenCliCommandCatalog.class);
-        HubPluginService service = new HubPluginService(repo, pluginCli, catalog);
+        HubPluginService service = new HubPluginService(repo, pluginCli, catalog, java.time.Clock.systemUTC());
 
         HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
         request.setName("demo");
@@ -249,7 +249,7 @@ class HubPluginServiceTest {
         InMemoryRepo repo = new InMemoryRepo();
         OpenCliPluginCli pluginCli = mock(OpenCliPluginCli.class);
         OpenCliCommandCatalog catalog = mock(OpenCliCommandCatalog.class);
-        HubPluginService service = new HubPluginService(repo, pluginCli, catalog);
+        HubPluginService service = new HubPluginService(repo, pluginCli, catalog, java.time.Clock.systemUTC());
 
         HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
         request.setName("demo");
@@ -276,7 +276,7 @@ class HubPluginServiceTest {
         InMemoryRepo repo = new InMemoryRepo();
         OpenCliPluginCli pluginCli = mock(OpenCliPluginCli.class);
         HubPluginService service = new HubPluginService(
-            repo, pluginCli, mock(OpenCliCommandCatalog.class));
+            repo, pluginCli, mock(OpenCliCommandCatalog.class), java.time.Clock.systemUTC());
 
         HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
         request.setName("demo");
@@ -334,7 +334,10 @@ class HubPluginServiceTest {
     void shouldRejectSyncOfDisabledSource() {
         InMemoryRepo repo = new InMemoryRepo();
         HubPluginService service = new HubPluginService(
-            repo, mock(OpenCliPluginCli.class), mock(OpenCliCommandCatalog.class));
+            repo,
+            mock(OpenCliPluginCli.class),
+            mock(OpenCliCommandCatalog.class),
+            java.time.Clock.systemUTC());
 
         HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
         request.setName("demo");
@@ -361,7 +364,10 @@ class HubPluginServiceTest {
     void shouldPreserveEnabledFlagWhenUpdateOmitsIt() {
         InMemoryRepo repo = new InMemoryRepo();
         HubPluginService service = new HubPluginService(
-            repo, mock(OpenCliPluginCli.class), mock(OpenCliCommandCatalog.class));
+            repo,
+            mock(OpenCliPluginCli.class),
+            mock(OpenCliCommandCatalog.class),
+            java.time.Clock.systemUTC());
 
         HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
         request.setName("demo");

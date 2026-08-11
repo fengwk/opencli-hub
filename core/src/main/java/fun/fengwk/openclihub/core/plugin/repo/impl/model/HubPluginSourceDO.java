@@ -1,5 +1,6 @@
 package fun.fengwk.openclihub.core.plugin.repo.impl.model;
 
+import fun.fengwk.automapper.annotation.FieldName;
 import java.time.LocalDateTime;
 import lombok.Data;
 
@@ -20,8 +21,10 @@ public class HubPluginSourceDO {
     private String lastError;
     private LocalDateTime lastSyncedAt;
     private String lastResultJson;
+    @FieldName("gmt_create")
     private LocalDateTime createTime;
-    private LocalDateTime modifiedTime;
+    @FieldName("gmt_modified")
+    private LocalDateTime updateTime;
     private Long version;
 
 }

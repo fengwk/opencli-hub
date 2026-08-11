@@ -15,7 +15,7 @@ public interface HubSystemSettingsMapper extends BaseMapper {
 
     @Select("""
         select id, proxy_mode as proxyMode, proxy_server as proxyServer,
-               gmt_create as createTime, gmt_modified as modifiedTime, version
+               gmt_create as createTime, gmt_modified as updateTime, version
         from hub_system_settings where id = 1
         """)
     HubSystemSettingsDO find();
@@ -23,14 +23,14 @@ public interface HubSystemSettingsMapper extends BaseMapper {
     @Insert("""
         insert into hub_system_settings
         (id, proxy_mode, proxy_server, gmt_create, gmt_modified, version)
-        values (#{id}, #{proxyMode}, #{proxyServer}, #{createTime}, #{modifiedTime}, #{version})
+        values (#{id}, #{proxyMode}, #{proxyServer}, #{createTime}, #{updateTime}, #{version})
         """)
     int insert(HubSystemSettingsDO settings);
 
     @Update("""
         update hub_system_settings
         set proxy_mode = #{settings.proxyMode}, proxy_server = #{settings.proxyServer},
-            gmt_modified = #{settings.modifiedTime}, version = version + 1
+            gmt_modified = #{settings.updateTime}, version = version + 1
         where id = 1 and version = #{expectedVersion}
         """)
     int update(@org.apache.ibatis.annotations.Param("settings") HubSystemSettingsDO settings,

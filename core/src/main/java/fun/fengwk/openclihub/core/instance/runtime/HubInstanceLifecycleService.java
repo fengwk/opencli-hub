@@ -28,6 +28,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -78,6 +79,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     private final ChromeProfileFileAccessBootstrap fileAccessBootstrap;
     private final HubDispatchRegistry dispatchRegistry;
     private final HubInstanceStartCoordinator startCoordinator;
+    private final Clock clock;
 
     public HubInstanceLifecycleService(
         HubInstanceService instanceService,
@@ -89,7 +91,8 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         ProfileSingletonCleaner singletonCleaner,
         ChromeProfileFileAccessBootstrap fileAccessBootstrap,
         HubDispatchRegistry dispatchRegistry,
-        HubInstanceStartCoordinator startCoordinator) {
+        HubInstanceStartCoordinator startCoordinator,
+        Clock clock) {
         this.instanceService = instanceService;
         this.registry = registry;
         this.launcher = launcher;
@@ -100,6 +103,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         this.fileAccessBootstrap = fileAccessBootstrap;
         this.dispatchRegistry = dispatchRegistry;
         this.startCoordinator = startCoordinator;
+        this.clock = clock;
     }
 
     // ---------------------------------------------------------------------------------------
@@ -126,7 +130,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             : dto.getMaxPending());
         preset.setPriority(dto.getPriority() == null ? 0 : dto.getPriority());
         preset.setState(HubInstanceState.STARTING);
-        preset.setStateChangedAt(LocalDateTime.now());
+        preset.setStateChangedAt(LocalDateTime.now(clock));
         instanceService.validateAndNormalizeForCreate(preset);
         return startCoordinator.runStart(() -> {
             // Recheck uniqueness inside the global start critical section so two concurrent
@@ -487,7 +491,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         HubInstance shadow = preset;
         shadow.setId(id);
         shadow.setState(HubInstanceState.STARTING);
-        shadow.setStateChangedAt(LocalDateTime.now());
+        shadow.setStateChangedAt(LocalDateTime.now(clock));
 
         InstanceDirectories directories;
         try {
@@ -509,7 +513,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             waitForExpectedOrUniqueContext(id, shadow, beforeSnapshot, runtime);
             shadow.setContextId(runtime.getContextId());
             shadow.setState(HubInstanceState.RUNNING);
-            shadow.setStateChangedAt(LocalDateTime.now());
+            shadow.setStateChangedAt(LocalDateTime.now(clock));
             registry.register(runtime);
             registeredRuntime = true;
             dispatchRegistry.register(shadow);

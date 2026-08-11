@@ -15,6 +15,7 @@ import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -81,7 +82,7 @@ class HubInstanceRuntimeApplicationRunnerTest {
             instanceService, registry, launcher, daemon, properties,
             new FakeHubSystemSettingsService(), new ProfileSingletonCleaner(),
             new ChromeProfileFileAccessBootstrap(new ObjectMapper(), buildInfoPath),
-            new HubDispatchRegistry(), startCoordinator);
+            new HubDispatchRegistry(), startCoordinator, Clock.systemUTC());
         scanner = new OrphanInstanceScanner(properties, instanceService);
         runner = new HubInstanceRuntimeApplicationRunner(lifecycle, scanner, properties,
             startCoordinator);
@@ -148,7 +149,7 @@ class HubInstanceRuntimeApplicationRunnerTest {
             instanceService, registry, launcher, daemon, properties,
             new FakeHubSystemSettingsService(), new ProfileSingletonCleaner(),
             new ChromeProfileFileAccessBootstrap(new ObjectMapper(), buildInfoPath),
-            new HubDispatchRegistry(), startCoordinator);
+            new HubDispatchRegistry(), startCoordinator, Clock.systemUTC());
         runner = new HubInstanceRuntimeApplicationRunner(lifecycle, scanner, properties,
             startCoordinator);
         String recoveredId = seedRow("bilibili-recovered");

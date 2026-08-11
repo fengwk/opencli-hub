@@ -16,14 +16,14 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 /** Verifies repository-specific pagination behavior that cannot rely on int offset arithmetic. */
-class MysqlHubExecutionRepositoryTest {
+class MybatisHubExecutionRepositoryTest {
 
     /** The largest valid page must reach MyBatis as its exact positive long offset, not page zero. */
     @Test
     void shouldUseLongOffsetForLargestPageNumber() {
         HubExecutionMapper mapper = mock(HubExecutionMapper.class);
         when(mapper.pageAllOrderByQueuedAtDescIdDesc(anyLong(), anyInt())).thenReturn(List.of());
-        MysqlHubExecutionRepository repository = new MysqlHubExecutionRepository(
+        MybatisHubExecutionRepository repository = new MybatisHubExecutionRepository(
             mapper, new ObjectMapper());
 
         repository.page(new PageQuery(Integer.MAX_VALUE, 1000), null);

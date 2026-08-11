@@ -8,6 +8,7 @@ import fun.fengwk.openclihub.core.command.service.HubCommandOutputRuleService;
 import fun.fengwk.openclihub.core.command.service.HubCommandQueryService;
 import fun.fengwk.openclihub.core.command.validator.OpenCliArgvValidator;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
+import java.time.Clock;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
@@ -42,14 +43,14 @@ public class OpenCliCatalogConfiguration {
 
     @Bean
     public HubCommandBlacklistService hubCommandBlacklistService(
-        HubCommandBlacklistRepository repository) {
-        return new HubCommandBlacklistService(repository);
+        HubCommandBlacklistRepository repository, Clock clock) {
+        return new HubCommandBlacklistService(repository, clock);
     }
 
     @Bean
     public HubCommandOutputRuleService hubCommandOutputRuleService(
-        HubCommandOutputRuleRepository repository, OpenCliCommandCatalog catalog) {
-        return new HubCommandOutputRuleService(repository, catalog);
+        HubCommandOutputRuleRepository repository, OpenCliCommandCatalog catalog, Clock clock) {
+        return new HubCommandOutputRuleService(repository, catalog, clock);
     }
 
     @Bean

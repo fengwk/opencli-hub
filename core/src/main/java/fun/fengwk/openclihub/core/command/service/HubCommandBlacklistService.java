@@ -4,6 +4,8 @@ import fun.fengwk.openclihub.core.command.repo.HubCommandBlacklistRepository;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandBlacklist;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.command.HubCommandBlacklistDTO;
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -33,14 +35,16 @@ import lombok.extern.slf4j.Slf4j;
 public class HubCommandBlacklistService {
 
     private final HubCommandBlacklistRepository repository;
+    private final Clock clock;
     private final ConcurrentMap<String, HubCommandBlacklist> cache = new ConcurrentHashMap<>();
     private final AtomicBoolean loaded = new AtomicBoolean(false);
 
-    public HubCommandBlacklistService(HubCommandBlacklistRepository repository) {
+    public HubCommandBlacklistService(HubCommandBlacklistRepository repository, Clock clock) {
         if (repository == null) {
             throw new IllegalArgumentException("repository must not be null");
         }
         this.repository = repository;
+        this.clock = clock;
     }
 
     /**
@@ -75,6 +79,9 @@ public class HubCommandBlacklistService {
         blacklist.setId(repository.generateId());
         blacklist.setCommandKey(commandKey);
         blacklist.setReason(reason);
+        LocalDateTime now = LocalDateTime.now(clock);
+        blacklist.setCreateTime(now);
+        blacklist.setUpdateTime(now);
         if (!repository.add(blacklist)) {
             throw new OpenCliCommandPolicyException(HubErrorCodes.EXECUTION_PERSIST_FAILED,
                 "Failed to persist blacklist entry: " + commandKey);

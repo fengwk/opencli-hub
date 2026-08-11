@@ -5,7 +5,6 @@ import fun.fengwk.openclihub.core.command.repo.impl.mapper.HubCommandOutputRuleM
 import fun.fengwk.openclihub.core.command.repo.impl.model.HubCommandOutputRuleDO;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandOutputRule;
 import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -13,15 +12,17 @@ import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * MySQL/H2 implementation backed by the auto-generated {@code hub_command_output_rule} mapper.
+ * MyBatis implementation (MySQL/H2 shared SQL) backed by the auto-generated
+ * {@code hub_command_output_rule} mapper.
  *
- * <p>Schema management lives in {@code schema-{h2,mysql}.sql}; this class must not call any DDL.
+ * <p>Schema management lives in {@code schema-{h2,mysql}.sql}; this class must not call any
+ * DDL. Audit timestamps are owned by the service layer and are copied through verbatim.
  *
  * @author fengwk
  */
 @AllArgsConstructor
 @Repository
-public class MysqlHubCommandOutputRuleRepository implements HubCommandOutputRuleRepository {
+public class MybatisHubCommandOutputRuleRepository implements HubCommandOutputRuleRepository {
 
     private final HubCommandOutputRuleMapper mapper;
 
@@ -69,15 +70,14 @@ public class MysqlHubCommandOutputRuleRepository implements HubCommandOutputRule
     }
 
     private HubCommandOutputRuleDO toDO(HubCommandOutputRule rule) {
-        LocalDateTime now = LocalDateTime.now();
         HubCommandOutputRuleDO target = new HubCommandOutputRuleDO();
         target.setId(rule.getId());
         target.setCommandKey(rule.getCommandKey());
         target.setArgumentName(rule.getArgumentName());
         target.setTargetType(rule.getTargetType() == null ? null : rule.getTargetType().name());
         target.setFileName(rule.getFileName());
-        target.setCreateTime(rule.getCreateTime() == null ? now : rule.getCreateTime());
-        target.setModifiedTime(rule.getUpdateTime() == null ? now : rule.getUpdateTime());
+        target.setCreateTime(rule.getCreateTime());
+        target.setUpdateTime(rule.getUpdateTime());
         target.setVersion(0L);
         return target;
     }
@@ -95,7 +95,7 @@ public class MysqlHubCommandOutputRuleRepository implements HubCommandOutputRule
             : HubCommandOutputTargetType.valueOf(source.getTargetType()));
         target.setFileName(source.getFileName());
         target.setCreateTime(source.getCreateTime());
-        target.setUpdateTime(source.getModifiedTime());
+        target.setUpdateTime(source.getUpdateTime());
         return target;
     }
 

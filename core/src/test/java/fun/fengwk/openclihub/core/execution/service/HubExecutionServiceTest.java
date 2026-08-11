@@ -44,7 +44,9 @@ import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import fun.fengwk.openclihub.share.model.resource.HubResourceItemDTO;
 import fun.fengwk.openclihub.share.model.resource.HubResourceSource;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -144,7 +146,8 @@ class HubExecutionServiceTest {
             executor,
             new HubExecutionConverter(),
             new ObjectMapper(),
-            properties);
+            properties,
+            Clock.systemUTC());
     }
 
     @AfterEach
@@ -184,6 +187,11 @@ class HubExecutionServiceTest {
         assertThat(executor.invocationCount()).isOne();
         assertThat(executor.invocations().get(0).argv)
             .containsExactly("--profile", "ctx-primary", "bilibili", "hot", "--format", "json");
+        // Audit-time rule: on insert createTime equals the queue time; on the final update
+        // updateTime equals the finish time (gmt_modified mirrors finished_at).
+        HubExecution saved = repository.findById(result.getId());
+        assertThat(saved.getCreateTime()).isEqualTo(saved.getQueuedAt());
+        assertThat(saved.getUpdateTime()).isEqualTo(saved.getFinishedAt());
     }
 
     @Test
@@ -883,6 +891,8 @@ class HubExecutionServiceTest {
             target.setQueuedAt(source.getQueuedAt());
             target.setStartedAt(source.getStartedAt());
             target.setFinishedAt(source.getFinishedAt());
+            target.setCreateTime(source.getCreateTime());
+            target.setUpdateTime(source.getUpdateTime());
             return target;
         }
 

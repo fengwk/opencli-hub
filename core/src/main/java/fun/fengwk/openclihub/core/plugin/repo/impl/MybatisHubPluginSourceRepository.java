@@ -9,20 +9,21 @@ import fun.fengwk.openclihub.core.plugin.repo.impl.model.HubPluginSourceDO;
 import fun.fengwk.openclihub.core.plugin.service.model.HubPluginSource;
 import fun.fengwk.openclihub.share.model.plugin.HubPluginSourceStatus;
 import java.io.IOException;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * MySQL/H2 repository for configured plugin sources.
+ * MyBatis repository (MySQL/H2 shared SQL) for configured plugin sources.
+ *
+ * <p>Audit timestamps are owned by the service layer and are copied through verbatim.
  *
  * @author fengwk
  */
 @RequiredArgsConstructor
 @Repository
-public class MysqlHubPluginSourceRepository implements HubPluginSourceRepository {
+public class MybatisHubPluginSourceRepository implements HubPluginSourceRepository {
 
     private final HubPluginSourceMapper mapper;
     private final ObjectMapper objectMapper;
@@ -62,7 +63,6 @@ public class MysqlHubPluginSourceRepository implements HubPluginSourceRepository
     }
 
     private HubPluginSourceDO toDO(HubPluginSource source) {
-        LocalDateTime now = LocalDateTime.now();
         HubPluginSourceDO target = new HubPluginSourceDO();
         target.setId(source.getId());
         target.setName(source.getName());
@@ -74,8 +74,8 @@ public class MysqlHubPluginSourceRepository implements HubPluginSourceRepository
         target.setLastError(source.getLastError());
         target.setLastSyncedAt(source.getLastSyncedAt());
         target.setLastResultJson(source.getLastResult());
-        target.setCreateTime(source.getCreateTime() == null ? now : source.getCreateTime());
-        target.setModifiedTime(now);
+        target.setCreateTime(source.getCreateTime());
+        target.setUpdateTime(source.getUpdateTime());
         target.setVersion(source.getVersion());
         return target;
     }
@@ -96,7 +96,7 @@ public class MysqlHubPluginSourceRepository implements HubPluginSourceRepository
         target.setLastSyncedAt(source.getLastSyncedAt());
         target.setLastResult(source.getLastResultJson());
         target.setCreateTime(source.getCreateTime());
-        target.setUpdateTime(source.getModifiedTime());
+        target.setUpdateTime(source.getUpdateTime());
         target.setVersion(source.getVersion() == null ? 0L : source.getVersion());
         return target;
     }

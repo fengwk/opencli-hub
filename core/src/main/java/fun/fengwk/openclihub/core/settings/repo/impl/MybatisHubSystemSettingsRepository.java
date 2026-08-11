@@ -5,18 +5,19 @@ import fun.fengwk.openclihub.core.settings.repo.impl.mapper.HubSystemSettingsMap
 import fun.fengwk.openclihub.core.settings.repo.impl.model.HubSystemSettingsDO;
 import fun.fengwk.openclihub.core.settings.service.model.HubSystemSettings;
 import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
-import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * MySQL/H2 repository for the id=1 system settings singleton.
+ * MyBatis repository (MySQL/H2 shared SQL) for the id=1 system settings singleton.
+ *
+ * <p>Audit timestamps are owned by the service layer and are copied through verbatim.
  *
  * @author fengwk
  */
 @RequiredArgsConstructor
 @Repository
-public class MysqlHubSystemSettingsRepository implements HubSystemSettingsRepository {
+public class MybatisHubSystemSettingsRepository implements HubSystemSettingsRepository {
 
     private final HubSystemSettingsMapper mapper;
 
@@ -36,13 +37,12 @@ public class MysqlHubSystemSettingsRepository implements HubSystemSettingsReposi
     }
 
     private static HubSystemSettingsDO toDO(HubSystemSettings settings) {
-        LocalDateTime now = LocalDateTime.now();
         HubSystemSettingsDO target = new HubSystemSettingsDO();
         target.setId(1);
         target.setProxyMode(settings.getProxyMode() == null ? null : settings.getProxyMode().name());
         target.setProxyServer(settings.getProxyServer());
-        target.setCreateTime(settings.getCreateTime() == null ? now : settings.getCreateTime());
-        target.setModifiedTime(now);
+        target.setCreateTime(settings.getCreateTime());
+        target.setUpdateTime(settings.getUpdateTime());
         target.setVersion(settings.getVersion());
         return target;
     }
@@ -57,7 +57,7 @@ public class MysqlHubSystemSettingsRepository implements HubSystemSettingsReposi
             ? HubProxyMode.DIRECT : HubProxyMode.valueOf(source.getProxyMode()));
         target.setProxyServer(source.getProxyServer());
         target.setCreateTime(source.getCreateTime());
-        target.setUpdateTime(source.getModifiedTime());
+        target.setUpdateTime(source.getUpdateTime());
         target.setVersion(source.getVersion() == null ? 0L : source.getVersion());
         return target;
     }

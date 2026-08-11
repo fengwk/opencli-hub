@@ -36,6 +36,17 @@ public class HubExecution {
     private LocalDateTime queuedAt;
     private LocalDateTime startedAt;
     private LocalDateTime finishedAt;
+    /**
+     * Audit time set once at submit: equals {@link #queuedAt} on insert and is never
+     * overwritten afterwards (gmt_create column).
+     */
+    private LocalDateTime createTime;
+    /**
+     * Audit time owned by the state transitions: set to the same instant as {@code now}
+     * by {@link #markRunning} / {@link #markFinished} (gmt_modified column), so on every
+     * update it equals the latest state time written to the row.
+     */
+    private LocalDateTime updateTime;
 
     public void setArgv(List<String> argv) {
         this.argv = argv == null ? List.of() : new ArrayList<>(argv);
@@ -44,6 +55,7 @@ public class HubExecution {
     public void markRunning(LocalDateTime now) {
         status = HubExecutionStatus.RUNNING;
         startedAt = now;
+        updateTime = now;
     }
 
     public void markFinished(OpenCliExecutionResult result, LocalDateTime now) {
@@ -57,6 +69,7 @@ public class HubExecution {
             ? HubExecutionStatus.TIMED_OUT
             : result.getExitCode() == 0 ? HubExecutionStatus.SUCCEEDED : HubExecutionStatus.FAILED;
         finishedAt = now;
+        updateTime = now;
     }
 
     public long getQueuedMillis() {

@@ -1,12 +1,12 @@
 package fun.fengwk.openclihub.core.execution.repo.impl.mapper;
 
 import fun.fengwk.automapper.annotation.AutoMapper;
+import fun.fengwk.automapper.annotation.MethodExpr;
 import fun.fengwk.convention4j.springboot.starter.mybatis.BaseMapper;
 import fun.fengwk.openclihub.core.execution.repo.impl.model.HubExecutionDO;
 import java.util.List;
 import java.time.LocalDateTime;
 import org.apache.ibatis.annotations.Param;
-import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 /**
@@ -25,40 +25,23 @@ public interface HubExecutionMapper extends BaseMapper {
 
     long countAll();
 
-    @Select("""
-        select id, instance_id as instanceId, instance_code as instanceCode,
-               command_key as commandKey, site, site_session as siteSession,
-               argv_json as argvJson, reuse_instance as reuseInstance, status,
-               exit_code as exitCode, stdout_content as stdoutContent,
-               stdout_truncated as stdoutTruncated, stderr_content as stderrContent,
-               stderr_truncated as stderrTruncated, error_message as errorMessage,
-               timeout_millis as timeoutMillis, queued_at as queuedAt,
-               started_at as startedAt, finished_at as finishedAt,
-               gmt_create as createTime, gmt_modified as modifiedTime, version
-        from hub_execution
-        order by coalesce(finished_at, started_at, queued_at) desc, id desc
-        limit #{offset}, #{limit}
-        """)
+    /**
+     * Derives {@code select ... order by queued_at desc, id desc limit #{limit} offset #{offset}}
+     * with AutoMapper 1.0.0. The method name keeps its historical Java spelling; the
+     * {@link MethodExpr} supplies the missing {@code And} between the two order-by fields.
+     */
+    @MethodExpr("pageAllOrderByQueuedAtDescAndIdDesc")
     List<HubExecutionDO> pageAllOrderByQueuedAtDescIdDesc(
         @Param("offset") long offset, @Param("limit") int limit);
 
     long countByInstanceId(String instanceId);
 
-    @Select("""
-        select id, instance_id as instanceId, instance_code as instanceCode,
-               command_key as commandKey, site, site_session as siteSession,
-               argv_json as argvJson, reuse_instance as reuseInstance, status,
-               exit_code as exitCode, stdout_content as stdoutContent,
-               stdout_truncated as stdoutTruncated, stderr_content as stderrContent,
-               stderr_truncated as stderrTruncated, error_message as errorMessage,
-               timeout_millis as timeoutMillis, queued_at as queuedAt,
-               started_at as startedAt, finished_at as finishedAt,
-               gmt_create as createTime, gmt_modified as modifiedTime, version
-        from hub_execution
-        where instance_id = #{instanceId}
-        order by coalesce(finished_at, started_at, queued_at) desc, id desc
-        limit #{offset}, #{limit}
-        """)
+    /**
+     * Derives {@code select ... where instance_id = #{instanceId} order by queued_at desc,
+     * id desc limit #{limit} offset #{offset}} with AutoMapper 1.0.0; see
+     * {@link #pageAllOrderByQueuedAtDescIdDesc(long, int)} for the naming rationale.
+     */
+    @MethodExpr("pageByInstanceIdOrderByQueuedAtDescAndIdDesc")
     List<HubExecutionDO> pageByInstanceIdOrderByQueuedAtDescIdDesc(
         @Param("instanceId") String instanceId,
         @Param("offset") long offset,

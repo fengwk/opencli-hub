@@ -11,6 +11,10 @@ import fun.fengwk.openclihub.core.command.service.model.HubCommandOutputRule;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.command.HubCommandAccess;
 import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -28,6 +32,9 @@ import org.junit.jupiter.api.Test;
  */
 class HubCommandOutputRuleServiceTest {
 
+    /** Fixed UTC clock so audit times written by the service are exactly assertable. */
+    private static final LocalDateTime FIXED_NOW = LocalDateTime.of(2026, 1, 2, 3, 4, 5);
+
     private InMemoryOutputRuleRepository repository;
     private OpenCliCommandCatalog catalog;
     private HubCommandOutputRuleService service;
@@ -36,7 +43,11 @@ class HubCommandOutputRuleServiceTest {
     void setUp() {
         repository = new InMemoryOutputRuleRepository();
         catalog = stubCatalog();
-        service = new HubCommandOutputRuleService(repository, catalog);
+        service = new HubCommandOutputRuleService(repository, catalog, fixedClock());
+    }
+
+    private static Clock fixedClock() {
+        return Clock.fixed(FIXED_NOW.atZone(ZoneOffset.UTC).toInstant(), ZoneOffset.UTC);
     }
 
     private static OpenCliCommandCatalog stubCatalog() {
@@ -60,6 +71,9 @@ class HubCommandOutputRuleServiceTest {
         assertThat(rule.getTargetType()).isEqualTo(HubCommandOutputTargetType.DIRECTORY);
         assertThat(rule.getFileName()).isNull();
         assertThat(repository.findByCommandKey("chatgpt/image")).isPresent();
+        // The service is the audit-time owner: both columns equal the injected clock.
+        assertThat(rule.getCreateTime()).isEqualTo(FIXED_NOW);
+        assertThat(rule.getUpdateTime()).isEqualTo(FIXED_NOW);
     }
 
     @Test
@@ -290,8 +304,8 @@ class HubCommandOutputRuleServiceTest {
             if (byKey.containsKey(rule.getCommandKey())) {
                 return false;
             }
-            rule.setCreateTime(java.time.LocalDateTime.now());
-            rule.setUpdateTime(rule.getCreateTime());
+            // Faithful to the production repository contract: audit times are supplied by
+            // the service and must persist verbatim.
             byKey.put(rule.getCommandKey(), rule);
             return true;
         }
@@ -301,7 +315,6 @@ class HubCommandOutputRuleServiceTest {
             if (failUpdates || !byKey.containsKey(rule.getCommandKey())) {
                 return false;
             }
-            rule.setUpdateTime(java.time.LocalDateTime.now());
             byKey.put(rule.getCommandKey(), rule);
             return true;
         }

@@ -20,13 +20,19 @@ import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * MySQL/H2 implementation backed by the generated hub_execution mapper.
+ * MyBatis implementation (MySQL/H2 shared SQL) backed by the generated hub_execution mapper.
+ *
+ * <p>Audit timestamps are owned by the service layer: this class only converts whatever
+ * {@link HubExecution} carries and never invents {@code gmt_create}/{@code gmt_modified}
+ * values itself. The service rules are: insert writes {@code createTime = updateTime =
+ * queuedAt}; every update writes {@code updateTime} equal to the latest state time
+ * ({@code startedAt} when marking running, {@code finishedAt} on terminal transitions).
  *
  * @author fengwk
  */
 @AllArgsConstructor
 @Repository
-public class MysqlHubExecutionRepository implements HubExecutionRepository {
+public class MybatisHubExecutionRepository implements HubExecutionRepository {
 
     private final HubExecutionMapper mapper;
     private final ObjectMapper objectMapper;
@@ -86,7 +92,6 @@ public class MysqlHubExecutionRepository implements HubExecutionRepository {
     }
 
     private HubExecutionDO toDO(HubExecution execution) {
-        LocalDateTime now = LocalDateTime.now();
         HubExecutionDO target = new HubExecutionDO();
         target.setId(execution.getId());
         target.setInstanceId(execution.getInstanceId());
@@ -107,8 +112,8 @@ public class MysqlHubExecutionRepository implements HubExecutionRepository {
         target.setQueuedAt(execution.getQueuedAt());
         target.setStartedAt(execution.getStartedAt());
         target.setFinishedAt(execution.getFinishedAt());
-        target.setCreateTime(execution.getQueuedAt() == null ? now : execution.getQueuedAt());
-        target.setModifiedTime(execution.getFinishedAt() == null ? now : execution.getFinishedAt());
+        target.setCreateTime(execution.getCreateTime());
+        target.setUpdateTime(execution.getUpdateTime());
         target.setVersion(0L);
         return target;
     }

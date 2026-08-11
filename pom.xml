@@ -22,6 +22,9 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <opencli-hub.version>1.0.0</opencli-hub.version>
         <spring-boot.version>3.5.0</spring-boot.version>
+        <!-- Override convention4j-parent's managed 0.0.48 with the Maven Central 1.0.0
+             release so the build works without a locally installed AutoMapper snapshot. -->
+        <auto-mapper.version>1.0.0</auto-mapper.version>
     </properties>
 
     <dependencyManagement>

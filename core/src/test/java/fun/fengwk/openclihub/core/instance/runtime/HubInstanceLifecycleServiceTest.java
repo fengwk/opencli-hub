@@ -1364,7 +1364,7 @@ class HubInstanceLifecycleServiceTest {
         return new HubInstanceLifecycleService(
             service, registry, launcher, daemon, properties, settingsService,
             new ProfileSingletonCleaner(), newChromeBootstrap(),
-            newDispatchRegistry, startCoordinator);
+            newDispatchRegistry, startCoordinator, java.time.Clock.systemUTC());
     }
 
     private OpenCliProfileSnapshot connectedProfile(String contextId) {

@@ -27,6 +27,7 @@ import fun.fengwk.openclihub.share.model.execution.HubExecutionStatus;
 import fun.fengwk.openclihub.share.model.execution.SiteSessionMode;
 import fun.fengwk.openclihub.share.model.resource.HubResourceItemDTO;
 import fun.fengwk.openclihub.share.util.HubIds;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -70,6 +71,7 @@ public class HubExecutionService {
     private final HubExecutionConverter converter;
     private final ObjectMapper objectMapper;
     private final OpenCliHubProperties properties;
+    private final Clock clock;
 
     public HubExecutionService(
         OpenCliArgvValidator argvValidator,
@@ -83,7 +85,8 @@ public class HubExecutionService {
         OpenCliExecutor executor,
         HubExecutionConverter converter,
         ObjectMapper objectMapper,
-        OpenCliHubProperties properties) {
+        OpenCliHubProperties properties,
+        Clock clock) {
         this.argvValidator = argvValidator;
         this.blacklistService = blacklistService;
         this.outputRuleService = outputRuleService;
@@ -96,6 +99,7 @@ public class HubExecutionService {
         this.converter = converter;
         this.objectMapper = objectMapper;
         this.properties = properties;
+        this.clock = clock;
     }
 
     /**
@@ -236,7 +240,7 @@ public class HubExecutionService {
         if (!HubIds.isSupported(id)) {
             throw HubErrorCodes.EXECUTION_NOT_FOUND.asThrowable("execution not found: " + id);
         }
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         if (executionRepository.markCancelledIfPending(id, "Cancelled by client", now)) {
             log.info("Execution cancelled id={}", id);
             HubExecution cancelled = executionRepository.findById(id);
@@ -270,7 +274,7 @@ public class HubExecutionService {
             if (executionRepository.markCancelledIfPending(
                 executionId,
                 "Cancelled because the task was discarded from the instance queue",
-                LocalDateTime.now())) {
+                LocalDateTime.now(clock))) {
                 log.info("Execution cancelled after queue discard id={}", executionId);
             }
         } catch (RuntimeException ex) {
@@ -285,7 +289,7 @@ public class HubExecutionService {
         NormalizedOpenCliArgv normalized,
         HubCommandOutputRule outputRule,
         HubExecutionDeadline deadline) {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         if (!executionRepository.markRunningIfPending(executionId, now)) {
             log.info("Skip execution id={} (no longer PENDING; cancelled or raced)", executionId);
             return;
@@ -303,7 +307,7 @@ public class HubExecutionService {
             long remainingMillis = deadline.remainingMillis();
             if (remainingMillis <= 0) {
                 OpenCliExecutionResult timeout = timedOutResult("Execution deadline elapsed before OpenCLI start");
-                execution.markFinished(timeout, LocalDateTime.now());
+                execution.markFinished(timeout, LocalDateTime.now(clock));
                 persistUpdate(execution);
                 return;
             }
@@ -329,9 +333,9 @@ public class HubExecutionService {
                 ? timedOutResult("Execution deadline elapsed before OpenCLI start")
                 : executor.execute(instance, managedArgv, remainingMillis, execution.getId());
             validateJsonOutput(result);
-            execution.markFinished(result, LocalDateTime.now());
+            execution.markFinished(result, LocalDateTime.now(clock));
         } catch (RuntimeException ex) {
-            execution.markFinished(failedResult(ex), LocalDateTime.now());
+            execution.markFinished(failedResult(ex), LocalDateTime.now(clock));
         } finally {
             HubExecutionResourceGroup group = resourceContext == null ? null : resourceContext.getGroup();
             if (resourceContext != null) {
@@ -360,13 +364,14 @@ public class HubExecutionService {
             execution.getDurationMillis());
     }
 
-    private static void recordResourceScanFailure(
+    private void recordResourceScanFailure(
         HubExecution execution, RuntimeException failure) {
         String scanError = "Failed to scan execution resources: " + message(failure);
         if (execution.getStatus() == HubExecutionStatus.SUCCEEDED) {
             execution.setStatus(HubExecutionStatus.FAILED);
             execution.setErrorMessage(scanError);
-            execution.setFinishedAt(LocalDateTime.now());
+            execution.setFinishedAt(LocalDateTime.now(clock));
+            execution.setUpdateTime(execution.getFinishedAt());
         } else if (execution.getErrorMessage() == null || execution.getErrorMessage().isBlank()) {
             execution.setErrorMessage(scanError);
         } else {
@@ -382,7 +387,7 @@ public class HubExecutionService {
         if (isTerminal(execution.getStatus())) {
             return converter.toDTO(execution, List.of());
         }
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         if (execution.getStatus() == HubExecutionStatus.PENDING) {
             // CAS so concurrent cancel(PENDING→CANCELLED) always wins over timeout/fail write.
             OpenCliExecutionResult terminal = isError(failure, HubErrorCodes.QUEUE_WAIT_TIMEOUT)
@@ -430,7 +435,10 @@ public class HubExecutionService {
             sessionMode == SiteSessionMode.PERSISTENT && request.getInstanceId() == null);
         execution.setStatus(HubExecutionStatus.PENDING);
         execution.setTimeoutMillis(timeoutMillis);
-        execution.setQueuedAt(LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now(clock);
+        execution.setQueuedAt(now);
+        execution.setCreateTime(now);
+        execution.setUpdateTime(now);
         return execution;
     }
 

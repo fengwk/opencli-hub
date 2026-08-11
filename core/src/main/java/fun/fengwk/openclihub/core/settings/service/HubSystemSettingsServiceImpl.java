@@ -7,6 +7,7 @@ import fun.fengwk.openclihub.core.settings.service.model.HubSystemSettings;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import fun.fengwk.openclihub.share.model.settings.HubSystemSettingsDTO;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
@@ -22,6 +23,7 @@ import org.springframework.stereotype.Service;
 public class HubSystemSettingsServiceImpl implements HubSystemSettingsService {
 
     private final HubSystemSettingsRepository repository;
+    private final Clock clock;
 
     @Override
     public HubSystemSettings get() {
@@ -56,9 +58,9 @@ public class HubSystemSettingsServiceImpl implements HubSystemSettingsService {
             HubSystemSettings current = get();
             current.setProxyMode(normalized.proxyMode());
             current.setProxyServer(normalized.proxyServer());
+            current.setUpdateTime(LocalDateTime.now(clock));
             if (repository.update(current, current.getVersion())) {
                 current.setVersion(current.getVersion() + 1);
-                current.setUpdateTime(LocalDateTime.now());
                 return current;
             }
         }
@@ -66,11 +68,14 @@ public class HubSystemSettingsServiceImpl implements HubSystemSettingsService {
             "system settings changed concurrently; retry the request");
     }
 
-    private static HubSystemSettings defaults() {
+    private HubSystemSettings defaults() {
         HubSystemSettings settings = new HubSystemSettings();
         settings.setProxyMode(HubProxyMode.DIRECT);
         settings.setProxyServer(null);
         settings.setVersion(0L);
+        LocalDateTime now = LocalDateTime.now(clock);
+        settings.setCreateTime(now);
+        settings.setUpdateTime(now);
         return settings;
     }
 

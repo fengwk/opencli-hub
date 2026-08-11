@@ -6,6 +6,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import fun.fengwk.openclihub.core.command.repo.HubCommandBlacklistRepository;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandBlacklist;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -23,13 +27,16 @@ import org.junit.jupiter.api.Test;
  */
 class HubCommandBlacklistServiceTest {
 
+    /** Fixed UTC clock so audit times written by the service are exactly assertable. */
+    private static final LocalDateTime FIXED_NOW = LocalDateTime.of(2026, 1, 2, 3, 4, 5);
+
     private InMemoryBlacklist repository;
     private HubCommandBlacklistService service;
 
     @BeforeEach
     void setUp() {
         repository = new InMemoryBlacklist();
-        service = new HubCommandBlacklistService(repository);
+        service = new HubCommandBlacklistService(repository, fixedClock());
     }
 
     @Test
@@ -56,6 +63,9 @@ class HubCommandBlacklistServiceTest {
         assertThat(service.findByCommandKey("chatgpt/image")).isPresent();
         // After a successful insert the underlying row exists in the repository.
         assertThat(repository.findByCommandKey("chatgpt/image")).isPresent();
+        // The service is the audit-time owner: both columns equal the injected clock.
+        assertThat(persisted.getCreateTime()).isEqualTo(FIXED_NOW);
+        assertThat(persisted.getUpdateTime()).isEqualTo(FIXED_NOW);
     }
 
     @Test
@@ -170,6 +180,10 @@ class HubCommandBlacklistServiceTest {
         return b;
     }
 
+    private static Clock fixedClock() {
+        return Clock.fixed(FIXED_NOW.atZone(ZoneOffset.UTC).toInstant(), ZoneOffset.UTC);
+    }
+
     /**
      * Test-only repository that keeps a backing list so the cache stays consistent
      * with the persisted state across {@code refresh()} calls.
@@ -198,8 +212,8 @@ class HubCommandBlacklistServiceTest {
                 failNextAdd = false;
                 return false;
             }
-            blacklist.setCreateTime(java.time.LocalDateTime.now());
-            blacklist.setUpdateTime(blacklist.getCreateTime());
+            // Faithful to the production repository contract: audit times are supplied by
+            // the service and must persist verbatim.
             byKey.put(blacklist.getCommandKey(), blacklist);
             return true;
         }
@@ -209,7 +223,6 @@ class HubCommandBlacklistServiceTest {
             if (!byKey.containsKey(blacklist.getCommandKey())) {
                 return false;
             }
-            blacklist.setUpdateTime(java.time.LocalDateTime.now());
             byKey.put(blacklist.getCommandKey(), blacklist);
             return true;
         }

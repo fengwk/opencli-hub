@@ -4,7 +4,6 @@ import fun.fengwk.openclihub.core.command.repo.HubCommandBlacklistRepository;
 import fun.fengwk.openclihub.core.command.repo.impl.mapper.HubCommandBlacklistMapper;
 import fun.fengwk.openclihub.core.command.repo.impl.model.HubCommandBlacklistDO;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandBlacklist;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -12,17 +11,19 @@ import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * MySQL/H2 implementation backed by the auto-generated {@code hub_command_blacklist} mapper.
+ * MyBatis implementation (MySQL/H2 shared SQL) backed by the auto-generated
+ * {@code hub_command_blacklist} mapper.
  *
  * <p>The repository is responsible only for ID generation, DO conversion and mapper
  * invocation. Schema management lives in {@code schema-{h2,mysql}.sql}; this class must
- * not call any DDL at runtime.
+ * not call any DDL at runtime. Audit timestamps are owned by the service layer and are
+ * copied through verbatim.
  *
  * @author fengwk
  */
 @AllArgsConstructor
 @Repository
-public class MysqlHubCommandBlacklistRepository implements HubCommandBlacklistRepository {
+public class MybatisHubCommandBlacklistRepository implements HubCommandBlacklistRepository {
 
     private final HubCommandBlacklistMapper mapper;
 
@@ -70,13 +71,12 @@ public class MysqlHubCommandBlacklistRepository implements HubCommandBlacklistRe
     }
 
     private HubCommandBlacklistDO toDO(HubCommandBlacklist blacklist) {
-        LocalDateTime now = LocalDateTime.now();
         HubCommandBlacklistDO target = new HubCommandBlacklistDO();
         target.setId(blacklist.getId());
         target.setCommandKey(blacklist.getCommandKey());
         target.setReason(blacklist.getReason());
-        target.setCreateTime(blacklist.getCreateTime() == null ? now : blacklist.getCreateTime());
-        target.setModifiedTime(blacklist.getUpdateTime() == null ? now : blacklist.getUpdateTime());
+        target.setCreateTime(blacklist.getCreateTime());
+        target.setUpdateTime(blacklist.getUpdateTime());
         target.setVersion(0L);
         return target;
     }
@@ -90,7 +90,7 @@ public class MysqlHubCommandBlacklistRepository implements HubCommandBlacklistRe
         target.setCommandKey(source.getCommandKey());
         target.setReason(source.getReason());
         target.setCreateTime(source.getCreateTime());
-        target.setUpdateTime(source.getModifiedTime());
+        target.setUpdateTime(source.getUpdateTime());
         return target;
     }
 

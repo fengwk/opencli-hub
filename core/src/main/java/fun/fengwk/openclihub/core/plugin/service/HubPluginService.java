@@ -12,6 +12,7 @@ import fun.fengwk.openclihub.share.model.plugin.HubPluginSourceDTO;
 import fun.fengwk.openclihub.share.model.plugin.HubPluginSourceStatus;
 import fun.fengwk.openclihub.share.model.plugin.HubPluginSourceUpsertDTO;
 import fun.fengwk.openclihub.share.util.HubIds;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -52,6 +53,7 @@ public class HubPluginService {
     private final HubPluginSourceRepository repository;
     private final OpenCliPluginCli pluginCli;
     private final OpenCliCommandCatalog commandCatalog;
+    private final Clock clock;
     /**
      * Single mutation fence for every plugin source mutation (create/update/delete/sync/
      * update-installed). Serializing the read-modify-write sequences under one lock prevents
@@ -83,7 +85,9 @@ public class HubPluginService {
             }
             source.setId(UUID.randomUUID().toString());
             source.setLastStatus(HubPluginSourceStatus.IDLE);
-            source.setCreateTime(LocalDateTime.now());
+            LocalDateTime now = LocalDateTime.now(clock);
+            source.setCreateTime(now);
+            source.setUpdateTime(now);
             source.setVersion(0L);
             if (!repository.add(source)) {
                 throw HubErrorCodes.PLUGIN_SOURCE_ARGUMENT_INVALID.asThrowable("failed to persist plugin source");
@@ -114,6 +118,7 @@ public class HubPluginService {
             updated.setLastResult(existing.getLastResult());
             updated.setCreateTime(existing.getCreateTime());
             updated.setVersion(existing.getVersion());
+            updated.setUpdateTime(LocalDateTime.now(clock));
             if (!repository.update(updated)) {
                 throw HubErrorCodes.PLUGIN_SOURCE_UPDATE_CONFLICT.asThrowable(
                     "plugin source changed concurrently: " + id);
@@ -156,6 +161,7 @@ public class HubPluginService {
             }
             source.setLastStatus(HubPluginSourceStatus.SYNCING);
             source.setLastError(null);
+            source.setUpdateTime(LocalDateTime.now(clock));
             if (!repository.update(source)) {
                 throw HubErrorCodes.PLUGIN_SOURCE_UPDATE_CONFLICT.asThrowable(
                     "plugin source changed concurrently: " + id);
@@ -198,7 +204,8 @@ public class HubPluginService {
             HubPluginSource latest = requireSource(id);
             latest.setLastStatus(HubPluginSourceStatus.SUCCEEDED);
             latest.setLastError(null);
-            latest.setLastSyncedAt(LocalDateTime.now());
+            latest.setLastSyncedAt(LocalDateTime.now(clock));
+            latest.setUpdateTime(latest.getLastSyncedAt());
             latest.setLastResult(String.join("\n", commands));
             if (!repository.update(latest)) {
                 throw HubErrorCodes.PLUGIN_SOURCE_UPDATE_CONFLICT.asThrowable(
@@ -241,6 +248,7 @@ public class HubPluginService {
             }
             source.setLastStatus(HubPluginSourceStatus.SYNCING);
             source.setLastError(null);
+            source.setUpdateTime(LocalDateTime.now(clock));
             if (!repository.update(source)) {
                 throw HubErrorCodes.PLUGIN_SOURCE_UPDATE_CONFLICT.asThrowable(
                     "plugin source changed concurrently: " + id);
@@ -271,7 +279,8 @@ public class HubPluginService {
             HubPluginSource latest = requireSource(id);
             latest.setLastStatus(HubPluginSourceStatus.SUCCEEDED);
             latest.setLastError(null);
-            latest.setLastSyncedAt(LocalDateTime.now());
+            latest.setLastSyncedAt(LocalDateTime.now(clock));
+            latest.setUpdateTime(latest.getLastSyncedAt());
             latest.setLastResult(String.join("\n", commands));
             if (!repository.update(latest)) {
                 throw HubErrorCodes.PLUGIN_SOURCE_UPDATE_CONFLICT.asThrowable(
@@ -341,7 +350,8 @@ public class HubPluginService {
         HubPluginSource latest = requireSource(source.getId());
         latest.setLastStatus(HubPluginSourceStatus.FAILED);
         latest.setLastError(error == null || error.isBlank() ? "plugin sync failed" : error.trim());
-        latest.setLastSyncedAt(LocalDateTime.now());
+        latest.setLastSyncedAt(LocalDateTime.now(clock));
+        latest.setUpdateTime(latest.getLastSyncedAt());
         latest.setLastResult(String.join("\n", commands));
         if (!repository.update(latest)) {
             log.error("Failed to persist plugin sync failure id={} (row changed concurrently)", source.getId());
@@ -366,7 +376,8 @@ public class HubPluginService {
         String error = firstNonBlank(failure.getMessage(), failure.getClass().getSimpleName());
         latest.setLastStatus(HubPluginSourceStatus.FAILED);
         latest.setLastError(error);
-        latest.setLastSyncedAt(LocalDateTime.now());
+        latest.setLastSyncedAt(LocalDateTime.now(clock));
+        latest.setUpdateTime(latest.getLastSyncedAt());
         latest.setLastResult(String.join("\n", commands));
         try {
             if (!repository.update(latest)) {

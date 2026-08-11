@@ -20,7 +20,7 @@ public interface HubPluginSourceMapper extends BaseMapper {
                enabled, last_status as lastStatus,
                last_error as lastError, last_synced_at as lastSyncedAt,
                last_result_json as lastResultJson,
-               gmt_create as createTime, gmt_modified as modifiedTime, version
+               gmt_create as createTime, gmt_modified as updateTime, version
         from hub_plugin_source
         order by gmt_create asc, id asc
         """)
@@ -31,7 +31,7 @@ public interface HubPluginSourceMapper extends BaseMapper {
                enabled, last_status as lastStatus,
                last_error as lastError, last_synced_at as lastSyncedAt,
                last_result_json as lastResultJson,
-               gmt_create as createTime, gmt_modified as modifiedTime, version
+               gmt_create as createTime, gmt_modified as updateTime, version
         from hub_plugin_source
         where id = #{id}
         """)
@@ -42,7 +42,7 @@ public interface HubPluginSourceMapper extends BaseMapper {
                enabled, last_status as lastStatus,
                last_error as lastError, last_synced_at as lastSyncedAt,
                last_result_json as lastResultJson,
-               gmt_create as createTime, gmt_modified as modifiedTime, version
+               gmt_create as createTime, gmt_modified as updateTime, version
         from hub_plugin_source
         where name = #{name}
         """)
@@ -54,7 +54,7 @@ public interface HubPluginSourceMapper extends BaseMapper {
          last_error, last_synced_at, last_result_json, gmt_create, gmt_modified, version)
         values
         (#{id}, #{name}, #{source}, #{desiredPluginsJson}, #{enabled}, #{lastStatus},
-         #{lastError}, #{lastSyncedAt}, #{lastResultJson}, #{createTime}, #{modifiedTime}, #{version})
+         #{lastError}, #{lastSyncedAt}, #{lastResultJson}, #{createTime}, #{updateTime}, #{version})
         """)
     int insert(HubPluginSourceDO source);
 
@@ -63,7 +63,7 @@ public interface HubPluginSourceMapper extends BaseMapper {
         set name = #{name}, source = #{source}, desired_plugins_json = #{desiredPluginsJson},
             enabled = #{enabled}, last_status = #{lastStatus},
             last_error = #{lastError}, last_synced_at = #{lastSyncedAt},
-            last_result_json = #{lastResultJson}, gmt_modified = #{modifiedTime},
+            last_result_json = #{lastResultJson}, gmt_modified = #{updateTime},
             version = version + 1
         where id = #{id} and version = #{version}
         """)

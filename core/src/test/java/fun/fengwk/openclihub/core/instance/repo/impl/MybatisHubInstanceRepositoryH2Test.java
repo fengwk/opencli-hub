@@ -13,7 +13,10 @@ import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
 import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -36,7 +39,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * on the shared in-memory database.
  */
 @SpringBootTest(classes = fun.fengwk.openclihub.core.CoreTestApplication.class)
-class MysqlHubInstanceRepositoryH2Test {
+class MybatisHubInstanceRepositoryH2Test {
+
+    /** Fixed UTC clock so service audit writes are deterministic and exactly assertable. */
+    private static final LocalDateTime FIXED_NOW = LocalDateTime.of(2026, 1, 2, 3, 4, 5);
 
     @Autowired
     private HubInstanceRepository repository;
@@ -161,7 +167,10 @@ class MysqlHubInstanceRepositoryH2Test {
         instance.setState(HubInstanceState.STOPPED);
         instance.setWebsites(List.of());
         instance.setMaxPending(5);
-        instance.setStateChangedAt(LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now();
+        instance.setStateChangedAt(now);
+        instance.setCreateTime(now);
+        instance.setUpdateTime(now);
         repository.add(instance);
 
         assertThat(repository.findById(id).getWebsites()).isEmpty();
@@ -192,17 +201,18 @@ class MysqlHubInstanceRepositoryH2Test {
             id);
         assertThat(updated.getCreateTime()).isEqualTo(originalCreateTime);
         assertThat(loaded.getCreateTime()).isEqualTo(originalCreateTime);
-        assertThat(loaded.getUpdateTime()).isAfter(originalCreateTime);
-        assertThat(modifiedColumn).isEqualTo(loaded.getUpdateTime());
+        assertThat(loaded.getUpdateTime()).isEqualTo(FIXED_NOW);
+        assertThat(modifiedColumn).isEqualTo(FIXED_NOW);
 
         service.updateState(id, HubInstanceState.RUNNING, null);
         loaded = repository.findById(id);
+        assertThat(loaded.getUpdateTime()).isEqualTo(FIXED_NOW);
         assertThat(loaded.getUpdateTime()).isEqualTo(loaded.getStateChangedAt());
 
         service.bindContextId(id, "ctx-" + instance.getCode());
         loaded = repository.findById(id);
         assertThat(loaded.getContextId()).isEqualTo("ctx-" + instance.getCode());
-        assertThat(loaded.getUpdateTime()).isAfter(originalCreateTime);
+        assertThat(loaded.getUpdateTime()).isEqualTo(FIXED_NOW);
         assertThat(loaded.getCreateTime()).isEqualTo(originalCreateTime);
     }
 
@@ -214,7 +224,10 @@ class MysqlHubInstanceRepositoryH2Test {
         instance.setState(state);
         instance.setWebsites(List.of("bilibili"));
         instance.setMaxPending(5);
-        instance.setStateChangedAt(LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now();
+        instance.setStateChangedAt(now);
+        instance.setCreateTime(now);
+        instance.setUpdateTime(now);
         return instance;
     }
 
@@ -237,7 +250,9 @@ class MysqlHubInstanceRepositoryH2Test {
     private HubInstanceServiceImpl newService() {
         CatalogWebsiteLookup lookup = () -> Set.of("bilibili");
         HubInstanceValidator validator = new HubInstanceValidator(lookup);
-        return new HubInstanceServiceImpl(repository, validator);
+        Clock clock = Clock.fixed(
+            FIXED_NOW.atZone(ZoneOffset.UTC).toInstant(), ZoneOffset.UTC);
+        return new HubInstanceServiceImpl(repository, validator, clock);
     }
 
 }

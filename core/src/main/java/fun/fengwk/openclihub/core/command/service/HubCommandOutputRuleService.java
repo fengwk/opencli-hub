@@ -10,6 +10,8 @@ import fun.fengwk.openclihub.core.opencli.catalog.OpenCliReservedManagementComma
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.command.HubCommandOutputRuleDTO;
 import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -43,11 +45,13 @@ public class HubCommandOutputRuleService {
 
     private final HubCommandOutputRuleRepository repository;
     private final OpenCliCommandCatalog catalog;
+    private final Clock clock;
     private final ConcurrentMap<String, HubCommandOutputRule> cache = new ConcurrentHashMap<>();
     private final AtomicBoolean loaded = new AtomicBoolean(false);
 
     public HubCommandOutputRuleService(HubCommandOutputRuleRepository repository,
-                                       OpenCliCommandCatalog catalog) {
+                                       OpenCliCommandCatalog catalog,
+                                       Clock clock) {
         if (repository == null) {
             throw new IllegalArgumentException("repository must not be null");
         }
@@ -56,6 +60,7 @@ public class HubCommandOutputRuleService {
         }
         this.repository = repository;
         this.catalog = catalog;
+        this.clock = clock;
     }
 
     public Optional<HubCommandOutputRule> findByCommandKey(String commandKey) {
@@ -86,6 +91,9 @@ public class HubCommandOutputRuleService {
         rule.setFileName(fileName);
         if (existing == null) {
             rule.setId(repository.generateId());
+            LocalDateTime now = LocalDateTime.now(clock);
+            rule.setCreateTime(now);
+            rule.setUpdateTime(now);
             if (!repository.add(rule)) {
                 throw new OpenCliCommandPolicyException(HubErrorCodes.EXECUTION_PERSIST_FAILED,
                     "Failed to persist output rule: " + commandKey);
@@ -93,6 +101,7 @@ public class HubCommandOutputRuleService {
         } else {
             rule.setId(existing.getId());
             rule.setCreateTime(existing.getCreateTime());
+            rule.setUpdateTime(LocalDateTime.now(clock));
             if (!repository.update(rule)) {
                 throw new OpenCliCommandPolicyException(HubErrorCodes.EXECUTION_PERSIST_FAILED,
                     "Failed to update output rule: " + commandKey);

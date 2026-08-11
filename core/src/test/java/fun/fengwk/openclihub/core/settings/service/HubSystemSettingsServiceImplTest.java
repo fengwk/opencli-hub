@@ -15,6 +15,10 @@ import fun.fengwk.openclihub.core.settings.service.model.HubSystemSettings;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import fun.fengwk.openclihub.share.model.settings.HubSystemSettingsDTO;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -22,13 +26,16 @@ import org.mockito.ArgumentCaptor;
 /** Tests lazy singleton creation, normalization, and optimistic updates. */
 class HubSystemSettingsServiceImplTest {
 
+    /** Fixed UTC clock so seeded audit times are exactly assertable. */
+    private static final LocalDateTime FIXED_NOW = LocalDateTime.of(2026, 1, 2, 3, 4, 5);
+
     private HubSystemSettingsRepository repository;
     private HubSystemSettingsServiceImpl service;
 
     @BeforeEach
     void setUp() {
         repository = mock(HubSystemSettingsRepository.class);
-        service = new HubSystemSettingsServiceImpl(repository);
+        service = new HubSystemSettingsServiceImpl(repository, fixedClock());
     }
 
     @Test
@@ -40,7 +47,10 @@ class HubSystemSettingsServiceImplTest {
 
         assertThat(settings.getProxyMode()).isEqualTo(HubProxyMode.DIRECT);
         assertThat(settings.getProxyServer()).isNull();
-        verify(repository).add(any());
+        ArgumentCaptor<HubSystemSettings> captor = ArgumentCaptor.forClass(HubSystemSettings.class);
+        verify(repository).add(captor.capture());
+        assertThat(captor.getValue().getCreateTime()).isEqualTo(FIXED_NOW);
+        assertThat(captor.getValue().getUpdateTime()).isEqualTo(FIXED_NOW);
     }
 
     @Test
@@ -60,6 +70,7 @@ class HubSystemSettingsServiceImplTest {
         ArgumentCaptor<HubSystemSettings> captor = ArgumentCaptor.forClass(HubSystemSettings.class);
         verify(repository).update(captor.capture(), eq(3L));
         assertThat(captor.getValue().getProxyServer()).isEqualTo("https://proxy.example:8443");
+        assertThat(captor.getValue().getUpdateTime()).isEqualTo(FIXED_NOW);
     }
 
     @Test
@@ -96,6 +107,10 @@ class HubSystemSettingsServiceImplTest {
         settings.setProxyServer(server);
         settings.setVersion(version);
         return settings;
+    }
+
+    private static Clock fixedClock() {
+        return Clock.fixed(FIXED_NOW.atZone(ZoneOffset.UTC).toInstant(), ZoneOffset.UTC);
     }
 
     private static String prefixed(HubErrorCodes code) {

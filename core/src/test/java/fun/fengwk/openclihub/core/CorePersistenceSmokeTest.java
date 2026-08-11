@@ -16,7 +16,9 @@ import fun.fengwk.openclihub.share.model.execution.HubExecutionStatus;
 import fun.fengwk.openclihub.share.model.execution.SiteSessionMode;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import fun.fengwk.openclihub.share.util.HubIds;
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -50,6 +52,9 @@ class CorePersistenceSmokeTest {
     @Autowired
     private HubCommandOutputRuleRepository outputRuleRepository;
 
+    @Autowired
+    private Clock clock;
+
     /** Production repositories must all use the same canonical JDK UUID contract. */
     @Test
     void shouldGenerateCanonicalUuidForEveryPersistentAggregate() {
@@ -59,14 +64,23 @@ class CorePersistenceSmokeTest {
         assertThat(HubIds.isCanonicalUuid(outputRuleRepository.generateId())).isTrue();
     }
 
+    /** The shared audit clock bean must be UTC so persisted wall times are timezone-stable. */
+    @Test
+    void shouldProvideUtcClockBean() {
+        assertThat(clock.getZone()).isEqualTo(ZoneOffset.UTC);
+    }
+
     /** UUID policy IDs must round-trip through generated MyBatis SQL and VARCHAR columns. */
     @Test
     void shouldPersistUuidCommandPolicyIds() {
+        LocalDateTime now = LocalDateTime.now();
         String blacklistId = blacklistRepository.generateId();
         HubCommandBlacklist blacklist = new HubCommandBlacklist();
         blacklist.setId(blacklistId);
         blacklist.setCommandKey("test/blacklist-" + blacklistId);
         blacklist.setReason("uuid migration test");
+        blacklist.setCreateTime(now);
+        blacklist.setUpdateTime(now);
         assertThat(blacklistRepository.add(blacklist)).isTrue();
         assertThat(blacklistRepository.findById(blacklistId).getId()).isEqualTo(blacklistId);
 
@@ -76,6 +90,8 @@ class CorePersistenceSmokeTest {
         outputRule.setCommandKey("test/output-" + outputRuleId);
         outputRule.setArgumentName("output");
         outputRule.setTargetType(HubCommandOutputTargetType.DIRECTORY);
+        outputRule.setCreateTime(now);
+        outputRule.setUpdateTime(now);
         assertThat(outputRuleRepository.add(outputRule)).isTrue();
         assertThat(outputRuleRepository.findById(outputRuleId).getId()).isEqualTo(outputRuleId);
 
@@ -83,7 +99,11 @@ class CorePersistenceSmokeTest {
         assertThat(outputRuleRepository.deleteById(outputRuleId)).isTrue();
     }
 
-    /** Mapper pagination must use event time, with opaque ID only as a stable tie-break. */
+    /**
+     * Mapper pagination must order by the queued wall time ({@code queued_at desc}) with the
+     * opaque ID as the stable tie-break — derived by AutoMapper 1.0.0 via {@code @MethodExpr}.
+     * Distinct started/finished times prove the order key is {@code queued_at}, not activity time.
+     */
     @Test
     void shouldPageExecutionsByQueuedTimeThenOpaqueId() {
         String instanceId = UUID.randomUUID().toString();
@@ -138,6 +158,8 @@ class CorePersistenceSmokeTest {
         execution.setStatus(HubExecutionStatus.PENDING);
         execution.setTimeoutMillis(600000L);
         execution.setQueuedAt(now);
+        execution.setCreateTime(now);
+        execution.setUpdateTime(now);
         assertThat(executionRepository.add(execution)).isTrue();
         HubExecution saved = executionRepository.findById("2001");
         assertThat(saved.getArgv()).containsExactly("bilibili", "hot", "--limit", "5");
@@ -156,8 +178,12 @@ class CorePersistenceSmokeTest {
         execution.setStatus(HubExecutionStatus.SUCCEEDED);
         execution.setTimeoutMillis(60_000L);
         execution.setQueuedAt(queuedAt);
-        execution.setStartedAt(queuedAt);
-        execution.setFinishedAt(queuedAt);
+        // Activity times deliberately differ from the queue time so the page order can
+        // only come from queued_at (the derived order key), never from started/finished.
+        execution.setStartedAt(queuedAt.plusSeconds(60));
+        execution.setFinishedAt(queuedAt.plusSeconds(120));
+        execution.setCreateTime(queuedAt);
+        execution.setUpdateTime(queuedAt);
         return execution;
     }
 

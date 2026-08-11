@@ -10,20 +10,21 @@ import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
 import java.io.IOException;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * MySQL/H2 implementation backed by the generated hub_instance mapper.
+ * MyBatis implementation (MySQL/H2 shared SQL) backed by the generated hub_instance mapper.
+ *
+ * <p>Audit timestamps are owned by the service layer and are copied through verbatim.
  *
  * @author fengwk
  */
 @AllArgsConstructor
 @Repository
-public class MysqlHubInstanceRepository implements HubInstanceRepository {
+public class MybatisHubInstanceRepository implements HubInstanceRepository {
 
     private final HubInstanceMapper mapper;
     private final ObjectMapper objectMapper;
@@ -69,7 +70,6 @@ public class MysqlHubInstanceRepository implements HubInstanceRepository {
     }
 
     private HubInstanceDO toDO(HubInstance instance) {
-        LocalDateTime now = LocalDateTime.now();
         HubInstanceDO target = new HubInstanceDO();
         target.setId(instance.getId());
         target.setCode(instance.getCode());
@@ -83,8 +83,8 @@ public class MysqlHubInstanceRepository implements HubInstanceRepository {
         target.setProxyServer(instance.getProxyServer());
         target.setLastErrorMessage(instance.getLastErrorMessage());
         target.setStateChangedAt(instance.getStateChangedAt());
-        target.setCreateTime(instance.getCreateTime() == null ? now : instance.getCreateTime());
-        target.setModifiedTime(instance.getUpdateTime() == null ? now : instance.getUpdateTime());
+        target.setCreateTime(instance.getCreateTime());
+        target.setUpdateTime(instance.getUpdateTime());
         target.setVersion(0L);
         return target;
     }
@@ -108,7 +108,7 @@ public class MysqlHubInstanceRepository implements HubInstanceRepository {
         target.setLastErrorMessage(source.getLastErrorMessage());
         target.setStateChangedAt(source.getStateChangedAt());
         target.setCreateTime(source.getCreateTime());
-        target.setUpdateTime(source.getModifiedTime());
+        target.setUpdateTime(source.getUpdateTime());
         return target;
     }
 

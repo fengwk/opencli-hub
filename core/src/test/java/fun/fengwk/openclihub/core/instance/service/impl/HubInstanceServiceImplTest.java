@@ -21,7 +21,10 @@ import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
 import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -37,6 +40,9 @@ import org.springframework.dao.DuplicateKeyException;
  */
 class HubInstanceServiceImplTest {
 
+    /** Fixed UTC clock so every service-written audit timestamp is exactly assertable. */
+    private static final LocalDateTime FIXED_NOW = LocalDateTime.of(2026, 1, 2, 3, 4, 5);
+
     private HubInstanceRepository repository;
     private HubInstanceValidator validator;
     private HubInstanceServiceImpl service;
@@ -46,7 +52,7 @@ class HubInstanceServiceImplTest {
         repository = mock(HubInstanceRepository.class);
         CatalogWebsiteLookup lookup = () -> Set.of("bilibili", "chatgpt");
         validator = new HubInstanceValidator(lookup);
-        service = new HubInstanceServiceImpl(repository, validator);
+        service = new HubInstanceServiceImpl(repository, validator, fixedClock());
     }
 
     @Test
@@ -106,9 +112,9 @@ class HubInstanceServiceImplTest {
         assertThat(saved.getWebsites()).containsExactly("bilibili");
         assertThat(saved.getProxyMode()).isEqualTo(HubProxyMode.INHERIT);
         assertThat(saved.getProxyServer()).isNull();
-        assertThat(saved.getStateChangedAt()).isNotNull();
-        assertThat(saved.getCreateTime()).isNotNull();
-        assertThat(saved.getUpdateTime()).isEqualTo(saved.getCreateTime());
+        assertThat(saved.getStateChangedAt()).isEqualTo(FIXED_NOW);
+        assertThat(saved.getCreateTime()).isEqualTo(FIXED_NOW);
+        assertThat(saved.getUpdateTime()).isEqualTo(FIXED_NOW);
     }
 
     @Test
@@ -206,7 +212,7 @@ class HubInstanceServiceImplTest {
         assertThat(result.getProxyMode()).isEqualTo(HubProxyMode.CUSTOM);
         assertThat(result.getProxyServer()).isEqualTo("http://proxy.example:8080");
         assertThat(result.getCreateTime()).isEqualTo(createTime);
-        assertThat(result.getUpdateTime()).isAfter(createTime);
+        assertThat(result.getUpdateTime()).isEqualTo(FIXED_NOW);
     }
 
     @Test
@@ -247,8 +253,8 @@ class HubInstanceServiceImplTest {
         HubInstance saved = captor.getValue();
         assertThat(saved.getState()).isEqualTo(HubInstanceState.RUNNING);
         assertThat(saved.getLastErrorMessage()).isNull();
-        assertThat(saved.getStateChangedAt()).isNotNull();
-        assertThat(saved.getUpdateTime()).isEqualTo(saved.getStateChangedAt());
+        assertThat(saved.getStateChangedAt()).isEqualTo(FIXED_NOW);
+        assertThat(saved.getUpdateTime()).isEqualTo(FIXED_NOW);
     }
 
     @Test
@@ -409,9 +415,13 @@ class HubInstanceServiceImplTest {
         ArgumentCaptor<HubInstance> captor = ArgumentCaptor.forClass(HubInstance.class);
         verify(repository).update(captor.capture());
         assertThat(captor.getValue().getContextId()).isEqualTo("ctx-y");
-        assertThat(captor.getValue().getUpdateTime()).isAfter(previousUpdateTime);
+        assertThat(captor.getValue().getUpdateTime()).isEqualTo(FIXED_NOW);
         // The repository must be queried with the trimmed value so uniqueness checks are exact.
         verify(repository).findByContextId("ctx-y");
+    }
+
+    private static Clock fixedClock() {
+        return Clock.fixed(FIXED_NOW.atZone(ZoneOffset.UTC).toInstant(), ZoneOffset.UTC);
     }
 
     private HubInstance newInstance(String id, String code) {

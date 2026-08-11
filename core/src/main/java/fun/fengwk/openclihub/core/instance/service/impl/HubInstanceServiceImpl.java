@@ -8,6 +8,7 @@ import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
 import fun.fengwk.openclihub.share.util.HubIds;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -29,10 +30,14 @@ public class HubInstanceServiceImpl implements HubInstanceService {
 
     private final HubInstanceRepository repository;
     private final HubInstanceValidator validator;
+    private final Clock clock;
 
-    public HubInstanceServiceImpl(HubInstanceRepository repository, HubInstanceValidator validator) {
+    public HubInstanceServiceImpl(HubInstanceRepository repository,
+                                  HubInstanceValidator validator,
+                                  Clock clock) {
         this.repository = repository;
         this.validator = validator;
+        this.clock = clock;
     }
 
     @Override
@@ -87,7 +92,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
     @Override
     public void create(HubInstance instance) {
         validateAndNormalizeForCreate(instance);
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         if (instance.getId() == null || instance.getId().isBlank()) {
             instance.setId(repository.generateId());
         }
@@ -134,7 +139,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
         existing.setPriority(dto.getPriority());
         existing.setProxyMode(dto.getProxyMode());
         existing.setProxyServer(dto.getProxyServer());
-        existing.setUpdateTime(LocalDateTime.now());
+        existing.setUpdateTime(LocalDateTime.now(clock));
 
         // Pre-check code uniqueness excluding the row being updated.
         HubInstance byCode = repository.findByCode(existing.getCode());
@@ -162,7 +167,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
             throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("state is required");
         }
         HubInstance existing = get(id);
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         existing.setState(newState);
         existing.setStateChangedAt(now);
         existing.setUpdateTime(now);
@@ -202,7 +207,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
                 "contextId already bound: " + normalized);
         }
         existing.setContextId(normalized);
-        existing.setUpdateTime(LocalDateTime.now());
+        existing.setUpdateTime(LocalDateTime.now(clock));
         try {
             boolean updated = repository.update(existing);
             if (!updated) {

@@ -36,7 +36,7 @@ public class HubExecutionDO {
     @FieldName("gmt_create")
     private LocalDateTime createTime;
     @FieldName("gmt_modified")
-    private LocalDateTime modifiedTime;
+    private LocalDateTime updateTime;
     private Long version;
 
 }
