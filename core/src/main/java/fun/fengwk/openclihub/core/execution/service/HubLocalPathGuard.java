@@ -19,11 +19,12 @@ import org.springframework.stereotype.Component;
  * <p>Policy: the only file reference a caller may supply is a {@code /resources/...}
  * virtual path (uploaded resources, or outputs of previous executions). Every other
  * path-shaped argv value — absolute path, Windows drive path, {@code ~} expansion,
- * explicit traversal, relative path with separators, a file that already exists relative
- * to the configured OpenCLI workdir, {@code file:} URI, or a virtual path that escapes
+ * explicit traversal, a file or directory that already exists relative to the
+ * configured OpenCLI workdir, {@code file:} URI, or a virtual path that escapes
  * the root through traversal or a symbolic link — is rejected with
  * {@link HubErrorCodes#OPENCLI_LOCAL_PATH_NOT_ALLOWED}. Values that are not path-shaped
- * (URLs, prompts, flags) pass through unchanged.
+ * (URLs, prompts, dates, flags — including text that merely contains slashes) pass
+ * through unchanged.
  *
  * <p>Relative-path resolution (for the workdir existence probe) is anchored at the
  * configured OpenCLI workdir, never at the JVM working directory, because that is the
@@ -194,31 +195,39 @@ public class HubLocalPathGuard {
         if (token.startsWith("/")) {
             return true;
         }
-        if (".".equals(token) || "..".equals(token)) {
-            return true;
-        }
-        if (token.startsWith("./") || token.startsWith("../")) {
-            return true;
-        }
-        if (containsPathSeparator(token)) {
+        if (hasTraversalSegment(token)) {
             return true;
         }
         return existsUnderWorkdir(token);
     }
 
     /**
-     * A relative value without separators is only a path when it already exists relative
-     * to the configured OpenCLI workdir (the directory the child process will run in).
+     * Detect explicit traversal in a relative value: any standalone {@code .} or
+     * {@code ..} segment (e.g. {@code ./x}, {@code ../x}, {@code a/../../b}), split on
+     * both slash styles. Ordinary slashed text ({@code 2026/08/12}, {@code foo/bar},
+     * full prompts) has no such segment and is not a path candidate by itself.
+     */
+    private static boolean hasTraversalSegment(String token) {
+        String normalized = token.replace('\\', '/');
+        for (String segment : normalized.split("/", -1)) {
+            if (".".equals(segment) || "..".equals(segment)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A non-absolute value is only a path when it already exists relative to the
+     * configured OpenCLI workdir (the directory the child process will run in). The
+     * probe also covers nested relative paths such as {@code foo/bar} when the file or
+     * directory really exists there.
      */
     private boolean existsUnderWorkdir(String token) {
         if (workdir == null) {
             return false;
         }
         return Files.exists(workdir.resolve(token), LinkOption.NOFOLLOW_LINKS);
-    }
-
-    private static boolean containsPathSeparator(String token) {
-        return token.indexOf('/') >= 0 || token.indexOf('\\') >= 0;
     }
 
     private static boolean isWindowsAbsolutePath(String token) {

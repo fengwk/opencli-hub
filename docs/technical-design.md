@@ -824,12 +824,11 @@ command.addAll(request.getArgv());
 调用方必须先上传资源，再把上传响应中的 `resourcePath`（上述虚拟路径）作为独立 argv 值传入；Hub 解析、加 lease 并替换为资源根下的真实路径。**独立 argv 值若是本地路径会被拒绝**：
 
 - 绝对路径（包括恰好位于数据卷资源根内的真实路径）、`~` 展开、`file://` URI、Windows drive path；
-- 显式 traversal（`.` / `..` / `./x` / `../x` / 含 `..` 段的相对路径）；
-- 含路径分隔符的相对路径（例如 `resources-evil/x.txt` 这类 `resources` 前缀碰撞）；
-- 相对 OpenCLI workdir 已存在的文件（按配置的 workdir 解析，不按 JVM cwd）；
+- 显式 traversal（`.` / `..` / `./x` / `../x` / 含独立 `..` 段的相对路径，如 `a/../../b`）；
+- 相对 OpenCLI workdir 实际存在的文件/目录（按配置的 workdir 解析，不按 JVM cwd；包括嵌套形式如 workdir 下确实存在的 `foo/bar`）；
 - 通过 traversal 或符号链接逃逸资源根的 `/resources/...` 引用。
 
-以上一律以 `OPENCLI_LOCAL_PATH_NOT_ALLOWED` 拒绝。http/https 等 URL、`data:`/`mailto:` 等 URI 和普通非路径 prompt 不误判，原样透传。
+以上一律以 `OPENCLI_LOCAL_PATH_NOT_ALLOWED` 拒绝。http/https 等 URL、`data:`/`mailto:` 等 URI 和普通非路径 prompt 不误判，原样透传；仅含斜杠的普通文本（如完整 prompt `请解释 /etc/passwd 的格式`、日期 `2026/08/12`、workdir 下不存在的 `foo/bar`）同样不视为路径。
 
 最终 argv 防御性校验：Hub 替换/注入的每个绝对路径必须位于 canonical resource root 之下；尚未创建的执行输出目标（managed output）检查规范化目标与最近存在的父目录（`toRealPath`），资源树内任意层级的符号链接都会被拒绝。判定全部基于 Path 语义（normalize/toRealPath/NOFOLLOW_LINKS/Path.startsWith），不使用字符串前缀比较。
 

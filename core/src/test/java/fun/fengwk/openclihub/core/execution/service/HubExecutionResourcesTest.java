@@ -315,17 +315,17 @@ class HubExecutionResourcesTest {
     }
 
     /**
-     * URLs and ordinary prompts are not path candidates: they pass through unchanged and
-     * no resource work is triggered.
+     * URLs, ordinary prompts and slashed text are not path candidates: they pass through
+     * unchanged and no resource work is triggered.
      */
     @Test
     void shouldPassThroughUrlAndPromptTokens() {
         NormalizedOpenCliArgv normalized = argv(List.of(
-            "chatgpt", "ask", "https://example.com/a/b", "你好，帮我写一首诗"));
+            "chatgpt", "ask", "https://example.com/a/b", "请解释 /etc/passwd 的格式", "2026/08/12"));
         try (HubExecutionResources.ResourceContext c = resources.prepare("8107", normalized, null)) {
             assertThat(c.getGroup()).isNull();
             assertThat(c.getSubstitutedArgv()).containsExactly(
-                "chatgpt", "ask", "https://example.com/a/b", "你好，帮我写一首诗");
+                "chatgpt", "ask", "https://example.com/a/b", "请解释 /etc/passwd 的格式", "2026/08/12");
         }
         assertThat(leaseManager.heldPathCount()).isZero();
     }

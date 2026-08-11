@@ -105,7 +105,8 @@ class HubLocalPathGuardTest {
 
     @Test
     void shouldRejectExplicitTraversal() {
-        for (String token : List.of("../etc/passwd", "./x.txt", "a/../../etc", "..", ".")) {
+        for (String token : List.of(
+            "../etc/passwd", "./x.txt", "a/../../etc", "..", ".", "..\\..\\etc\\passwd")) {
             assertThatThrownBy(() -> guard.classifyCallerToken(token))
                 .as("traversal token: %s", token)
                 .isInstanceOf(ThrowableConventionErrorCode.class)
@@ -115,28 +116,29 @@ class HubLocalPathGuardTest {
     }
 
     /**
-     * Prefix collision: {@code resources-evil/...} looks like a resource reference but is
-     * not a virtual {@code /resources/...} path — it is a relative local path and must be
-     * rejected, while the bare word {@code resources-evil} stays an ordinary prompt.
+     * Prefix collision: {@code resources-evil/...} is not a virtual {@code /resources/...}
+     * path and, when nothing exists under the workdir, it is ordinary slashed text — it
+     * must pass through instead of being treated as a resource reference or a path.
      */
     @Test
-    void shouldRejectResourcePrefixCollisionRelativePath() {
-        assertThatThrownBy(() -> guard.classifyCallerToken("resources-evil/x.txt"))
-            .isInstanceOf(ThrowableConventionErrorCode.class)
-            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
-                .isEqualTo(HubErrorCodes.OPENCLI_LOCAL_PATH_NOT_ALLOWED.getCode()));
+    void shouldPassResourcePrefixCollisionWhenNotExisting() {
+        assertThat(guard.classifyCallerToken("resources-evil/x.txt"))
+            .isEqualTo(CallerTokenKind.ORDINARY_VALUE);
         assertThat(guard.classifyCallerToken("resources-evil"))
             .isEqualTo(CallerTokenKind.ORDINARY_VALUE);
     }
 
+    /**
+     * Slashed relative text is not a path by itself: {@code foo/bar} passes unless it
+     * actually exists relative to the configured workdir, while a backslash traversal
+     * stays forbidden.
+     */
     @Test
-    void shouldRejectRelativePathWithSeparator() {
-        assertThatThrownBy(() -> guard.classifyCallerToken("foo/bar.txt"))
-            .isInstanceOf(ThrowableConventionErrorCode.class)
-            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
-                .isEqualTo(HubErrorCodes.OPENCLI_LOCAL_PATH_NOT_ALLOWED.getCode()));
-        assertThatThrownBy(() -> guard.classifyCallerToken("..\\..\\etc\\passwd"))
-            .isInstanceOf(ThrowableConventionErrorCode.class);
+    void shouldPassRelativePathWithSeparatorWhenNotExisting() {
+        assertThat(guard.classifyCallerToken("foo/bar.txt"))
+            .isEqualTo(CallerTokenKind.ORDINARY_VALUE);
+        assertThat(guard.classifyCallerToken("2026/08/12"))
+            .isEqualTo(CallerTokenKind.ORDINARY_VALUE);
     }
 
     @Test
@@ -149,6 +151,25 @@ class HubLocalPathGuardTest {
         // A non-existent single-word value is an ordinary prompt.
         assertThat(guard.classifyCallerToken("missing.txt"))
             .isEqualTo(CallerTokenKind.ORDINARY_VALUE);
+    }
+
+    /**
+     * A nested relative path that really exists under the workdir is a local file
+     * reference and must be refused, even though plain slashed text passes.
+     */
+    @Test
+    void shouldRejectExistingWorkdirNestedRelativePath() throws IOException {
+        Files.createDirectories(workdir.resolve("foo"));
+        Files.writeString(workdir.resolve("foo").resolve("bar"), "data");
+        assertThatThrownBy(() -> guard.classifyCallerToken("foo/bar"))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                .isEqualTo(HubErrorCodes.OPENCLI_LOCAL_PATH_NOT_ALLOWED.getCode()));
+        // An existing directory is a path too.
+        assertThatThrownBy(() -> guard.classifyCallerToken("foo"))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                .isEqualTo(HubErrorCodes.OPENCLI_LOCAL_PATH_NOT_ALLOWED.getCode()));
     }
 
     /**
@@ -182,6 +203,8 @@ class HubLocalPathGuardTest {
             "data:text/plain,hello",
             "mailto:someone@example.com",
             "你好，帮我写一首诗",
+            "请解释 /etc/passwd 的格式",
+            "搜索 foo/bar 相关内容",
             "hello world",
             "5")) {
             assertThat(guard.classifyCallerToken(token))
