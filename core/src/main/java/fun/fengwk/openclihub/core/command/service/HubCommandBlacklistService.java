@@ -12,16 +12,18 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * In-memory cached blacklist service.
  *
- * <p>The cache is a {@link ConcurrentHashMap} keyed by canonical command key. Loaded
- * state is tracked explicitly via {@link #loaded} because an empty database result and a
+ * <p>The cache is an immutable {@link Snapshot} that is atomically replaced on every
+ * reload: readers only ever observe a complete snapshot and never take a lock. A reload
+ * builds the replacement snapshot fully before publishing it with a single volatile
+ * write, so a repository failure keeps the previous snapshot intact instead of exposing
+ * an empty fail-open cache.
+ *
+ * <p>Loaded state travels with the snapshot because an empty database result and a
  * not-yet-loaded cache both produce an empty map; treating the map's emptiness as the
  * "unloaded" signal would force a redundant {@code listAll()} on every call against a
  * legitimately empty table.
@@ -36,8 +38,7 @@ public class HubCommandBlacklistService {
 
     private final HubCommandBlacklistRepository repository;
     private final Clock clock;
-    private final ConcurrentMap<String, HubCommandBlacklist> cache = new ConcurrentHashMap<>();
-    private final AtomicBoolean loaded = new AtomicBoolean(false);
+    private volatile Snapshot snapshot = new Snapshot(false, Map.of());
 
     public HubCommandBlacklistService(HubCommandBlacklistRepository repository, Clock clock) {
         if (repository == null) {
@@ -56,12 +57,12 @@ public class HubCommandBlacklistService {
             return Optional.empty();
         }
         ensureLoaded();
-        return Optional.ofNullable(cache.get(commandKey));
+        return Optional.ofNullable(snapshot.entries.get(commandKey));
     }
 
     public List<HubCommandBlacklist> listAll() {
         ensureLoaded();
-        return new ArrayList<>(cache.values());
+        return new ArrayList<>(snapshot.entries.values());
     }
 
     /**
@@ -71,7 +72,7 @@ public class HubCommandBlacklistService {
     public HubCommandBlacklist blacklist(String commandKey, String reason) {
         validateCommandKey(commandKey);
         ensureLoaded();
-        HubCommandBlacklist existing = cache.get(commandKey);
+        HubCommandBlacklist existing = snapshot.entries.get(commandKey);
         if (existing != null) {
             return existing;
         }
@@ -88,7 +89,7 @@ public class HubCommandBlacklistService {
         }
         refresh();
         log.info("Blacklisted OpenCLI command {}", commandKey);
-        return cache.get(commandKey);
+        return snapshot.entries.get(commandKey);
     }
 
     /**
@@ -100,7 +101,7 @@ public class HubCommandBlacklistService {
             return false;
         }
         ensureLoaded();
-        if (!cache.containsKey(commandKey)) {
+        if (!snapshot.entries.containsKey(commandKey)) {
             return false;
         }
         if (!repository.deleteByCommandKey(commandKey)) {
@@ -114,21 +115,33 @@ public class HubCommandBlacklistService {
 
     /**
      * Force the cache to reload from the database. Intended for tests and admin tools.
+     *
+     * <p>The reload builds a complete replacement snapshot and publishes it with a
+     * single volatile write; concurrent readers keep seeing either the previous or the
+     * new complete snapshot. When the repository read fails, the previous snapshot data
+     * is kept and the cache is marked unloaded again so the next access retries and
+     * converges once the repository recovers; the cache never degrades into an empty
+     * fail-open state.
      */
     public synchronized void refresh() {
-        cache.clear();
-        for (HubCommandBlacklist entry : repository.listAll()) {
-            cache.put(entry.getCommandKey(), entry);
+        try {
+            Map<String, HubCommandBlacklist> built = new LinkedHashMap<>();
+            for (HubCommandBlacklist entry : repository.listAll()) {
+                built.put(entry.getCommandKey(), entry);
+            }
+            snapshot = new Snapshot(true, Collections.unmodifiableMap(built));
+        } catch (RuntimeException ex) {
+            snapshot = new Snapshot(false, snapshot.entries);
+            throw ex;
         }
-        loaded.set(true);
     }
 
     private void ensureLoaded() {
-        if (loaded.get()) {
+        if (snapshot.loaded) {
             return;
         }
         synchronized (this) {
-            if (!loaded.get()) {
+            if (!snapshot.loaded) {
                 refresh();
             }
         }
@@ -166,7 +179,22 @@ public class HubCommandBlacklistService {
      */
     public Map<String, HubCommandBlacklist> snapshot() {
         ensureLoaded();
-        return Collections.unmodifiableMap(new LinkedHashMap<>(cache));
+        return Collections.unmodifiableMap(new LinkedHashMap<>(snapshot.entries));
+    }
+
+    /**
+     * Immutable cache state: the loaded flag plus the complete entry map. Published via a
+     * volatile field so readers never observe a partially built map.
+     */
+    private static final class Snapshot {
+
+        final boolean loaded;
+        final Map<String, HubCommandBlacklist> entries;
+
+        Snapshot(boolean loaded, Map<String, HubCommandBlacklist> entries) {
+            this.loaded = loaded;
+            this.entries = entries;
+        }
     }
 
 }

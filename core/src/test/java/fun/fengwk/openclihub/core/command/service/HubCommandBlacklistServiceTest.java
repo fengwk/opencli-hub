@@ -11,9 +11,12 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -170,6 +173,123 @@ class HubCommandBlacklistServiceTest {
         assertThat(afterMore).isEqualTo(afterFirst);
     }
 
+    @Test
+    void shouldKeepPreviousSnapshotWhenReloadFails() {
+        repository.addDirectly(entry("chatgpt/image", "gated"));
+        // Warm cache: snapshot is {chatgpt/image}.
+        service.findByCommandKey("chatgpt/image");
+        // Both the explicit reload and the read-path retry fail so the assertion below
+        // observes the fail-closed read, not an already-recovered cache.
+        repository.failListAllCalls = 2;
+
+        assertThatThrownBy(service::refresh).isInstanceOf(IllegalStateException.class);
+
+        // A failed reload must never degrade the cache into an empty fail-open state:
+        // the read path retries the reload and fails closed instead of reporting the
+        // command as not blacklisted.
+        assertThatThrownBy(() -> service.findByCommandKey("chatgpt/image"))
+            .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void shouldRecoverAfterReloadFailure() {
+        repository.addDirectly(entry("chatgpt/image", "gated"));
+        // Warm cache: snapshot is {chatgpt/image}.
+        service.findByCommandKey("chatgpt/image");
+        // The database now holds a second row but the reload fails once.
+        repository.addDirectly(entry("bilibili/hot", "blocked"));
+        repository.failListAllCalls = 1;
+
+        assertThatThrownBy(service::refresh).isInstanceOf(IllegalStateException.class);
+
+        // The repository recovered; the next read must converge to the persisted state
+        // instead of staying stale forever.
+        assertThat(service.findByCommandKey("bilibili/hot")).isPresent();
+        assertThat(service.findByCommandKey("chatgpt/image")).isPresent();
+    }
+
+    @Test
+    void shouldConvergeWhenRefreshFailsAfterPersist() {
+        // Persist succeeds but the post-mutation reload fails: the mutation reports the
+        // failure, yet the cache must not remain permanently inconsistent.
+        repository.addDirectly(entry("chatgpt/image", "gated"));
+        service.findByCommandKey("chatgpt/image");
+        repository.failListAllCalls = 1;
+
+        assertThatThrownBy(() -> service.blacklist("bilibili/hot", "blocked"))
+            .isInstanceOf(IllegalStateException.class);
+        // The row was persisted; the next access reloads and converges.
+        assertThat(repository.findByCommandKey("bilibili/hot")).isPresent();
+        assertThat(service.findByCommandKey("bilibili/hot").orElseThrow().getReason())
+            .isEqualTo("blocked");
+    }
+
+    @Test
+    void shouldExposeOnlyCompleteSnapshotsDuringConcurrentReload() throws Exception {
+        repository.addDirectly(entry("chatgpt/image", "gated"));
+        // Warm cache: snapshot is {chatgpt/image}.
+        service.findByCommandKey("chatgpt/image");
+        // The database now holds a second row; the reload must publish
+        // {chatgpt/image, bilibili/hot} as one atomic replacement.
+        repository.addDirectly(entry("bilibili/hot", "blocked"));
+        repository.blockListAll = true;
+
+        Thread reloader = new Thread(() -> {
+            try {
+                service.refresh();
+            } catch (RuntimeException ignored) {
+                // Reload failure is covered by the dedicated failure tests.
+            }
+        });
+        reloader.start();
+
+        List<String> invalidObservations = Collections.synchronizedList(new ArrayList<>());
+        int readers = 4;
+        int iterations = 1000;
+        CountDownLatch done = new CountDownLatch(readers);
+        Thread[] readerThreads = new Thread[readers];
+        try {
+            assertThat(repository.reloadStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            for (int i = 0; i < readers; i++) {
+                readerThreads[i] = new Thread(() -> {
+                    try {
+                        for (int j = 0; j < iterations; j++) {
+                            List<HubCommandBlacklist> seen = service.listAll();
+                            if (!isCompleteBlacklistSnapshot(seen)) {
+                                invalidObservations.add(seen.stream()
+                                    .map(HubCommandBlacklist::getCommandKey)
+                                    .toList()
+                                    .toString());
+                            }
+                        }
+                    } finally {
+                        done.countDown();
+                    }
+                });
+                readerThreads[i].start();
+            }
+            assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            repository.releaseReload.countDown();
+        }
+        reloader.join(5000);
+        assertThat(reloader.isAlive()).isFalse();
+
+        assertThat(invalidObservations).isEmpty();
+        assertThat(service.findByCommandKey("bilibili/hot")).isPresent();
+    }
+
+    private static boolean isCompleteBlacklistSnapshot(List<HubCommandBlacklist> seen) {
+        if (seen.size() == 1) {
+            return "chatgpt/image".equals(seen.get(0).getCommandKey());
+        }
+        if (seen.size() == 2) {
+            return seen.stream().anyMatch(b -> "chatgpt/image".equals(b.getCommandKey()))
+                && seen.stream().anyMatch(b -> "bilibili/hot".equals(b.getCommandKey()));
+        }
+        return false;
+    }
+
     private static HubCommandBlacklist entry(String commandKey, String reason) {
         HubCommandBlacklist b = new HubCommandBlacklist();
         b.setId("1001");
@@ -194,7 +314,11 @@ class HubCommandBlacklistServiceTest {
         int addCount = 0;
         int deleteCount = 0;
         int listAllCallCount = 0;
+        int failListAllCalls = 0;
         boolean failNextAdd = false;
+        volatile boolean blockListAll = false;
+        final CountDownLatch reloadStarted = new CountDownLatch(1);
+        final CountDownLatch releaseReload = new CountDownLatch(1);
 
         void addDirectly(HubCommandBlacklist entry) {
             byKey.put(entry.getCommandKey(), entry);
@@ -251,6 +375,19 @@ class HubCommandBlacklistServiceTest {
         @Override
         public List<HubCommandBlacklist> listAll() {
             listAllCallCount += 1;
+            if (failListAllCalls > 0) {
+                failListAllCalls -= 1;
+                throw new IllegalStateException("simulated repository listAll failure");
+            }
+            if (blockListAll) {
+                reloadStarted.countDown();
+                try {
+                    releaseReload.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("interrupted while reload blocked", ex);
+                }
+            }
             return new ArrayList<>(byKey.values());
         }
     }

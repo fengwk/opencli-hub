@@ -18,23 +18,26 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * In-memory cached output rule service.
  *
- * <p>The cache is a {@link ConcurrentHashMap} keyed by canonical command key. Loaded
- * state is tracked explicitly via {@link #loaded} because a legitimately empty database
+ * <p>The cache is an immutable {@link Snapshot} that is atomically replaced on every
+ * reload: readers only ever observe a complete snapshot and never take a lock. A reload
+ * builds the replacement snapshot fully before publishing it with a single volatile
+ * write, so a repository failure keeps the previous snapshot intact instead of exposing
+ * an empty fail-open cache.
+ *
+ * <p>Loaded state travels with the snapshot because a legitimately empty database
  * result and a not-yet-loaded cache both produce an empty map; treating the map's
  * emptiness as the "unloaded" signal would force a redundant {@code listAll()} on every
  * call against an empty table.
  *
  * <p>The service also acts as the validator for rule changes: when an admin saves or
  * replaces a rule, the service checks the catalog to confirm the command exists as a
- * public browser command and that the named argument accepts a value.
+ * public browser command and that the argument is a named, value-accepting output
+ * parameter (positional arguments and bare boolean flags are rejected).
  *
  * @author fengwk
  */
@@ -46,8 +49,7 @@ public class HubCommandOutputRuleService {
     private final HubCommandOutputRuleRepository repository;
     private final OpenCliCommandCatalog catalog;
     private final Clock clock;
-    private final ConcurrentMap<String, HubCommandOutputRule> cache = new ConcurrentHashMap<>();
-    private final AtomicBoolean loaded = new AtomicBoolean(false);
+    private volatile Snapshot snapshot = new Snapshot(false, Map.of());
 
     public HubCommandOutputRuleService(HubCommandOutputRuleRepository repository,
                                        OpenCliCommandCatalog catalog,
@@ -68,12 +70,12 @@ public class HubCommandOutputRuleService {
             return Optional.empty();
         }
         ensureLoaded();
-        return Optional.ofNullable(cache.get(commandKey));
+        return Optional.ofNullable(snapshot.entries.get(commandKey));
     }
 
     public List<HubCommandOutputRule> listAll() {
         ensureLoaded();
-        return new ArrayList<>(cache.values());
+        return new ArrayList<>(snapshot.entries.values());
     }
 
     /**
@@ -83,7 +85,7 @@ public class HubCommandOutputRuleService {
                                        HubCommandOutputTargetType targetType, String fileName) {
         validateRule(commandKey, argumentName, targetType, fileName);
         ensureLoaded();
-        HubCommandOutputRule existing = cache.get(commandKey);
+        HubCommandOutputRule existing = snapshot.entries.get(commandKey);
         HubCommandOutputRule rule = new HubCommandOutputRule();
         rule.setCommandKey(commandKey);
         rule.setArgumentName(argumentName);
@@ -110,7 +112,7 @@ public class HubCommandOutputRuleService {
         refresh();
         log.info("Upserted output rule for OpenCLI command {} (arg={}, target={})",
             commandKey, argumentName, targetType);
-        return cache.get(commandKey);
+        return snapshot.entries.get(commandKey);
     }
 
     public boolean delete(String commandKey) {
@@ -118,7 +120,7 @@ public class HubCommandOutputRuleService {
             return false;
         }
         ensureLoaded();
-        if (!cache.containsKey(commandKey)) {
+        if (!snapshot.entries.containsKey(commandKey)) {
             return false;
         }
         if (!repository.deleteByCommandKey(commandKey)) {
@@ -129,20 +131,35 @@ public class HubCommandOutputRuleService {
         return true;
     }
 
+    /**
+     * Force the cache to reload from the database. Intended for tests and admin tools.
+     *
+     * <p>The reload builds a complete replacement snapshot and publishes it with a
+     * single volatile write; concurrent readers keep seeing either the previous or the
+     * new complete snapshot. When the repository read fails, the previous snapshot data
+     * is kept and the cache is marked unloaded again so the next access retries and
+     * converges once the repository recovers; the cache never degrades into an empty
+     * fail-open state.
+     */
     public synchronized void refresh() {
-        cache.clear();
-        for (HubCommandOutputRule rule : repository.listAll()) {
-            cache.put(rule.getCommandKey(), rule);
+        try {
+            Map<String, HubCommandOutputRule> built = new LinkedHashMap<>();
+            for (HubCommandOutputRule rule : repository.listAll()) {
+                built.put(rule.getCommandKey(), rule);
+            }
+            snapshot = new Snapshot(true, Collections.unmodifiableMap(built));
+        } catch (RuntimeException ex) {
+            snapshot = new Snapshot(false, snapshot.entries);
+            throw ex;
         }
-        loaded.set(true);
     }
 
     private void ensureLoaded() {
-        if (loaded.get()) {
+        if (snapshot.loaded) {
             return;
         }
         synchronized (this) {
-            if (!loaded.get()) {
+            if (!snapshot.loaded) {
                 refresh();
             }
         }
@@ -198,6 +215,14 @@ public class HubCommandOutputRuleService {
                 HubErrorCodes.OPENCLI_OUTPUT_RULE_ARGUMENT_NOT_FOUND,
                 "Output rule references unknown argument: " + argumentName
                     + " on command " + commandKey));
+        // Positional arguments are consumed positionally by OpenCLI and cannot be
+        // injected as a named managed output, so they are not usable as output args.
+        if (argument.isPositional()) {
+            throw new OpenCliCommandPolicyException(
+                HubErrorCodes.OPENCLI_OUTPUT_RULE_ARGUMENT_NOT_FOUND,
+                "Output rule references positional argument: " + argumentName
+                    + " on command " + commandKey);
+        }
         boolean noValueBoolean = OpenCliArgumentType.of(argument.getType())
             == OpenCliArgumentType.BOOLEAN
             && !argument.isValueRequired()
@@ -221,7 +246,7 @@ public class HubCommandOutputRuleService {
 
     public Map<String, HubCommandOutputRule> snapshot() {
         ensureLoaded();
-        return Collections.unmodifiableMap(new LinkedHashMap<>(cache));
+        return Collections.unmodifiableMap(new LinkedHashMap<>(snapshot.entries));
     }
 
     public static HubCommandOutputRuleDTO toDTO(HubCommandOutputRule rule) {
@@ -237,6 +262,21 @@ public class HubCommandOutputRuleService {
         dto.setCreateTime(rule.getCreateTime());
         dto.setUpdateTime(rule.getUpdateTime());
         return dto;
+    }
+
+    /**
+     * Immutable cache state: the loaded flag plus the complete entry map. Published via a
+     * volatile field so readers never observe a partially built map.
+     */
+    private static final class Snapshot {
+
+        final boolean loaded;
+        final Map<String, HubCommandOutputRule> entries;
+
+        Snapshot(boolean loaded, Map<String, HubCommandOutputRule> entries) {
+            this.loaded = loaded;
+            this.entries = entries;
+        }
     }
 
 }
