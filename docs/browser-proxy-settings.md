@@ -27,17 +27,19 @@ Every runtime Chrome also uses `--disable-gpu`. Software rendering remains enabl
 
 The proxy address is resolved from inside the Hub container. In bridge networking, `127.0.0.1` refers to the container itself, not the Docker host. Use a proxy endpoint reachable from the container, or a deployment-specific host-network configuration when the proxy is intentionally bound to host loopback.
 
-## H2 migration
+## Supported database initialization
 
-H2 runs `schema-h2.sql` and `data-h2.sql` at startup. The migration is idempotent:
+The three database variants (PostgreSQL 16 default / MySQL 8.4 LTS / SQLite) run their own
+`schema-database.sql` at startup (schema-only, no data SQL); H2 is retired from production and
+exists only in tests. The `id=1` global `DIRECT` row is **not** seeded by SQL: the application
+lazily inserts it on first read (`HubSystemSettingsServiceImpl`), so a fresh or existing supported
+database converges to `DIRECT` without a data migration and saved settings are never overwritten.
 
-- existing `hub_instance` rows gain `proxy_mode='INHERIT'` and a null `proxy_server`;
-- `hub_system_settings` is created if absent;
-- the `id=1` global `DIRECT` row is inserted only when absent and never overwrites saved settings.
+## MySQL migration (legacy)
 
-## MySQL migration
-
-MySQL schema changes are manual because DDL commits implicitly. The stopped-service migration script conditionally adds missing columns/tables and only seeds the singleton when absent, so rerunning it preserves already saved proxy settings.
+MySQL schema changes are manual because DDL commits implicitly. The stopped-service migration script
+conditionally adds missing columns/tables and only seeds the singleton when absent, so rerunning it
+preserves already saved proxy settings. The script is compatible with MySQL 5.7 and 8.4.
 
 1. Stop every Hub process.
 2. Back up the database and verify the backup can be read.

@@ -6,7 +6,7 @@
 
 设计目标：
 
-- 使用 Java 17、Spring Boot、MyBatis、MySQL 构建单机浏览器管理与 OpenCLI 调度平台；
+- 使用 Java 17、Spring Boot、MyBatis 构建单机浏览器管理与 OpenCLI 调度平台；生产数据库默认 PostgreSQL 16，另提供 MySQL 8.4 与 SQLite 编译期变体（H2 仅测试）；
 - 使用正式 Google Chrome，保持独立、持久的 Chrome Profile；
 - 最大程度复用原版 OpenCLI 的命令、Browser Bridge extension、daemon 和 adapter；
 - 提供 Instance 管理、VNC、命令执行、资源管理、执行历史、命令配置和日志查看页面；
@@ -30,7 +30,7 @@
 - 资源上传、OpenCLI 输出收集、在线预览、下载和管理员手工删除；
 - Java WebSocket 到本地 VNC TCP 的代理；
 - 系统日志和 Instance 进程日志查看；
-- H2 和 MySQL 都通过 Spring SQL initialization 自动初始化当前 schema/data；旧 MySQL schema 使用显式迁移；
+- 三套编译期数据库变体（PostgreSQL 16 默认 / MySQL 8.4 LTS / SQLite）都通过 Spring SQL initialization 幂等初始化当前 schema（schema-only，无 data SQL；system settings 由应用懒初始化）；旧 MySQL schema 使用显式迁移；H2 仅用于测试；
 - Docker 镜像中安装正式 Google Chrome、OpenCLI CLI 和固定版本 extension。
 
 ### 2.2 MVP 不包含
@@ -53,11 +53,11 @@
 | 议题 | 决策 |
 |---|---|
 | Java 模块 | `share + core + web`，移除 `infra` |
-| 数据库 | 生产 MySQL，本地 H2 MySQL compatibility mode |
-| SQL | MyBatis Auto Mapper 生成常规 SQL；H2/MySQL 通过 Spring SQL initialization 幂等初始化当前 schema/data；旧 MySQL schema 手工迁移 |
+| 数据库 | 编译期三变体：PostgreSQL 16（默认）、MySQL 8.4 LTS、SQLite；H2 仅测试（Maven `test` scope） |
+| SQL | MyBatis Auto Mapper 生成常规 SQL；每个变体通过 Spring SQL initialization 幂等初始化当前 schema（schema-only，无 data SQL，system settings 由应用懒初始化）；旧 MySQL schema 手工迁移 |
 | 浏览器 | 正式 `google-chrome-stable`，非 Chromium/Chrome for Testing |
-| extension | 由 artifact lock 固定，当前 fork 1.0.24；构建期打包固定签名 CRX3，运行时通过 Linux managed policy + loopback update server 强制安装 |
-| OpenCLI | 由 artifact lock 固定，当前 fork 1.8.7-fengwk.3；Hub 通过 `ProcessBuilder` 调用，不在 Hub 内修改 CLI |
+| extension | 由 artifact lock 固定，当前 fork 1.0.29；构建期打包固定签名 CRX3，运行时通过 Linux managed policy + loopback update server 强制安装 |
+| OpenCLI | 由 artifact lock 固定，当前 fork 1.8.7-fengwk.8；Hub 通过 `ProcessBuilder` 调用，不在 Hub 内修改 CLI |
 | daemon | 单容器共享一个 OpenCLI daemon |
 | Instance 创建 | 同步创建，成功后才插入数据库；失败清理全部残留 |
 | Instance 创建完成 | Chrome 保持运行，数据库状态为 `RUNNING` |
@@ -85,7 +85,7 @@ flowchart LR
     Client[调用方/管理前端] --> SCG[SCG Gateway]
     SCG --> Web[opencli-hub web]
     Web --> Core[opencli-hub core]
-    Core --> DB[(MySQL/H2)]
+    Core --> DB[(PostgreSQL / MySQL / SQLite)]
     Core --> CLI[OpenCLI CLI]
     CLI --> Daemon[OpenCLI daemon :19825]
     Daemon --> Ext1[Instance A extension]
@@ -478,13 +478,20 @@ public enum HubCommandOutputTargetType {
 |---|---|
 | `hub_instance` | Instance 配置、最近运行状态和 Instance 代理覆盖 |
 | `hub_system_settings` | 全局浏览器代理策略单例 |
-| `hub_execution` | 同步命令执行历史 |
+| `hub_execution` | 异步命令执行历史（202 submit + 轮询终态） |
 | `hub_command_blacklist` | 被管理员禁用的命令 |
 | `hub_command_output_rule` | OpenCLI 本地资源输出参数规则 |
 
 不建立资源表、日志表、运行时进程表、VNC session 表和 Command Catalog 全量表。
 
 除 `hub_system_settings` 使用固定 `id=1` 单例外，其余四张业务表的新主键均由 JDK `UUID.randomUUID()` 本地生成，数据库与运行时不依赖 Snowflake、`worker-id`、Redis 或其他 ID 服务。迁移前的正 BIGINT ID 原值转换为十进制字符串，不改名 Instance 目录或 execution resource group。`code` 保持唯一但可编辑的业务别名，不承担内部身份。
+
+时间语义：所有时间戳列（`state_changed_at`、`queued_at`、`started_at`、`finished_at`、`gmt_create`、`gmt_modified`）
+保存**UTC LocalDateTime**。应用使用统一的 `Clock.systemUTC()` bean 生成时间；PostgreSQL 会话强制
+`set time zone 'UTC'`，MySQL JDBC 连接固定 `connectionTimeZone=UTC`，SQLite 的 `CURRENT_TIMESTAMP`
+按 UTC 求值。`gmt_*` 列名沿用历史命名以兼容旧客户端，语义仍是 UTC 时间戳。`state_changed_at` 与
+`queued_at` 都是不可变排序键：由应用显式写入，数据库不得 `ON UPDATE`（MySQL legacy schema 需执行
+对应迁移脚本去除 `ON UPDATE`）。
 
 ### 9.2 hub_instance
 
@@ -501,7 +508,7 @@ create table hub_instance (
     proxy_mode varchar(16) not null default 'INHERIT',
     proxy_server varchar(512) null,
     last_error_message text null,
-    state_changed_at timestamp(3) not null,
+    state_changed_at timestamp(3) not null default current_timestamp(3),
     gmt_create timestamp(3) not null,
     gmt_modified timestamp(3) not null,
     version bigint not null default 0,
@@ -529,7 +536,8 @@ Profile 路径由 ID 计算：
 
 ### 9.3 hub_system_settings
 
-全局浏览器代理策略使用单例行 `id=1`，只影响之后启动的 Instance：
+全局浏览器代理策略使用单例行 `id=1`，只影响之后启动的 Instance。**没有 data SQL**：该行由应用在
+首次读取时懒初始化（默认 `DIRECT`，`DuplicateKeyException` 保证并发安全），见 `HubSystemSettingsServiceImpl`：
 
 ```sql
 create table hub_system_settings (
@@ -565,7 +573,8 @@ create table hub_execution (
     stderr_truncated tinyint(1) not null default 0,
     error_message text null,
     timeout_millis bigint not null,
-    queued_at timestamp(3) not null,
+    -- immutable enqueue time; DEFAULT only, no ON UPDATE
+    queued_at timestamp(3) not null default current_timestamp(3),
     started_at timestamp(3) null,
     finished_at timestamp(3) null,
     gmt_create timestamp(3) not null,
@@ -581,10 +590,12 @@ create table hub_execution (
 不建立到 `hub_instance` 的外键，因为删除 Instance 后必须保留历史 Execution。
 
 Execution 列表固定按 `queued_at DESC, id DESC` 排序；按 Instance 查询先以 `instance_id` 等值过滤。
-MySQL 5.7 可反向扫描普通升序 B-tree，因此以上两个组合索引分别覆盖全量和按 Instance 的稳定分页查询。
+MySQL 5.7/8.4 的 InnoDB 都可以反向扫描普通升序 B-tree，因此以上两个组合索引分别覆盖全量和按 Instance 的稳定分页查询，不需要 MySQL 8.0 的降序索引语法。
 `instance_id` 单列索引已被组合索引左前缀覆盖，不再单独保留；`gmt_create` 不参与该查询排序。
 
-H2 中将 `mediumtext` 替换为 `clob`。
+`queued_at` 是不可变入队时间：应用写入，数据库无 `ON UPDATE`（MySQL legacy schema 用
+`scripts/migrate-mysql-execution-queued-at-immutable.sql` 修复）。PostgreSQL/SQLite 中 `stdout_content`/
+`stderr_content` 使用 `text`（SQLite 无 `mediumtext` 类型）。
 
 ### 9.5 hub_command_blacklist
 
@@ -618,20 +629,26 @@ create table hub_command_output_rule (
 );
 ```
 
-### 9.7 SQL 文件
+### 9.7 SQL 与数据库配置（编译期变体）
 
 ```text
-core/src/main/resources/
-├── schema-h2.sql
-├── data-h2.sql
-├── schema-mysql.sql
-└── data-mysql.sql
+core/src/main/database/{postgresql,mysql,sqlite}/schema-database.sql
+web/src/main/database/{postgresql,mysql,sqlite}/application-database.yml
 ```
 
-- `schema-h2.sql`、`data-h2.sql` 由 H2 profile 每次启动幂等执行，并自动把旧 BIGINT ID 转为 `VARCHAR(36)`；
-- MySQL profile 每次启动通过 Spring SQL initialization 执行 `schema-mysql.sql`、`data-mysql.sql`；已有旧 schema
-  按变更内容在停机备份后执行 `scripts/migrate-mysql-uuid-ids.sql` 和 `scripts/migrate-mysql-execution-indexes.sql`；
-- 迁移流程见 `docs/uuid-id-migration.md` 和 `docs/execution-index-migration.md`；
+- 每个变体一份 DDL 与一份 datasource 配置；Maven profile（`postgresql` 默认 / `mysql` / `sqlite`）
+  选择变体，`application-database.yml` 在构建期复制到 classpath 根（`spring.config.import`），
+  三者都设置 `spring.sql.init.mode=always` 与 `schema-locations: classpath:schema-database.sql`；
+- 初始化是 **schema-only**：只幂等建当前 schema，**没有 data SQL**；`hub_system_settings` 单例由应用懒初始化；
+- 旧文件名 `schema-mysql.sql` / `data-mysql.sql` / `schema-h2.sql` / `data-h2.sql` 已移除，H2 仅存在于测试资源
+  （`core/src/test/resources`），不再有生产 H2 初始化；
+- MySQL fresh schema 仍使用 5.7 兼容语法（普通升序 B-tree、`utf8mb4`、`timestamp(3)`），同一文件可在
+  5.7 与 8.4 建表；官方 compose 固定 8.4 LTS；
+- 既有 MySQL schema 不会被该文件 ALTER；按变更内容在停机备份后依次执行 `scripts/migrate-mysql-uuid-ids.sql`、
+  `scripts/migrate-mysql-browser-proxy-settings.sql`、`scripts/migrate-mysql-execution-indexes.sql`、
+  `scripts/migrate-mysql-instance-priority.sql`、`scripts/migrate-mysql-execution-queued-at-immutable.sql`、
+  `scripts/migrate-mysql-instance-state-changed-at-immutable.sql`（全部兼容 5.7/8.4）；
+- 迁移流程见 `docs/uuid-id-migration.md`、`docs/execution-index-migration.md` 和 `docs/deployment-and-operations.md`；
 - Service、Repository 和 Mapper 不负责建表；
 - 删除当前 `Repository.init()`、`Mapper.createTableIfNotExists()` 链路。
 
@@ -1011,7 +1028,7 @@ sequenceDiagram
 正式 Google Chrome stable 不依赖 unpacked extension 的命令行加载。Release 镜像采用构建期签名和 managed policy：
 
 ```text
-OpenCLI Browser Bridge extension 1.0.24
+OpenCLI Browser Bridge extension 1.0.29
 -> 构建阶段校验固定版本 release asset
 -> BuildKit secret 仅在构建阶段提供受保护的 stable signing key
 -> 使用 google-chrome-stable --pack-extension 生成 CRX3
@@ -1157,7 +1174,10 @@ load all instances order by gmt_create asc, id asc
 ### 17.4 统一启动协调与恢复屏障
 
 所有启动路径（API `create` / `start` / `restart`、启动恢复 sweep、孤儿扫描）通过同一个
-`HubInstanceStartCoordinator` 协调：
+`HubInstanceStartCoordinator` 协调；`HubInstanceLifecycleService` 是状态/事务编排者，启动相关实现
+拆分为三个协作组件：`HubInstanceFiles`（目录、`.creating` 标记与递归删除）、`HubInstanceRuntimeStarter`
+（DISPLAY/VNC 分配、Profile bootstrap、4 进程启动与就绪检查、回滚）、`HubInstanceDaemonContextService`
+（共享 daemon 就绪、context 等待与 active-tab bind）：
 
 - 一把全局公平启动锁串行化所有启动。daemon restart、context 快照与唯一新 ID 发现因此
   永不重叠，替换了原先分散的全局 create 锁与 daemon ensure 锁；
@@ -1207,7 +1227,7 @@ DELETE /api/instances/{id}
 
 要求 active=0 且 pending=0，否则拒绝。
 
-同步执行：
+删除是同步阻塞的（与 OpenCLI execute 的异步契约无关）：
 
 ```text
 block new routing
@@ -1647,7 +1667,12 @@ DELETE /api/instances/{id}
 POST   /api/instances/{id}/start
 POST   /api/instances/{id}/stop
 POST   /api/instances/{id}/restart
+POST   /api/instances/{id}/clear-queue
+POST   /api/instances/{id}/chatgpt-agent/bind-active-tab
 ```
+
+`clear-queue` 丢弃该 Instance 排队中的 PENDING 任务并持久化为 CANCELLED；
+`bind-active-tab` 将 `site:chatgpt-agent` 固定会话绑定到当前活动标签页。
 
 ### 26.2 VNC
 
@@ -1662,6 +1687,7 @@ WS  /api/instances/{id}/vnc
 POST /api/opencli/execute
 GET  /api/executions
 GET  /api/executions/{id}
+POST /api/executions/{id}/cancel
 ```
 
 ### 26.4 Commands
@@ -1913,7 +1939,9 @@ Hub 仍负责：
 
 ### 30.2 Repository 集成测试
 
-使用 H2 + 正式 `schema-h2.sql`、`data-h2.sql` 覆盖 CRUD、分页、唯一约束、JSON 转换和 Auto Mapper SQL。
+使用 H2（测试专用内存库，`core/src/test/resources/schema-h2.sql` + `data-h2.sql`）覆盖 CRUD、分页、
+唯一约束、JSON 转换和 Auto Mapper SQL；各数据库变体的正式 DDL（`core/src/main/database/*/schema-database.sql`）
+在 CI 的 `postgresql`/`mysql`/`sqlite` 矩阵构建中与真实 driver 一起打包验证。
 
 ### 30.3 Process/文件测试
 
@@ -1948,7 +1976,7 @@ Hub 仍负责：
 3. daemon status 可发现；
 4. Instance 创建后 VNC 可访问；
 5. 容器重启后 Instance 自动拉起；
-6. H2 本地和 MySQL schema 均可运行；
+6. PostgreSQL / MySQL / SQLite 三种变体镜像均可构建运行（CI 按 profile 矩阵构建并校验 JDBC driver 隔离）；
 7. 首个命令：
 
 ```json
@@ -2010,7 +2038,7 @@ Release 版本应保持以下边界：
 
 - 仓库只保留 `share/core/web` 三个 Maven module；
 - Maven test suite、frontend build/test 和 Docker 镜像构建可重复执行；
-- H2/MySQL profile 均通过 Spring SQL initialization 自动应用当前建表和初始化规则；既有 MySQL schema 使用版本化手工迁移；
+- 三种编译期数据库变体（PostgreSQL 16 默认 / MySQL 8.4 LTS / SQLite）均通过 Spring SQL initialization 自动应用当前 schema（schema-only；H2 仅测试）；既有 MySQL schema 使用版本化手工迁移（兼容 5.7/8.4）；
 - 正式 Chrome 通过 managed policy 加载构建期签名的 extension，并能发现和绑定 `contextId`；
 - Instance 支持创建、重启恢复、VNC 登录、编辑 websites 和彻底删除；
 - Execute API 安全校验 argv，完成路由、排队、超时、持久 affinity 和资源处理；

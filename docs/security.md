@@ -9,7 +9,7 @@ Hub 不实现认证、授权、JWT、Session、Bearer Token 或 VNC 密码。所
 - TLS 终止与证书管理；
 - 用户、服务身份与权限校验；
 - API 与 VNC WebSocket 的访问控制、限流、审计和网络隔离；
-- 对同步执行接口设置符合业务的请求 timeout。
+- 对 execute API 设置符合业务的请求 timeout（submit 返回 202 后客户端轮询，Gateway 需覆盖排队与执行时间）。
 
 Hub 自身默认只把 HTTP 发布到宿主 `127.0.0.1`。不要把容器 `8080` 或 VNC 端口直接公开到不受信任网络。
 
@@ -39,7 +39,7 @@ Hub 自身默认只把 HTTP 发布到宿主 `127.0.0.1`。不要把容器 `8080`
 - 调用方如需把本地文件交给命令使用，必须**先上传**，再把上传响应中的 `resourcePath`（`/resources/...` 虚拟路径）作为 argv 值传入。Hub 会解析、加 lease 并替换为资源根目录下的真实路径。
 - 独立 argv 值如果本身是本地路径（绝对路径、`~`、`file://`、Windows drive path、显式 `..`/`.` traversal、相对 OpenCLI workdir 实际存在的文件或目录，以及通过 traversal 或符号链接逃逸资源根的 `/resources/...` 引用），一律以 `OPENCLI_LOCAL_PATH_NOT_ALLOWED` 拒绝；http/https 等 URL、普通非路径 prompt 和仅含斜杠的文本（日期、完整句子）不受影响。稳定协议只接受虚拟 `/resources/...`，即使真实路径恰好位于数据卷资源根内也不接受。
 - 最终发给 OpenCLI 子进程的 argv 还会做防御性校验：Hub 替换/注入的每个绝对路径都必须位于 canonical resource root 之下；尚未创建的执行输出目标检查其规范化路径与最近存在的父目录，且资源树内不允许符号链接。
-- Instance Profile、Cookie、extension storage、资源、执行输出和日志可能包含登录态或业务数据。`/data/opencli-hub`、`/var/lib/opencli`、MySQL 数据卷及其备份必须按敏感数据保护。
+- Instance Profile、Cookie、extension storage、资源、执行输出和日志可能包含登录态或业务数据。`/data/opencli-hub`、`/var/lib/opencli`、数据库（PostgreSQL/MySQL/SQLite）数据卷及其备份必须按敏感数据保护。
 - OpenCLI 插件源由管理 API 配置，实际安装走官方 `opencli plugin`。插件代码会在已登录浏览器上下文中运行，**只应安装可信仓库**；插件管理 API 与其它管理接口一样没有内建认证，必须放在 Gateway 后。
 
 资源路径检查无法消除同权限恶意本地进程在检查和文件操作之间替换目录项的极窄 TOCTOU 窗口。容器和宿主隔离、卷权限和最小化本地访问仍是部署方责任。
@@ -53,7 +53,7 @@ Hub 自身默认只把 HTTP 发布到宿主 `127.0.0.1`。不要把容器 `8080`
 ## 6. 已知边界
 
 - Java `ProcessHandle` 无法可靠找回已被 reparent 的后台后代。Hub 保证执行 deadline、输出 capture 和请求返回有界，但不能替代容器级进程隔离。
-- MySQL 5.7.44 已 EOL。若必须使用，应通过网络、最小权限、补偿控制和升级规划降低风险。
+- 既有 MySQL legacy 迁移脚本兼容 MySQL 5.7/8.4，官方 compose 固定 MySQL 8.4 LTS；MySQL 5.7 已 EOL，若 legacy 库仍运行在 5.7 上，应通过网络、最小权限、补偿控制和升级规划降低风险。SQLite 变体仅限单 Hub 进程访问。
 - Hub 没有高可用、多节点调度、跨 Instance 自动重试或用户认证能力；不要将这些能力假设为已实现。
 
 漏洞报告应使用部署组织既有的私密安全通道处理，避免在日志、Issue 或聊天中披露密钥、登录态、Profile 或可复现攻击数据。

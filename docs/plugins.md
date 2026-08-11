@@ -115,8 +115,9 @@ desired 非空:
 ## 4. 运维注意
 
 1. **新表** `hub_plugin_source`  
-   MySQL/H2 profile 使用 Spring SQL initialization `CREATE TABLE IF NOT EXISTS`。  
-   已有库在 Hub 下次以对应 profile 启动时会自动建表；**不是**版本化手工迁移脚本场景。
+   三个数据库变体（PostgreSQL/MySQL/SQLite）都通过 Spring SQL initialization 执行
+   `CREATE TABLE IF NOT EXISTS`。
+   已有库在 Hub 下次以对应变体启动时会自动建表；**不是**版本化手工迁移脚本场景。
 
 2. **同步耗时**  
    可能包含 git clone + npm install + TS 编译，可达数分钟。  

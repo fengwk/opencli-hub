@@ -8,7 +8,7 @@
 2. Docker Engine 必须启用 BuildKit；Docker Compose 必须支持 `build.secrets`。
 3. 为 Hub 分配至少 `2gb` shared memory，并验证宿主 seccomp 策略允许 `seccomp=unconfined`。Compose 文件已经声明这两个条件，不要删除。
 4. Gateway/反向代理必须提供 TLS、认证、授权、限流，并允许 `/api/instances/{id}/vnc` WebSocket Upgrade 和二进制帧透传。
-5. 为 `/data/opencli-hub`、`/var/lib/opencli` 及 MySQL 备份准备受限、加密的存储位置。
+5. 为 `/data/opencli-hub`、`/var/lib/opencli` 及数据库（PostgreSQL/MySQL）备份准备受限、加密的存储位置；SQLite 备份即 data volume 快照。
 
 Hub 容器和 Chrome 以 UID/GID `1000:1000` 运行。若改用 bind mount，宿主目录必须允许该用户读写。
 
@@ -41,7 +41,7 @@ chmod 600 .secrets/opencli-extension-signing-key.pem
 
 ```bash
 export OPENCLI_HUB_EXTENSION_SIGNING_KEY_FILE=/secure/path/opencli-extension-signing-key.pem
-docker compose -f compose.h2.yml build
+docker compose -f compose.yml build
 ```
 
 Dockerfile 将其作为 BuildKit secret `opencli_extension_signing_key` 挂载到单个 CRX 打包步骤。构建产物只保留 CRX、update manifest、build metadata 和 managed Chrome policy；私钥不应出现在 Git、Docker context、image history、image filesystem、运行时 volume 或日志中。
@@ -60,14 +60,19 @@ Dockerfile 将其作为 BuildKit secret `opencli_extension_signing_key` 挂载�
 
 ### GitHub 自动构建并发布镜像
 
-推送 `docker` 分支会触发 `.github/workflows/docker-publish.yml`，构建
-`linux/amd64` 镜像并推送以下 Docker Hub tag：
+推送 `docker` 分支会触发 `.github/workflows/docker-publish.yml`，按数据库矩阵
+`postgresql` / `mysql` / `sqlite` 分别构建 `linux/amd64` 镜像并推送以下 Docker Hub tag：
 
 ```text
-<namespace>/opencli-hub:docker
-<namespace>/opencli-hub:latest
-<namespace>/opencli-hub:sha-<commit>
+<namespace>/opencli-hub:postgresql      （另有 :latest 与 :docker 别名）
+<namespace>/opencli-hub:mysql
+<namespace>/opencli-hub:sqlite
+<namespace>/opencli-hub:sha-<db>-<short-commit>   # 每个变体各自的短 SHA tag
 ```
+
+其中 `latest` 与 `docker` 仅对 PostgreSQL（默认变体）发布；`sha-<db>-<short>` 为每个变体各自的
+短 SHA tag（如 `sha-mysql-abc1234`）。拉取镜像时按变体使用对应 tag，例如
+`<namespace>/opencli-hub:mysql`。`OPENCLI_HUB_DATABASE` build-arg 决定变体，运行时没有 profile 切换。
 
 仓库需要配置：
 
@@ -83,59 +88,88 @@ workflow 也支持手工触发。签名 key 通过 BuildKit secret
 或镜像。构建会绕过 `opencli-assets` stage 的缓存，确保 key 轮换后重新生成 CRX；其他
 stage 仍使用 GitHub Actions cache。
 
-## 3. H2 单容器运行
+## 3. 三种数据库变体
 
-H2 profile 为 `docker-h2`，数据库文件位于：
+数据库变体在构建期选择（Maven profile `postgresql` / `mysql` / `sqlite`，Docker build-arg `OPENCLI_HUB_DATABASE`），
+JAR 名为 `opencli-hub-web-1.0.0-{postgresql|mysql|sqlite}.jar`，运行时**没有** profile 切换。
+每个变体每次启动都会通过 Spring SQL initialization 幂等执行当前变体的 `schema-database.sql`
+（schema-only，无 data SQL；system settings 单例由应用首次读取时懒初始化）。
 
-```text
-/data/opencli-hub/database/opencli-hub
-```
-
-首次启动会幂等执行 `schema-h2.sql` 与 `data-h2.sql`。启动和检查：
+### 3.1 PostgreSQL（默认）
 
 ```bash
-docker compose -f compose.h2.yml up --build -d
+export OPENCLI_HUB_POSTGRESQL_PASSWORD="$(openssl rand -hex 32)"
+docker compose -f compose.yml up --build -d
 curl --fail --show-error http://127.0.0.1:8080/actuator/health
-docker compose -f compose.h2.yml ps
+docker compose -f compose.yml ps
 ```
 
-容器默认只将 Hub HTTP 发布到 `127.0.0.1:8080`。外部可见性由 Gateway 提供；VNC TCP 不应额外发布。
+`compose.yml` 固定 `postgres:16`；PostgreSQL 官方 entrypoint 在新 volume 首次启动时创建 `opencli_hub`
+数据库和应用账号。环境变量 `OPENCLI_HUB_POSTGRESQL_HOST/PORT/DATABASE/USERNAME/PASSWORD`，其中密码必填。
 
-## 4. MySQL 5.7 部署
-
-`compose.yml` 使用 MySQL 官方 entrypoint 在新 volume 首次启动时创建数据库和应用账号；待 MySQL health
-通过后，Hub 的 `mysql` profile 会通过 Spring SQL initialization 在每次启动时幂等执行 classpath
-`schema-mysql.sql` 和 `data-mysql.sql`。它使用：
-
-```text
-mysql:5.7.44
-database: opencli_hub
-application user: opencli_hub
-```
+### 3.2 MySQL 8.4 LTS
 
 ```bash
 export MYSQL_ROOT_PASSWORD="$(openssl rand -hex 32)"
 export OPENCLI_HUB_MYSQL_PASSWORD="$(openssl rand -hex 32)"
-docker compose -f compose.yml up --build -d
+docker compose -f compose.mysql.yml up --build -d
 curl --fail --show-error http://127.0.0.1:8080/actuator/health
+docker compose -f compose.mysql.yml ps
 ```
 
-MySQL 5.7 已 EOL。该选择仅为了既有兼容性：部署方应将数据库网络隔离、限制账户权限、监控 CVE，并规划受控升级路线。应用使用 `mysql_native_password`；不要修改为 MySQL 8 专属认证或 SQL 特性。Spring 初始化只适用于当前 schema/data；对既有旧 schema 的结构升级仍须停止 Hub、备份并执行版本化迁移。
+`compose.mysql.yml` 固定 `mysql:8.4` LTS。fresh schema 的 DDL 仍使用 MySQL 5.7 兼容语法
+（普通升序 B-tree 索引、`utf8mb4`、`timestamp(3)`），同一个 `schema-database.sql` 在 5.7 与 8.4 上都能建表；
+但官方 compose 只针对 8.4 LTS，MySQL 5.7 仅是 legacy 库的兼容目标。接入已有/托管 MySQL 时 Hub 不创建数据库，
+由维护者先建空库（`utf8mb4` / `utf8mb4_general_ci`）。环境变量 `OPENCLI_HUB_MYSQL_HOST/PORT/DATABASE/USERNAME/PASSWORD`，
+密码必填。
+
+### 3.3 SQLite（单进程单机）
+
+```bash
+docker compose -f compose.sqlite.yml up --build -d
+curl --fail --show-error http://127.0.0.1:8080/actuator/health
+docker compose -f compose.sqlite.yml ps
+```
+
+SQLite 变体使用内嵌 sqlite-jdbc，运行约束：
+
+- **单 Hub 进程**：只有一个 Hub 进程打开数据库文件；
+- JDBC URL 固定 `journal_mode=WAL` 与 `busy_timeout=5000`，Hikari 池钉死单连接（`maximum-pool-size: 1`），
+  读写串行化；
+- 数据库文件默认 `${OPENCLI_HUB_DATA_DIR}/database/opencli-hub.db`，可用 `OPENCLI_HUB_SQLITE_PATH` 覆盖；
+- 两个 named volume：`opencli-hub-sqlite-data`（数据库、日志、资源和 Instance Profile）与
+  `opencli-hub-sqlite-home`（OpenCLI home/data，显式命名避免 Dockerfile `VOLUME` 生成匿名卷）。
+
+容器默认只将 Hub HTTP 发布到 `127.0.0.1:8080`。外部可见性由 Gateway 提供；VNC TCP 不应额外发布。
+
+## 4. H2 退役说明（legacy）
+
+H2 已从生产退出，**仅保留为测试数据库**（Maven `test` scope）；仓库不再提供 `compose.h2.yml`、
+`local-h2`、`docker-h2` 生产指令，也没有自动 in-place 转换工具。旧 H2 使用者迁移到受支持数据库
+（推荐 PostgreSQL）时：先在旧版本上停止 Hub 并备份（H2 文件 + 资源/Profile/home 卷），按旧文档导出
+业务数据，再在目标库新装当前版本并导入，最后校验登录态、VNC、历史 Execution 与资源。不要期望新版本
+读取旧 H2 文件。
 
 ## 5. 备份与恢复
 
 停止 Hub 后再取得可恢复快照，避免数据库、资源、Profile 与 OpenCLI home 相互不一致。
 
-### H2
+### PostgreSQL
 
-备份两个 named volume：
+备份三个 named volume：
 
 ```text
-opencli-hub-h2-data
-opencli-hub-h2-home
+opencli-hub-postgresql-data
+opencli-hub-postgresql-hub-data
+opencli-hub-postgresql-home
 ```
 
-其中 data volume 包含 H2 文件、Instance Profile、资源和日志；home volume 包含 OpenCLI home/data。恢复时停止 Compose stack，恢复同名 volume 内容，再以相同 signing key 启动。
+并创建可恢复的逻辑数据库备份，例如在维护窗口：
+
+```bash
+pg_dump --host "$OPENCLI_HUB_POSTGRESQL_HOST" --username "$OPENCLI_HUB_POSTGRESQL_USERNAME" \
+  --dbname opencli_hub > opencli_hub.sql
+```
 
 ### MySQL
 
@@ -153,6 +187,18 @@ opencli-hub-mysql-home
 mysqldump --host "$OPENCLI_HUB_MYSQL_HOST" --user "$OPENCLI_HUB_MYSQL_USERNAME" \
   --password --single-transaction --routines --events opencli_hub > opencli_hub.sql
 ```
+
+### SQLite
+
+SQLite 变体只有两个 named volume（数据库在 data volume 内）：
+
+```text
+opencli-hub-sqlite-data
+opencli-hub-sqlite-home
+```
+
+先停止 Hub，再复制 data volume（或先用 `sqlite3 .backup` 生成一致快照）；不要在线拷贝 db 文件，
+也不要让第二个进程打开同一数据库文件。
 
 对备份执行校验并定期在隔离环境演练恢复。MySQL DDL 隐式提交；发生迁移问题时，回滚方法是停止 Hub 并恢复迁移前备份，不是手写反向 DDL。
 
@@ -230,19 +276,22 @@ scripts/docker/test-install-opencli.sh
 
 ### 6.3 既有 MySQL schema
 
-对于旧版本数据库，必须在停机窗口按此顺序执行：
+对于旧版本数据库，必须在停机窗口按此顺序执行（脚本兼容 MySQL 5.7 与 8.4）：
 
 1. `scripts/migrate-mysql-uuid-ids.sql`
 2. `scripts/migrate-mysql-browser-proxy-settings.sql`
 3. `scripts/migrate-mysql-execution-indexes.sql`
 4. `scripts/migrate-mysql-instance-priority.sql`
 5. `scripts/migrate-mysql-execution-queued-at-immutable.sql`
+6. `scripts/migrate-mysql-instance-state-changed-at-immutable.sql`
 
 每个脚本都有 `information_schema` 校验输出。完整字段、索引和回滚说明在各自的迁移文档中；不要跳过备份，也不要将 MySQL 8 volume 直接降级挂载到 5.7。
 
-`migrate-mysql-instance-priority.sql` 为既有 `hub_instance` 增加 `priority int not null default 0`（自动路由负载相同时更高优先）。新库由 `schema-mysql.sql` 建表即可；既有库必须在部署含该字段的 Hub 镜像前执行此脚本。
+`migrate-mysql-instance-priority.sql` 为既有 `hub_instance` 增加 `priority int not null default 0`（自动路由负载相同时更高优先）。新库由当前变体的 `schema-database.sql` 建表即可；既有库必须在部署含该字段的 Hub 镜像前执行此脚本。
 
 `migrate-mysql-execution-queued-at-immutable.sql` 去掉 `hub_execution.queued_at` 的 `ON UPDATE CURRENT_TIMESTAMP`，并使用稳定的 `gmt_create` 回填已被状态更新改写的历史入队时间。脚本结束时 `queued_at_rows_still_drifted` 应为 `0`。
+
+`migrate-mysql-instance-state-changed-at-immutable.sql` 去掉 `hub_instance.state_changed_at` 的 `ON UPDATE CURRENT_TIMESTAMP`（`modify column state_changed_at timestamp(3) not null default current_timestamp(3)`）。与 `queued_at` 不同：`state_changed_at` 没有幸存列能还原被 `ON UPDATE` 覆盖的历史状态变更时间（`gmt_create` 是插入时间，`gmt_modified` 是最近一次任意更新），因此脚本**不伪造历史时间、不做回填**——既有已漂移值不可恢复，只保证此后的状态变更写入正确。脚本结束时信息 schema 中该列 `extra` 不应再包含 `on update CURRENT_TIMESTAMP`。
 
 ## 7. 日常检查
 
@@ -283,12 +332,12 @@ opencli plugin install|update|list
 | 问题 | 处理顺序 |
 |---|---|
 | BuildKit 报 secret 缺失 | 检查 key 路径、权限和非空状态；不要用环境变量字符串或提交文件代替 secret。 |
-| MySQL Hub 未启动 | 先检查 MySQL service health、密码变量、JDBC host/database，再查看 Hub console log。 |
+| 数据库变体 Hub 未启动 | PostgreSQL/MySQL：先检查 DB service health、密码变量、JDBC host/database；SQLite：检查 `OPENCLI_HUB_DATA_DIR` 磁盘、WAL 文件权限和**单进程**约束；再看 Hub console log。 |
 | Chrome 启动失败 | 查看 Instance 的 CHROME/XVFB/OPENBOX/X11VNC 日志；确认 shm/seccomp、UID 1000 volume 权限和 Chrome binary。 |
 | Browser Bridge 不连接 | 检查 managed policy、CRX server、Chrome log；不要添加被 Chrome 拒绝的 unpacked extension flags。 |
 | VNC WebSocket 失败 | 查询 VNC status；确认 Gateway 转发 Upgrade；不要映射 x11vnc TCP 端口到外部。 |
 | CUSTOM proxy 无法访问 | 从容器网络检查 DNS/路由；确认 URI 无凭据且有端口；bridge 下宿主 loopback 不可直接使用。 |
-| 执行长时间等待 | 检查 Instance 排队数、Gateway timeout 和 command timeout；不要用自动重试写命令代替业务幂等。 |
+| 执行长时间等待 | 检查 Instance 排队数、Gateway timeout 和 command timeout；execute 是 202 异步契约，客户端必须轮询，不要用自动重试写命令代替业务幂等。 |
 | 插件 sync 失败 | 查看源 `lastError`、容器网络/git 可达性、`opencli plugin list` 与 `/var/lib/opencli/.opencli` 权限。 |
 | 插件已装但命令不可见 | 调用 `POST /api/plugins/reload-catalog`；确认命令为 public 且 Instance websites 已启用对应 site。 |
 
@@ -300,13 +349,20 @@ opencli plugin install|update|list
 export JAVA_HOME=/path/to/jdk-17
 env JAVA_HOME="$JAVA_HOME" mvn -B -ntp clean test
 (cd frontend && npm ci && npm test && npm run lint && npm run build)
-OPENCLI_HUB_MYSQL_PASSWORD=dummy MYSQL_ROOT_PASSWORD=dummy docker compose -f compose.yml config
-docker compose -f compose.h2.yml config
+# 三个数据库变体构建 + JDBC driver 隔离校验（CI verify.yml 的 java job 等价检查）
+env JAVA_HOME="$JAVA_HOME" mvn -B -ntp -Ppostgresql clean package
+env JAVA_HOME="$JAVA_HOME" mvn -B -ntp -Pmysql clean package
+env JAVA_HOME="$JAVA_HOME" mvn -B -ntp -Psqlite clean package
+# 三套 Compose 静态校验（密码占位）
+OPENCLI_HUB_POSTGRESQL_PASSWORD=dummy docker compose -f compose.yml config
+OPENCLI_HUB_MYSQL_PASSWORD=dummy MYSQL_ROOT_PASSWORD=dummy docker compose -f compose.mysql.yml config
+docker compose -f compose.sqlite.yml config
 find scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
 scripts/docker/validate-opencli-artifact-lock.sh
 scripts/docker/test-install-opencli.sh
 git diff --check
 ```
 
-准备好 signing key 后，再运行 `scripts/docker/smoke-h2.sh`。它验证镜像、health、Hub API、OpenCLI 版本（对照
+准备好 signing key 后，再运行 `scripts/docker/smoke-sqlite.sh`。它验证镜像、health、Hub API、OpenCLI 版本（对照
 `/opt/opencli/artifact-build-info.json`）和 CRX loopback health；不会创建 Instance 或覆盖 Chrome 登录态 E2E。
+PostgreSQL/MySQL 变体由 CI 的矩阵构建与三套 Compose 校验覆盖。
