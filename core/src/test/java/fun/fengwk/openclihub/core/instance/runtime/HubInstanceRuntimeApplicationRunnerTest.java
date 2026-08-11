@@ -78,11 +78,7 @@ class HubInstanceRuntimeApplicationRunnerTest {
         registry = new HubInstanceRuntimeRegistry(launcher, allocationService,
             new FakeUnexpectedExitListener());
         startCoordinator = new HubInstanceStartCoordinator(properties);
-        lifecycle = new HubInstanceLifecycleService(
-            instanceService, registry, launcher, daemon, properties,
-            new FakeHubSystemSettingsService(), new ProfileSingletonCleaner(),
-            new ChromeProfileFileAccessBootstrap(new ObjectMapper(), buildInfoPath),
-            new HubDispatchRegistry(), startCoordinator, Clock.systemUTC());
+        lifecycle = newLifecycle();
         scanner = new OrphanInstanceScanner(properties, instanceService);
         runner = new HubInstanceRuntimeApplicationRunner(lifecycle, scanner, properties,
             startCoordinator);
@@ -145,11 +141,7 @@ class HubInstanceRuntimeApplicationRunnerTest {
     void shouldKeepApiStartBehindRecoveryBarrierUntilSweepFinishes() throws Exception {
         BlockingStartingService blocking = new BlockingStartingService();
         instanceService = blocking;
-        lifecycle = new HubInstanceLifecycleService(
-            instanceService, registry, launcher, daemon, properties,
-            new FakeHubSystemSettingsService(), new ProfileSingletonCleaner(),
-            new ChromeProfileFileAccessBootstrap(new ObjectMapper(), buildInfoPath),
-            new HubDispatchRegistry(), startCoordinator, Clock.systemUTC());
+        lifecycle = newLifecycle();
         runner = new HubInstanceRuntimeApplicationRunner(lifecycle, scanner, properties,
             startCoordinator);
         String recoveredId = seedRow("bilibili-recovered");
@@ -227,6 +219,19 @@ class HubInstanceRuntimeApplicationRunnerTest {
             .as("destroy must release the recovery barrier even before the sweep ran")
             .isFalse();
         assertThat(startCoordinator.runStart(() -> true)).isTrue();
+    }
+
+    private HubInstanceLifecycleService newLifecycle() {
+        HubInstanceFiles files = new HubInstanceFiles(properties);
+        HubInstanceRuntimeStarter starter = new HubInstanceRuntimeStarter(
+            registry, launcher, files, new ProfileSingletonCleaner(),
+            new ChromeProfileFileAccessBootstrap(new ObjectMapper(), buildInfoPath),
+            properties, new FakeHubSystemSettingsService());
+        HubInstanceDaemonContextService daemonContext = new HubInstanceDaemonContextService(
+            daemon, properties, instanceService, registry, starter);
+        return new HubInstanceLifecycleService(
+            instanceService, registry, new HubDispatchRegistry(), startCoordinator,
+            files, starter, daemonContext, properties, Clock.systemUTC());
     }
 
     private String seedRow(String code) {

@@ -1361,10 +1361,15 @@ class HubInstanceLifecycleServiceTest {
 
     private HubInstanceLifecycleService newLifecycle(InMemoryHubInstanceService service,
         HubDispatchRegistry newDispatchRegistry) {
+        HubInstanceFiles files = new HubInstanceFiles(properties);
+        HubInstanceRuntimeStarter starter = new HubInstanceRuntimeStarter(
+            registry, launcher, files, new ProfileSingletonCleaner(),
+            newChromeBootstrap(), properties, settingsService);
+        HubInstanceDaemonContextService daemonContext = new HubInstanceDaemonContextService(
+            daemon, properties, service, registry, starter);
         return new HubInstanceLifecycleService(
-            service, registry, launcher, daemon, properties, settingsService,
-            new ProfileSingletonCleaner(), newChromeBootstrap(),
-            newDispatchRegistry, startCoordinator, java.time.Clock.systemUTC());
+            service, registry, newDispatchRegistry, startCoordinator,
+            files, starter, daemonContext, properties, java.time.Clock.systemUTC());
     }
 
     private OpenCliProfileSnapshot connectedProfile(String contextId) {

@@ -141,7 +141,7 @@ public class FakeInstanceProcessLauncher implements InstanceProcessLauncher {
     }
 
     /**
-     * Drops X11 lock files so {@link HubInstanceLifecycleService#waitForXvfbReady} returns
+     * Drops X11 lock files so {@link HubInstanceRuntimeStarter#waitForXvfbReady} returns
      * immediately. Mirrors the production Xvfb behaviour without needing a real server.
      */
     private void signalXvfbReady(int displayNumber) {
