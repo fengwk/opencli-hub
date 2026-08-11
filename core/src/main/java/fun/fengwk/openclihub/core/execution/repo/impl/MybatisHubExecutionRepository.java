@@ -142,6 +142,10 @@ public class MybatisHubExecutionRepository implements HubExecutionRepository {
         target.setQueuedAt(source.getQueuedAt());
         target.setStartedAt(source.getStartedAt());
         target.setFinishedAt(source.getFinishedAt());
+        // Audit columns must round-trip into the domain so a subsequent update() re-writes
+        // gmt_create verbatim instead of null (NOT NULL) and gmt_modified as the latest state.
+        target.setCreateTime(source.getCreateTime());
+        target.setUpdateTime(source.getUpdateTime());
         return target;
     }
 
