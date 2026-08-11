@@ -104,8 +104,8 @@
                 <dependency>
                     <groupId>org.xerial</groupId>
                     <artifactId>sqlite-jdbc</artifactId>
-                    <!-- Explicitly pinned stable release, verified resolvable on Maven Central
-                         (latest 3.49.1.0) and identical to the Spring Boot 3.5.16 managed version. -->
+                    <!-- Explicitly pinned to 3.49.1.0: a stable release verified resolvable on
+                         Maven Central (the version Spring Boot 3.5.16's BOM also manages). -->
                     <version>3.49.1.0</version>
                     <scope>runtime</scope>
                 </dependency>

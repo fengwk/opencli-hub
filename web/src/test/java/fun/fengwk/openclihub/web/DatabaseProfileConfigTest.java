@@ -84,6 +84,11 @@ class DatabaseProfileConfigTest {
         assertThat(sqlite.getProperty("spring.datasource.url"))
             .as("SQLite must use a single local db file with WAL and a busy timeout")
             .startsWith("jdbc:sqlite:")
+            .contains("OPENCLI_HUB_SQLITE_PATH")
+            .as("the frozen env contract is OPENCLI_HUB_SQLITE_PATH (no legacy name)")
+            .doesNotContain("OPENCLI_HUB_SQLITE_DATABASE_FILE")
+            .as("the default db file path is frozen")
+            .contains("/database/opencli-hub.db")
             .contains("journal_mode=WAL")
             .contains("busy_timeout=5000");
         assertThat(sqlite.getProperty("spring.datasource.hikari.maximum-pool-size"))

@@ -1,7 +1,7 @@
 spring:
   datasource:
     driver-class-name: org.sqlite.JDBC
-    url: jdbc:sqlite:${OPENCLI_HUB_SQLITE_DATABASE_FILE:${OPENCLI_HUB_DATA_DIR:/data/opencli-hub}/database/opencli-hub.db}?journal_mode=WAL&busy_timeout=5000
+    url: jdbc:sqlite:${OPENCLI_HUB_SQLITE_PATH:${OPENCLI_HUB_DATA_DIR:/data/opencli-hub}/database/opencli-hub.db}?journal_mode=WAL&busy_timeout=5000
     username:
     password:
     hikari:
