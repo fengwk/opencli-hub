@@ -1161,12 +1161,16 @@ load all instances order by gmt_create asc, id asc
 
 - 一把全局公平启动锁串行化所有启动。daemon restart、context 快照与唯一新 ID 发现因此
   永不重叠，替换了原先分散的全局 create 锁与 daemon ensure 锁；
-- 启动恢复 sweep（orphan scan → 状态归一 → 逐实例启动）全程持有该锁作为恢复屏障；
-- 恢复期间到达的 API 启动请求在屏障前等待，上限为
-  `runtime.recovery-barrier-timeout-millis`（默认 60000ms，env
-  `OPENCLI_HUB_RECOVERY_BARRIER_TIMEOUT_MILLIS`）。等待超时返回
-  `INSTANCE_START_RECOVERY_IN_PROGRESS`（恢复仍持锁）或 `INSTANCE_BUSY`（其他 API 启动
-  持锁）；等待被中断时返回 `INSTANCE_START_FAILED` 并保留中断标志；
+- `ApplicationRunner` 在返回前同步调用 `beginRecovery()` 声明恢复屏障，再提交恢复任务；
+  因此从 API 可见的恢复宣布时刻起，启动请求就被屏障挡住，恢复任务尚未调度时也不例外；
+- 恢复 sweep（orphan scan → 状态归一 → 逐实例启动）完成或失败后由 `finally` 调用
+  `completeRecovery()` 释放屏障；executor 提交失败与 `destroy()`（destroy-before-start）
+  同样释放，屏障不会永久生效；
+- API 启动请求的等待（排队等启动锁 + 恢复屏障）统一有界，上限为
+  `runtime.start-coordination-timeout-millis`（默认 60000ms，env
+  `OPENCLI_HUB_START_COORDINATION_TIMEOUT_MILLIS`）。等待超时返回
+  `INSTANCE_START_RECOVERY_IN_PROGRESS`（恢复屏障生效中）或 `INSTANCE_BUSY`（其他 API
+  启动持锁）；等待被中断时返回 `INSTANCE_START_FAILED` 并保留中断标志；
 - 锁序恒为 coordinator 锁 → 每实例 lifecycle 锁，stop/delete/update 只取每实例锁，
   不会死锁。
 

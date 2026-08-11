@@ -24,10 +24,12 @@ import org.junit.jupiter.api.Test;
  * Unit tests for the {@link HubInstanceStartCoordinator} contract:
  * <ul>
  *   <li>every start path serialises on one global lock (no overlapping actions);</li>
- *   <li>the recovery sweep is a barrier: API starts wait, bounded by the configured timeout,
- *       then either proceed or fail with a precise error code;</li>
+ *   <li>the recovery barrier takes effect the moment {@link #beginRecovery()} returns — even
+ *       before the recovery task has been scheduled — and API starts wait bounded until
+ *       {@link #completeRecovery()};</li>
  *   <li>waits are interruptible and preserve the interrupt flag;</li>
- *   <li>nested recovery is rejected and the barrier state is always cleaned up.</li>
+ *   <li>nested begin is rejected, {@code completeRecovery} is idempotent, and the barrier
+ *       state is always cleaned up.</li>
  * </ul>
  */
 class HubInstanceStartCoordinatorTest {
@@ -45,9 +47,9 @@ class HubInstanceStartCoordinatorTest {
         executor.shutdownNow();
     }
 
-    private static HubInstanceStartCoordinator newCoordinator(long barrierTimeoutMillis) {
+    private static HubInstanceStartCoordinator newCoordinator(long coordinationTimeoutMillis) {
         OpenCliHubProperties properties = new OpenCliHubProperties();
-        properties.getRuntime().setRecoveryBarrierTimeoutMillis(barrierTimeoutMillis);
+        properties.getRuntime().setStartCoordinationTimeoutMillis(coordinationTimeoutMillis);
         return new HubInstanceStartCoordinator(properties);
     }
 
@@ -78,59 +80,101 @@ class HubInstanceStartCoordinatorTest {
         assertThat(maxConcurrent.get()).isEqualTo(1);
     }
 
+    /**
+     * The ApplicationRunner declares the barrier synchronously before the recovery task is
+     * even scheduled; an API start submitted while the task is still queued must NOT enter
+     * its action, and proceeds only after the sweep completes and releases the barrier.
+     */
+    @Test
+    void shouldHoldApiStartBehindBarrierWhileRecoveryTaskIsQueuedButNotStarted() throws Exception {
+        coordinator = newCoordinator(5000);
+        ExecutorService single = Executors.newSingleThreadExecutor();
+        try {
+            // Occupy the single executor slot so the recovery task stays queued, exactly
+            // mirroring the ApplicationRunner scheduling gap.
+            CountDownLatch slotBusy = new CountDownLatch(1);
+            CountDownLatch releaseSlot = new CountDownLatch(1);
+            Future<Void> occupier = single.submit(() -> {
+                slotBusy.countDown();
+                if (!releaseSlot.await(2, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("test release timed out");
+                }
+                return null;
+            });
+            assertThat(slotBusy.await(2, TimeUnit.SECONDS)).isTrue();
+
+            AtomicBoolean recoveryRan = new AtomicBoolean();
+            Future<Void> recoveryTask = single.submit(() -> {
+                recoveryRan.set(true);
+                coordinator.runRecoveryStart(() -> null);
+                return null;
+            });
+
+            // runner.run() returns after beginRecovery(); the task has not started yet.
+            coordinator.beginRecovery();
+            assertThat(coordinator.isRecoveryInProgress()).isTrue();
+
+            AtomicBoolean apiActionRan = new AtomicBoolean();
+            Future<Boolean> apiStart = executor.submit(() -> coordinator.runStart(() -> {
+                apiActionRan.set(true);
+                return true;
+            }));
+            Thread.sleep(100);
+            assertThat(apiStart.isDone())
+                .as("API start must wait while the recovery task is queued but not started")
+                .isFalse();
+            assertThat(apiActionRan).isFalse();
+
+            releaseSlot.countDown();
+            occupier.get(2, TimeUnit.SECONDS);
+            Thread.sleep(50);
+            assertThat(recoveryRan).as("queued recovery task must run after the slot frees")
+                .isTrue();
+
+            // Sweep finished: release the barrier and the API start may proceed.
+            coordinator.completeRecovery();
+            assertThat(coordinator.isRecoveryInProgress()).isFalse();
+            assertThat(apiStart.get(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(apiActionRan).isTrue();
+            recoveryTask.get(2, TimeUnit.SECONDS);
+        } finally {
+            single.shutdownNow();
+        }
+    }
+
     @Test
     void shouldWaitForRecoveryThenProceed() throws Exception {
         coordinator = newCoordinator(5000);
-        CountDownLatch recoveryEntered = new CountDownLatch(1);
-        CountDownLatch releaseRecovery = new CountDownLatch(1);
         AtomicBoolean startRanAfterRecovery = new AtomicBoolean();
 
-        Future<Void> recovery = executor.submit(() -> coordinator.runRecovery(() -> {
-            recoveryEntered.countDown();
-            if (!releaseRecovery.await(2, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("test release timed out");
-            }
-            return null;
-        }));
-        assertThat(recoveryEntered.await(2, TimeUnit.SECONDS)).isTrue();
-
+        coordinator.beginRecovery();
         Future<Boolean> apiStart = executor.submit(() -> coordinator.runStart(() -> {
             startRanAfterRecovery.set(true);
             return true;
         }));
 
-        // The API start must be held behind the recovery barrier.
         Thread.sleep(100);
         assertThat(apiStart.isDone()).as("API start must wait for the recovery sweep").isFalse();
         assertThat(startRanAfterRecovery).isFalse();
 
-        releaseRecovery.countDown();
+        coordinator.completeRecovery();
         assertThat(apiStart.get(2, TimeUnit.SECONDS)).isTrue();
-        recovery.get(2, TimeUnit.SECONDS);
         assertThat(startRanAfterRecovery).isTrue();
     }
 
     @Test
-    void shouldTimeoutWithRecoveryInProgressCodeWhileRecoveryHoldsLock() throws Exception {
+    void shouldTimeoutWithRecoveryInProgressCodeWhileBarrierActive() throws Exception {
         coordinator = newCoordinator(50);
-        CountDownLatch recoveryEntered = new CountDownLatch(1);
-        CountDownLatch releaseRecovery = new CountDownLatch(1);
-        Future<Void> recovery = executor.submit(() -> coordinator.runRecovery(() -> {
-            recoveryEntered.countDown();
-            if (!releaseRecovery.await(2, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("test release timed out");
-            }
-            return null;
-        }));
-        assertThat(recoveryEntered.await(2, TimeUnit.SECONDS)).isTrue();
+        coordinator.beginRecovery();
 
         assertThatThrownBy(() -> coordinator.runStart(() -> null))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .extracting("code")
             .isEqualTo(prefixed(HubErrorCodes.INSTANCE_START_RECOVERY_IN_PROGRESS));
 
-        releaseRecovery.countDown();
-        recovery.get(2, TimeUnit.SECONDS);
+        coordinator.completeRecovery();
+        // After the barrier is released the same start succeeds.
+        assertThat(coordinator.runStart(() -> true)).isTrue();
     }
 
     @Test
@@ -159,16 +203,7 @@ class HubInstanceStartCoordinatorTest {
     @Test
     void shouldRestoreInterruptFlagWhenStartWaitInterrupted() throws Exception {
         coordinator = newCoordinator(5000);
-        CountDownLatch recoveryEntered = new CountDownLatch(1);
-        CountDownLatch releaseRecovery = new CountDownLatch(1);
-        Future<Void> recovery = executor.submit(() -> coordinator.runRecovery(() -> {
-            recoveryEntered.countDown();
-            if (!releaseRecovery.await(2, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("test release timed out");
-            }
-            return null;
-        }));
-        assertThat(recoveryEntered.await(2, TimeUnit.SECONDS)).isTrue();
+        coordinator.beginRecovery();
 
         AtomicReference<Thread> waiterThread = new AtomicReference<>();
         AtomicBoolean interruptFlagPreserved = new AtomicBoolean();
@@ -192,24 +227,34 @@ class HubInstanceStartCoordinatorTest {
             .as("the interrupted waiter must keep its interrupt flag")
             .isTrue();
 
-        releaseRecovery.countDown();
-        recovery.get(2, TimeUnit.SECONDS);
+        coordinator.completeRecovery();
     }
 
     @Test
-    void shouldRejectNestedRecoveryAndLeaveCleanStateAfterSweep() {
+    void shouldRejectNestedBeginAndLeaveCleanStateAfterComplete() {
         coordinator = newCoordinator(5000);
-        AtomicBoolean nestedRejected = new AtomicBoolean();
-        coordinator.runRecovery(() -> {
-            assertThatThrownBy(() -> coordinator.runRecovery(() -> null))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("already in progress");
-            nestedRejected.set(true);
-            return null;
-        });
-        assertThat(nestedRejected).isTrue();
+        coordinator.beginRecovery();
+        assertThatThrownBy(coordinator::beginRecovery)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("already in progress");
 
-        // After the sweep the barrier is cleared: a normal API start runs immediately.
+        // While the barrier is active an API start is held back (bounded), then after
+        // completeRecovery the same start runs immediately.
+        coordinator.completeRecovery();
+        assertThat(coordinator.isRecoveryInProgress()).isFalse();
+        assertThat(coordinator.runStart(() -> true)).isTrue();
+    }
+
+    @Test
+    void shouldReleaseBarrierIdempotently() {
+        coordinator = newCoordinator(5000);
+        // Complete without begin, and complete twice: both are harmless no-ops.
+        coordinator.completeRecovery();
+        coordinator.beginRecovery();
+        assertThat(coordinator.isRecoveryInProgress()).isTrue();
+        coordinator.completeRecovery();
+        coordinator.completeRecovery();
+        assertThat(coordinator.isRecoveryInProgress()).isFalse();
         assertThat(coordinator.runStart(() -> true)).isTrue();
     }
 
@@ -217,12 +262,11 @@ class HubInstanceStartCoordinatorTest {
     void shouldRunRecoveryStartsInsideSweepWithoutBarrier() {
         coordinator = newCoordinator(5000);
         AtomicInteger started = new AtomicInteger();
-        coordinator.runRecovery(() -> {
-            coordinator.runRecoveryStart(started::incrementAndGet);
-            coordinator.runRecoveryStart(started::incrementAndGet);
-            return null;
-        });
+        coordinator.beginRecovery();
+        coordinator.runRecoveryStart(started::incrementAndGet);
+        coordinator.runRecoveryStart(started::incrementAndGet);
         assertThat(started.get()).isEqualTo(2);
+        coordinator.completeRecovery();
     }
 
     private static String prefixed(HubErrorCodes code) {

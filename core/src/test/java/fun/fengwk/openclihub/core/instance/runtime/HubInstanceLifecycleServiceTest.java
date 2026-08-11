@@ -1009,13 +1009,17 @@ class HubInstanceLifecycleServiceTest {
         ExecutorService recoveryExecutor = Executors.newSingleThreadExecutor();
         ExecutorService apiExecutor = Executors.newSingleThreadExecutor();
         try {
+            // Mirror the ApplicationRunner: declare the barrier synchronously, then run the
+            // sweep asynchronously and release the barrier in finally.
+            startCoordinator.beginRecovery();
             Future<Void> recovery = recoveryExecutor.submit(() -> {
-                startCoordinator.runRecovery(() -> {
+                try {
                     // Recover only the blocked instance; the API instance must not be
                     // touched by the sweep so the API start exercises the barrier itself.
                     lifecycle.recoverAll(List.of(instanceService.get(recoveredId)));
-                    return null;
-                });
+                } finally {
+                    startCoordinator.completeRecovery();
+                }
                 return null;
             });
             assertThat(blocking.startingUpdateEntered.await(2, TimeUnit.SECONDS))

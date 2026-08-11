@@ -373,9 +373,9 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
      * Single-threaded recovery over the supplied instance list. Failures are isolated and
      * the loop continues — the Hub itself MUST stay healthy even when every Instance fails.
      *
-     * <p>Called from inside the {@link HubInstanceStartCoordinator#runRecovery(Callable)}
-     * sweep; each start serialises on the coordinator's global start lock without waiting on
-     * the recovery barrier.
+     * <p>Called from inside the {@link HubInstanceStartCoordinator} recovery barrier
+     * (declared by {@link HubInstanceStartCoordinator#beginRecovery()}); each start
+     * serialises on the coordinator's global start lock without waiting on the barrier.
      */
     public void recoverAll(List<HubInstance> orderedByCreationTime) {
         for (HubInstance instance : orderedByCreationTime) {

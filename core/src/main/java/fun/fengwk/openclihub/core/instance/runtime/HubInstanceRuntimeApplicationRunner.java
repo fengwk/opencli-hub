@@ -24,9 +24,11 @@ import org.springframework.stereotype.Component;
  *       on a single-thread executor; failures are isolated and do not block Spring ready.</li>
  * </ol>
  *
- * <p>The whole sweep runs inside {@link HubInstanceStartCoordinator#runRecovery(Callable)}:
- * while it is in progress, API start/create/restart wait (bounded) behind the recovery
- * barrier instead of racing the sweep.
+ * <p>The whole sweep runs inside the coordinator's recovery barrier: the barrier is declared
+ * synchronously before {@code run(ApplicationArguments)} returns (so API start/create/restart
+ * are held back even while the recovery task is still queued) and is released by the sweep's
+ * {@code finally}, by submit-failure handling and by {@link #destroy()} — it can never stay
+ * active forever.
  *
  * <p>The executor is owned by this bean so {@code DisposableBean#destroy} can shut it down
  * during Hub shutdown; running threads are daemon threads, so a stuck lifecycle flow will not
@@ -62,26 +64,35 @@ public class HubInstanceRuntimeApplicationRunner implements ApplicationRunner, D
             log.info("Hub instance startup recovery is disabled");
             return;
         }
-        recoveryExecutor.submit(this::runRecovery);
+        // Announce the barrier synchronously BEFORE returning: from this moment on API
+        // start/create/restart wait (bounded) instead of racing the not-yet-started sweep.
+        startCoordinator.beginRecovery();
+        try {
+            recoveryExecutor.submit(this::runRecovery);
+        } catch (RuntimeException ex) {
+            startCoordinator.completeRecovery();
+            log.error("failed to submit startup recovery; recovery barrier released", ex);
+            throw ex;
+        }
     }
 
     private void runRecovery() {
         try {
-            startCoordinator.runRecovery(() -> {
-                OrphanInstanceScanner.Result result = orphanScanner.scan();
-                log.info("Hub startup: orphan scan complete, normalising instance states");
-                lifecycleService.normalizeAllStatesToStarting();
-                List<HubInstance> instances = lifecycleService.listInstancesOrderedByCreationTime();
-                log.info("Hub startup: starting recovery for {} instances", instances.size());
-                lifecycleService.recoverAll(instances);
-                log.info("Hub recovery complete: creatingOrphanDeleted={} creatingMarkerRemoved={} "
-                    + "managedOrphanDeleted={} unsafeNameProtected={}",
-                    result.creatingOrphanDeleted, result.creatingMarkerRemoved,
-                    result.managedOrphanDeleted, result.unsafeNameProtected);
-                return null;
-            });
+            OrphanInstanceScanner.Result result = orphanScanner.scan();
+            log.info("Hub startup: orphan scan complete, normalising instance states");
+            lifecycleService.normalizeAllStatesToStarting();
+            List<HubInstance> instances = lifecycleService.listInstancesOrderedByCreationTime();
+            log.info("Hub startup: starting recovery for {} instances", instances.size());
+            lifecycleService.recoverAll(instances);
+            log.info("Hub recovery complete: creatingOrphanDeleted={} creatingMarkerRemoved={} "
+                + "managedOrphanDeleted={} unsafeNameProtected={}",
+                result.creatingOrphanDeleted, result.creatingMarkerRemoved,
+                result.managedOrphanDeleted, result.unsafeNameProtected);
         } catch (RuntimeException ex) {
             log.error("Hub recovery sweep failed: {}", ex.getMessage(), ex);
+        } finally {
+            // Success and failure both release the barrier; idempotent.
+            startCoordinator.completeRecovery();
         }
     }
 
@@ -97,6 +108,9 @@ public class HubInstanceRuntimeApplicationRunner implements ApplicationRunner, D
             Thread.currentThread().interrupt();
             recoveryExecutor.shutdownNow();
         }
+        // Covers destroy-before-start (the queued task was cancelled and never ran its
+        // finally) and interrupted termination: the barrier must not stay active forever.
+        startCoordinator.completeRecovery();
     }
 
     private static ThreadFactory recoveryThreadFactory() {

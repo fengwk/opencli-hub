@@ -82,7 +82,7 @@ opencli:
       allowed-origins: ${OPENCLI_HUB_VNC_ALLOWED_ORIGINS:}
     runtime:
       startup-recovery-enabled: ${OPENCLI_HUB_STARTUP_RECOVERY_ENABLED:true}
-      recovery-barrier-timeout-millis: ${OPENCLI_HUB_RECOVERY_BARRIER_TIMEOUT_MILLIS:60000}
+      start-coordination-timeout-millis: ${OPENCLI_HUB_START_COORDINATION_TIMEOUT_MILLIS:60000}
       display-base: ${OPENCLI_HUB_DISPLAY_BASE:99}
       vnc-port-base: ${OPENCLI_HUB_VNC_PORT_BASE:5900}
       vnc-port-max: ${OPENCLI_HUB_VNC_PORT_MAX:5999}

@@ -1,6 +1,7 @@
 package fun.fengwk.openclihub.core.instance.runtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import fun.fengwk.openclihub.core.execution.runtime.HubDispatchRegistry;
@@ -19,7 +20,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -155,6 +158,11 @@ class HubInstanceRuntimeApplicationRunnerTest {
         daemon.addConnectedContextAfterFetch("ctx-api", 4);
 
         runner.run(new DefaultApplicationArguments(new String[0]));
+        // The barrier is declared synchronously: it is active the moment run() returns,
+        // even though the recovery task may not have started executing yet.
+        assertThat(startCoordinator.isRecoveryInProgress())
+            .as("recovery barrier must be announced before run() returns")
+            .isTrue();
         assertThat(blocking.startingEntered.await(2, TimeUnit.SECONDS))
             .as("recovery must enter the first instance start")
             .isTrue();
@@ -182,6 +190,42 @@ class HubInstanceRuntimeApplicationRunnerTest {
         assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
             .as("recovery + API create must each launch exactly one Chrome")
             .isEqualTo(2);
+    }
+
+    /**
+     * If the recovery task cannot be submitted (executor already shut down), the barrier
+     * declared by {@code run()} must be released immediately and must not block API starts.
+     */
+    @Test
+    void shouldReleaseBarrierWhenRecoverySubmitFails() {
+        runner.run(new DefaultApplicationArguments(new String[0]));
+        runner.destroy();
+
+        assertThatThrownBy(() -> runner.run(new DefaultApplicationArguments(new String[0])))
+            .isInstanceOf(RejectedExecutionException.class);
+        assertThat(startCoordinator.isRecoveryInProgress())
+            .as("submit failure must release the recovery barrier")
+            .isFalse();
+        assertThat(startCoordinator.runStart(() -> true))
+            .as("the coordinator must stay usable after submit failure")
+            .isTrue();
+    }
+
+    /**
+     * Destroying the runner right after {@code run()} (the recovery task may still be queued
+     * or already interrupted) must release the barrier — it can never stay active forever.
+     */
+    @Test
+    void shouldReleaseBarrierOnDestroyBeforeRecoveryStarts() {
+        runner.run(new DefaultApplicationArguments(new String[0]));
+        assertThat(startCoordinator.isRecoveryInProgress()).isTrue();
+
+        runner.destroy();
+
+        assertThat(startCoordinator.isRecoveryInProgress())
+            .as("destroy must release the recovery barrier even before the sweep ran")
+            .isFalse();
+        assertThat(startCoordinator.runStart(() -> true)).isTrue();
     }
 
     private String seedRow(String code) {
