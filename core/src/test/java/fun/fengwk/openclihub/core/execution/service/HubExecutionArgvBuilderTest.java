@@ -9,6 +9,7 @@ import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandArg;
 import fun.fengwk.openclihub.core.command.validator.NormalizedOpenCliArgv;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandOutputRule;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
+import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
 import java.io.IOException;
@@ -17,28 +18,47 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Tests for {@link HubExecutionArgvBuilder}: final argv shape, caller-managed-argument
- * rejection, and {@code FILE}-rule path-escape protection.
+ * rejection, {@code FILE}-rule path-escape protection, and the final-argv defensive
+ * containment check performed by {@link HubLocalPathGuard}.
  */
 class HubExecutionArgvBuilderTest {
+
+    @TempDir
+    Path tempDir;
+
+    private Path resourceRoot;
+    private HubExecutionArgvBuilder builder;
+
+    @BeforeEach
+    void setUp() throws IOException {
+        resourceRoot = tempDir.resolve("resources");
+        Files.createDirectories(resourceRoot);
+        OpenCliHubProperties properties = new OpenCliHubProperties();
+        properties.getResource().setRootDir(resourceRoot.toString());
+        properties.getOpencli().setWorkdir(tempDir.resolve("workdir").toString());
+        builder = new HubExecutionArgvBuilder(new HubLocalPathGuard(properties));
+    }
 
     /**
      * The final argv must start with {@code --profile <contextId>}, include the
      * normalized site/name/args, and end with {@code --format json}. No raw caller argv
-     * survives.
+     * survives. The Hub-injected managed output (a not-yet-created file under the
+     * existing execution group) passes the final containment defense.
      */
     @Test
-    void shouldBuildFinalArgvWithProfileFormatAndManagedOutput() {
-        HubExecutionArgvBuilder builder = new HubExecutionArgvBuilder();
+    void shouldBuildFinalArgvWithProfileFormatAndManagedOutput() throws IOException {
         HubInstance instance = newInstance("ctx-a");
         NormalizedOpenCliArgv normalized = normalized(List.of("bilibili", "hot", "--limit", "5"));
         HubCommandOutputRule rule = rule("bilibili/hot", "output", HubCommandOutputTargetType.FILE, "out.json");
 
-        Path groupDir = Path.of("/data/resources/2026-07-13/execution-1001");
+        Path groupDir = resourceRoot.resolve("2026-07-13").resolve("execution-1001");
+        Files.createDirectories(groupDir);
         Path managed = builder.resolveManagedOutputPath(rule, groupDir);
 
         List<String> argv = builder.build(instance, normalized, rule, managed);
@@ -58,7 +78,6 @@ class HubExecutionArgvBuilderTest {
      */
     @Test
     void shouldRejectWhenCallerAlreadySuppliesTheManagedOutputArgument() {
-        HubExecutionArgvBuilder builder = new HubExecutionArgvBuilder();
         HubCommandOutputRule rule = rule("bilibili/hot", "output", HubCommandOutputTargetType.FILE, "out.json");
         // Caller argv already contains --output → must refuse.
         Map<String, List<String>> namedValues = new LinkedHashMap<>();
@@ -77,10 +96,9 @@ class HubExecutionArgvBuilderTest {
      */
     @Test
     void shouldResolveDirectoryOutputToGroupRoot() {
-        HubExecutionArgvBuilder builder = new HubExecutionArgvBuilder();
         HubCommandOutputRule rule = rule("bilibili/hot", "output",
             HubCommandOutputTargetType.DIRECTORY, null);
-        Path groupDir = Path.of("/data/resources/2026-07-13/execution-2001");
+        Path groupDir = resourceRoot.resolve("2026-07-13").resolve("execution-2001");
         Path managed = builder.resolveManagedOutputPath(rule, groupDir);
         assertThat(managed).isEqualTo(groupDir.toAbsolutePath().normalize());
     }
@@ -91,10 +109,9 @@ class HubExecutionArgvBuilderTest {
      */
     @Test
     void shouldRejectFileRuleThatEscapesTheGroupRoot() {
-        HubExecutionArgvBuilder builder = new HubExecutionArgvBuilder();
         HubCommandOutputRule rule = rule("bilibili/hot", "output",
             HubCommandOutputTargetType.FILE, "../../../etc/passwd");
-        Path groupDir = Path.of("/data/resources/2026-07-13/execution-2001");
+        Path groupDir = resourceRoot.resolve("2026-07-13").resolve("execution-2001");
         assertThatThrownBy(() -> builder.resolveManagedOutputPath(rule, groupDir))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
@@ -107,11 +124,10 @@ class HubExecutionArgvBuilderTest {
      * concatenation.
      */
     @Test
-    void shouldResolveFileRuleInsideTheGroupDirectory(@TempDir Path tmp) throws IOException {
-        HubExecutionArgvBuilder builder = new HubExecutionArgvBuilder();
+    void shouldResolveFileRuleInsideTheGroupDirectory() throws IOException {
         HubCommandOutputRule rule = rule("bilibili/hot", "output",
             HubCommandOutputTargetType.FILE, "report.json");
-        Path groupDir = tmp.resolve("execution-3001");
+        Path groupDir = resourceRoot.resolve("2026-07-13").resolve("execution-3001");
         Files.createDirectories(groupDir);
         Path managed = builder.resolveManagedOutputPath(rule, groupDir);
         assertThat(managed).isEqualTo(groupDir.resolve("report.json").toAbsolutePath().normalize());
@@ -122,13 +138,77 @@ class HubExecutionArgvBuilderTest {
      */
     @Test
     void shouldOmitManagedOutputWhenNoRuleIsConfigured() {
-        HubExecutionArgvBuilder builder = new HubExecutionArgvBuilder();
         HubInstance instance = newInstance("ctx-a");
         NormalizedOpenCliArgv normalized = normalized(List.of("chatgpt", "ask", "hi"));
         List<String> argv = builder.build(instance, normalized, null, null);
         assertThat(argv).containsExactly(
             "--profile", "ctx-a",
             "chatgpt", "ask", "hi",
+            "--format", "json");
+    }
+
+    /**
+     * The final defense refuses any absolute path outside the canonical resource root
+     * that reaches the assembled argv (simulating a substituted input that escaped
+     * earlier stages).
+     */
+    @Test
+    void shouldRejectFinalArgvWithAbsolutePathOutsideRoot() throws IOException {
+        Path outside = tempDir.resolve("outside.txt");
+        Files.writeString(outside, "x");
+        HubInstance instance = newInstance("ctx-a");
+        NormalizedOpenCliArgv normalized = normalized(List.of("bilibili", "submit", outside.toString()));
+
+        assertThatThrownBy(() -> builder.build(instance, normalized, null, null))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                .isEqualTo(HubErrorCodes.OPENCLI_LOCAL_PATH_NOT_ALLOWED.getCode()));
+    }
+
+    /**
+     * The final defense refuses a managed output path that lies outside the canonical
+     * resource root even when nothing exists there yet (nearest existing parent is
+     * outside the root).
+     */
+    @Test
+    void shouldRejectManagedOutputOutsideResourceRoot() {
+        HubInstance instance = newInstance("ctx-a");
+        NormalizedOpenCliArgv normalized = normalized(List.of("bilibili", "hot"));
+        HubCommandOutputRule rule = rule("bilibili/hot", "output",
+            HubCommandOutputTargetType.FILE, "out.json");
+        Path outsideGroup = tempDir.resolve("outside-group");
+
+        assertThatThrownBy(() -> builder.build(
+            instance, normalized, rule, outsideGroup.resolve("out.json")))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                .isEqualTo(HubErrorCodes.OPENCLI_LOCAL_PATH_NOT_ALLOWED.getCode()));
+    }
+
+    /**
+     * A substituted virtual input (an existing real file under the root) together with
+     * the managed output passes the final defense and keeps its argv positions.
+     */
+    @Test
+    void shouldAcceptSubstitutedInputAndManagedOutputUnderRoot() throws IOException {
+        Path group = resourceRoot.resolve("2026-08-12").resolve("upload-x");
+        Files.createDirectories(group);
+        Path input = group.resolve("input.txt");
+        Files.writeString(input, "data");
+
+        HubInstance instance = newInstance("ctx-a");
+        NormalizedOpenCliArgv normalized = normalized(List.of("bilibili", "submit", input.toString()));
+        HubCommandOutputRule rule = rule("bilibili/hot", "output",
+            HubCommandOutputTargetType.DIRECTORY, null);
+        Path outGroup = resourceRoot.resolve("2026-08-12").resolve("execution-4001");
+        Files.createDirectories(outGroup);
+
+        List<String> argv = builder.build(instance, normalized, rule, outGroup);
+
+        assertThat(argv).containsExactly(
+            "--profile", "ctx-a",
+            "bilibili", "submit", input.toString(),
+            "--output", outGroup.toString(),
             "--format", "json");
     }
 
@@ -173,5 +253,4 @@ class HubExecutionArgvBuilderTest {
         rule.setFileName(fileName);
         return rule;
     }
-
 }

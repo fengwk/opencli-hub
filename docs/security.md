@@ -36,6 +36,9 @@ Hub 自身默认只把 HTTP 发布到宿主 `127.0.0.1`。不要把容器 `8080`
 - 调用方只能执行当前 OpenCLI Catalog 中公开、未被黑名单禁用的命令；Hub 校验类型、必填项和 choices，并自行组装 profile/JSON output 参数。
 - 单个 Instance 串行执行。Hub 不会自动对写命令 failover 或重试，避免重复副作用。
 - 资源服务拒绝 traversal、分隔符、控制字符和已存在 symlink，使用 virtual path 暴露文件；调用方应使用 API 返回的 URL，而非自行拼接路径。
+- 调用方如需把本地文件交给命令使用，必须**先上传**，再把上传响应中的 `resourcePath`（`/resources/...` 虚拟路径）作为 argv 值传入。Hub 会解析、加 lease 并替换为资源根目录下的真实路径。
+- 独立 argv 值如果本身是本地路径（绝对路径、`~`、`file://`、Windows drive path、显式 `..`、含分隔符的相对路径、相对 OpenCLI workdir 已存在的文件，以及通过 traversal 或符号链接逃逸资源根的 `/resources/...` 引用），一律以 `OPENCLI_LOCAL_PATH_NOT_ALLOWED` 拒绝；http/https 等 URL 和普通非路径 prompt 不受影响。稳定协议只接受虚拟 `/resources/...`，即使真实路径恰好位于数据卷资源根内也不接受。
+- 最终发给 OpenCLI 子进程的 argv 还会做防御性校验：Hub 替换/注入的每个绝对路径都必须位于 canonical resource root 之下；尚未创建的执行输出目标检查其规范化路径与最近存在的父目录，且资源树内不允许符号链接。
 - Instance Profile、Cookie、extension storage、资源、执行输出和日志可能包含登录态或业务数据。`/data/opencli-hub`、`/var/lib/opencli`、MySQL 数据卷及其备份必须按敏感数据保护。
 - OpenCLI 插件源由管理 API 配置，实际安装走官方 `opencli plugin`。插件代码会在已登录浏览器上下文中运行，**只应安装可信仓库**；插件管理 API 与其它管理接口一样没有内建认证，必须放在 Gateway 后。
 

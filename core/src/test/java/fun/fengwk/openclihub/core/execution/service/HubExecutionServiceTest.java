@@ -93,6 +93,9 @@ class HubExecutionServiceTest {
         repository = new InMemoryExecutionRepository();
         executor = new FakeOpenCliExecutor();
         properties = new OpenCliHubProperties();
+        // Anchor the resource root at the temp dir so the final-argv defense accepts the
+        // temp-dir execution groups this test's prepare() mock fabricates.
+        properties.getResource().setRootDir(tempDir.toString());
 
         instance = new HubInstance();
         instance.setId("7");
@@ -136,7 +139,7 @@ class HubExecutionServiceTest {
             router,
             dispatchRegistry,
             repository,
-            new HubExecutionArgvBuilder(),
+            new HubExecutionArgvBuilder(new HubLocalPathGuard(properties)),
             resources,
             executor,
             new HubExecutionConverter(),

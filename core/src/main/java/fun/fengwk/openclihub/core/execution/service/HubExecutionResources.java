@@ -24,7 +24,11 @@ import org.springframework.stereotype.Component;
  * {@code /resources/...} tokens, acquires a shared lease for each (so concurrent deletes
  * are blocked while the OpenCLI process is running), creates the per-execution output
  * group on demand when an output rule is configured, and resolves the argv tokens to
- * their real on-disk paths so the caller never passes a virtual path to OpenCLI.
+ * their real on-disk paths so the caller never passes a virtual path to OpenCLI. Every
+ * other caller-supplied value is classified by {@link HubLocalPathGuard}: local path
+ * references (absolute, traversal, workdir-relative existing files, file URIs, symlink
+ * escapes, ...) are rejected with {@code OPENCLI_LOCAL_PATH_NOT_ALLOWED} before any
+ * resource work happens, while ordinary values pass through unchanged.
  *
  * <p>The lifecycle is try-with-resources: {@link ResourceContext#close()} releases every
  * input lease exactly once, in the order they were acquired.
@@ -36,10 +40,12 @@ public class HubExecutionResources {
 
     private final HubResourceService resourceService;
     private final HubResourceLeaseManager leaseManager;
+    private final HubLocalPathGuard pathGuard;
     private final Path resourceRoot;
 
     public HubExecutionResources(HubResourceService resourceService,
                                  HubResourceLeaseManager leaseManager,
+                                 HubLocalPathGuard pathGuard,
                                  OpenCliHubProperties properties) {
         if (resourceService == null) {
             throw new IllegalArgumentException("resourceService must not be null");
@@ -47,8 +53,12 @@ public class HubExecutionResources {
         if (leaseManager == null) {
             throw new IllegalArgumentException("leaseManager must not be null");
         }
+        if (pathGuard == null) {
+            throw new IllegalArgumentException("pathGuard must not be null");
+        }
         this.resourceService = resourceService;
         this.leaseManager = leaseManager;
+        this.pathGuard = pathGuard;
         this.resourceRoot = HubResourcePaths.resourceRoot(properties);
     }
 
@@ -96,8 +106,12 @@ public class HubExecutionResources {
                                           List<HubResourceLease> leases,
                                           List<String> argv) {
         List<String> substituted = new ArrayList<>(argv.size());
-        for (String token : argv) {
-            if (isResourceVirtualPath(token)) {
+        for (int i = 0; i < argv.size(); i++) {
+            String token = argv.get(i);
+            // Tokens 0 and 1 are the catalog site/name identifiers, not caller values;
+            // every remaining token is classified by the path guard.
+            if (i >= 2
+                && pathGuard.classifyCallerToken(token) == HubLocalPathGuard.CallerTokenKind.VIRTUAL_RESOURCE) {
                 // resourceService.resolve throws the correct domain code on invalid paths;
                 // we surface the typed error so the caller can produce a terminal FAILED DTO.
                 Path real = resourceService.resolve(token).getRealPath();
@@ -199,14 +213,6 @@ public class HubExecutionResources {
         } catch (RuntimeException ex) {
             // best-effort: failure to prune an empty group is not fatal
         }
-    }
-
-    private static boolean isResourceVirtualPath(String token) {
-        if (token == null) {
-            return false;
-        }
-        String normalized = token.replace('\\', '/');
-        return normalized.startsWith(HubResourcePaths.VIRTUAL_PREFIX);
     }
 
     private static void releaseLeases(List<HubResourceLease> leases) {

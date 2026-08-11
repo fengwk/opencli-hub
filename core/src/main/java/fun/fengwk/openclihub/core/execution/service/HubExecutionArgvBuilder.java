@@ -23,6 +23,10 @@ import org.springframework.stereotype.Component;
  *   --format json
  * </pre>
  *
+ * <p>Before returning, the assembled argv is defensively validated by
+ * {@link HubLocalPathGuard#assertFinalArgv(List)}: every absolute path the Hub
+ * substituted or injected must be contained in the canonical resource root.
+ *
  * @author fengwk
  */
 @Component
@@ -30,6 +34,15 @@ public class HubExecutionArgvBuilder {
 
     private static final String FORMAT_ARG = "--format";
     private static final String FORMAT_VALUE = "json";
+
+    private final HubLocalPathGuard pathGuard;
+
+    public HubExecutionArgvBuilder(HubLocalPathGuard pathGuard) {
+        if (pathGuard == null) {
+            throw new IllegalArgumentException("pathGuard must not be null");
+        }
+        this.pathGuard = pathGuard;
+    }
 
     /**
      * Reject the request when the caller supplied the argument managed by an output rule:
@@ -78,6 +91,9 @@ public class HubExecutionArgvBuilder {
         }
         command.add(FORMAT_ARG);
         command.add(FORMAT_VALUE);
+        // Final defense: every absolute path in the assembled argv (substituted inputs,
+        // managed output) must be contained in the canonical resource root.
+        pathGuard.assertFinalArgv(command);
         return command;
     }
 

@@ -37,6 +37,8 @@ class HubExecutionResourcesTest {
     Path dataDir;
     @TempDir
     Path resourceRoot;
+    @TempDir
+    Path workdir;
 
     private OpenCliHubProperties properties;
     private HubResourceLeaseManager leaseManager;
@@ -48,10 +50,12 @@ class HubExecutionResourcesTest {
         properties = new OpenCliHubProperties();
         properties.setDataDir(dataDir.toString());
         properties.getResource().setRootDir(resourceRoot.toString());
+        properties.getOpencli().setWorkdir(workdir.toString());
 
         leaseManager = new HubResourceLeaseManager();
         resourceService = new HubResourceService(properties, leaseManager);
-        resources = new HubExecutionResources(resourceService, leaseManager, properties);
+        resources = new HubExecutionResources(
+            resourceService, leaseManager, new HubLocalPathGuard(properties), properties);
     }
 
     /**
@@ -214,6 +218,116 @@ class HubExecutionResourcesTest {
                 "/resources/2099-01-01/upload-missing/missing.pdf"));
         assertThatThrownBy(() -> resources.prepare("8005", normalized, null))
             .isInstanceOf(ThrowableConventionErrorCode.class);
+    }
+
+    /**
+     * A caller-supplied absolute path is refused with OPENCLI_LOCAL_PATH_NOT_ALLOWED
+     * before any resource work is performed.
+     */
+    @Test
+    void shouldRejectAbsolutePathArgvToken() {
+        NormalizedOpenCliArgv normalized = argv(
+            List.of("bilibili", "submit", "/etc/passwd"));
+        assertThatThrownBy(() -> resources.prepare("8101", normalized, null))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                .isEqualTo(HubErrorCodes.OPENCLI_LOCAL_PATH_NOT_ALLOWED.getCode()));
+        assertThat(leaseManager.heldPathCount()).isZero();
+    }
+
+    /**
+     * Even a real absolute path that points inside the data-volume resource root is
+     * refused: the stable protocol only admits virtual {@code /resources/...} references.
+     */
+    @Test
+    void shouldRejectRealAbsolutePathInsideResourceRoot() throws IOException {
+        Path real = resourceRoot.resolve("2026-08-12").resolve("upload-x").resolve("f.txt");
+        Files.createDirectories(real.getParent());
+        Files.writeString(real, "data");
+        NormalizedOpenCliArgv normalized = argv(
+            List.of("bilibili", "submit", real.toString()));
+        assertThatThrownBy(() -> resources.prepare("8102", normalized, null))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                .isEqualTo(HubErrorCodes.OPENCLI_LOCAL_PATH_NOT_ALLOWED.getCode()));
+    }
+
+    /**
+     * A bare file name that already exists relative to the configured OpenCLI workdir is
+     * a local path reference and must be refused; the same token as an upload is fine.
+     */
+    @Test
+    void shouldRejectWorkdirExistingFileArgvToken() throws IOException {
+        Files.writeString(workdir.resolve("note.txt"), "hello");
+        NormalizedOpenCliArgv normalized = argv(
+            List.of("bilibili", "submit", "note.txt"));
+        assertThatThrownBy(() -> resources.prepare("8103", normalized, null))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                .isEqualTo(HubErrorCodes.OPENCLI_LOCAL_PATH_NOT_ALLOWED.getCode()));
+    }
+
+    /**
+     * Explicit traversal tokens are refused before substitution.
+     */
+    @Test
+    void shouldRejectTraversalArgvToken() {
+        NormalizedOpenCliArgv normalized = argv(
+            List.of("bilibili", "submit", "../etc/passwd"));
+        assertThatThrownBy(() -> resources.prepare("8104", normalized, null))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                .isEqualTo(HubErrorCodes.OPENCLI_LOCAL_PATH_NOT_ALLOWED.getCode()));
+    }
+
+    /**
+     * A virtual token whose chain contains a symlink escaping the root is refused with
+     * OPENCLI_LOCAL_PATH_NOT_ALLOWED (symlink escape), not resolved.
+     */
+    @Test
+    void shouldRejectVirtualSymlinkEscapeArgvToken() throws IOException {
+        Path group = resourceRoot.resolve("2026-08-12").resolve("upload-x");
+        Files.createDirectories(group);
+        Files.writeString(dataDir.resolve("secret.txt"), "secret");
+        Files.createSymbolicLink(group.resolve("link.txt"), dataDir.resolve("secret.txt"));
+
+        NormalizedOpenCliArgv normalized = argv(
+            List.of("bilibili", "submit", "/resources/2026-08-12/upload-x/link.txt"));
+        assertThatThrownBy(() -> resources.prepare("8105", normalized, null))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                .isEqualTo(HubErrorCodes.OPENCLI_LOCAL_PATH_NOT_ALLOWED.getCode()));
+        assertThat(leaseManager.heldPathCount()).isZero();
+    }
+
+    /**
+     * A local-path rejection after an earlier virtual substitution must release the
+     * leases acquired so far.
+     */
+    @Test
+    void shouldReleaseLeasesWhenLaterTokenIsRejectedAsLocalPath() throws IOException {
+        Path upload = writeUpload("ok.txt", "ok".getBytes());
+        NormalizedOpenCliArgv normalized = argv(List.of(
+            "bilibili", "submit", upload.toString(), "/etc/passwd"));
+        assertThatThrownBy(() -> resources.prepare("8106", normalized, null))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        assertThat(leaseManager.heldPathCount()).isZero();
+    }
+
+    /**
+     * URLs and ordinary prompts are not path candidates: they pass through unchanged and
+     * no resource work is triggered.
+     */
+    @Test
+    void shouldPassThroughUrlAndPromptTokens() {
+        NormalizedOpenCliArgv normalized = argv(List.of(
+            "chatgpt", "ask", "https://example.com/a/b", "你好，帮我写一首诗"));
+        try (HubExecutionResources.ResourceContext c = resources.prepare("8107", normalized, null)) {
+            assertThat(c.getGroup()).isNull();
+            assertThat(c.getSubstitutedArgv()).containsExactly(
+                "chatgpt", "ask", "https://example.com/a/b", "你好，帮我写一首诗");
+        }
+        assertThat(leaseManager.heldPathCount()).isZero();
     }
 
     private Path writeUpload(String filename, byte[] bytes) throws IOException {
