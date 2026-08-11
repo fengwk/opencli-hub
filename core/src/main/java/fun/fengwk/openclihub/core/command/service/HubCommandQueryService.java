@@ -90,12 +90,12 @@ public class HubCommandQueryService {
         dto.setBrowser(command.isBrowser());
         dto.setSiteSession(command.getSiteSession());
         dto.setDefaultWindowMode(command.getDefaultWindowMode());
-        // Platform fully manages local output paths; do not expose them (or output-rule
-        // config) on the public command contract.
+        // Managed output arguments stay hidden from the public args contract, but the
+        // persisted output rule itself is exposed so the UI can display and manage it.
         dto.setArgs(toPublicArgDTOs(command, ruleEntry));
         dto.setBlacklisted(blacklistEntry != null);
         dto.setBlacklistReason(blacklistEntry == null ? null : blacklistEntry.getReason());
-        dto.setOutputRule(null);
+        dto.setOutputRule(HubCommandOutputRuleService.toDTO(ruleEntry));
         return dto;
     }
 

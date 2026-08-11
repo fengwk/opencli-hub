@@ -106,22 +106,40 @@ class HubCommandControllerTest {
     void shouldDeleteCommandPolicies() throws Exception {
         mockMvc.perform(delete("/api/opencli/commands/bilibili/hot/blacklist"))
             .andExpect(status().isOk());
+        // The re-queried DTO after rule deletion carries no outputRule metadata.
         mockMvc.perform(delete("/api/opencli/commands/bilibili/hot/output-rule"))
-            .andExpect(status().isOk());
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.outputRule").doesNotExist());
 
         verify(blacklistService).unblacklist("bilibili/hot");
         verify(outputRuleService).delete("bilibili/hot");
     }
 
-    /** A valid output rule is passed to core with its canonical command key. */
+    /** A valid output rule is passed to core and the re-queried response reflects it. */
     @Test
     void shouldUpsertOutputRule() throws Exception {
+        HubCommandDTO updated = new HubCommandDTO();
+        updated.setCommandKey("bilibili/hot");
+        updated.setSite("bilibili");
+        updated.setName("hot");
+        HubCommandOutputRuleDTO rule = new HubCommandOutputRuleDTO();
+        rule.setId("rule-9");
+        rule.setCommandKey("bilibili/hot");
+        rule.setArgumentName("output");
+        rule.setTargetType(HubCommandOutputTargetType.FILE);
+        rule.setFileName("hot.json");
+        updated.setOutputRule(rule);
+        when(queryService.listPublicCommandsForWebsite("bilibili")).thenReturn(List.of(updated));
+
         mockMvc.perform(put("/api/opencli/commands/bilibili/hot/output-rule")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {"argumentName":"output","targetType":"FILE","fileName":"hot.json"}
                     """))
-            .andExpect(status().isOk());
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.outputRule.argumentName").value("output"))
+            .andExpect(jsonPath("$.data.outputRule.targetType").value("FILE"))
+            .andExpect(jsonPath("$.data.outputRule.fileName").value("hot.json"));
 
         verify(outputRuleService).upsert(
             "bilibili/hot", "output", HubCommandOutputTargetType.FILE, "hot.json");

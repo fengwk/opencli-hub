@@ -9,6 +9,7 @@ import fun.fengwk.openclihub.core.command.service.model.HubCommandBlacklist;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandOutputRule;
 import fun.fengwk.openclihub.share.model.command.HubCommandAccess;
 import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +52,8 @@ class HubCommandQueryServiceTest {
         rule.setCommandKey("chatgpt/image");
         rule.setArgumentName("op");
         rule.setTargetType(HubCommandOutputTargetType.DIRECTORY);
+        rule.setCreateTime(LocalDateTime.of(2026, 7, 13, 10, 0));
+        rule.setUpdateTime(LocalDateTime.of(2026, 7, 13, 10, 1));
         when(outputRuleService.snapshot()).thenReturn(Map.of("chatgpt/image", rule));
 
         queryService = new HubCommandQueryService(catalog, blacklistService, outputRuleService);
@@ -70,8 +73,16 @@ class HubCommandQueryServiceTest {
         var chatgptDto = dtos.stream()
             .filter(d -> "chatgpt/image".equals(d.getCommandKey())).findFirst().orElseThrow();
         assertThat(chatgptDto.isBlacklisted()).isFalse();
-        // Platform fully hosts local output paths — not exposed on the public contract.
-        assertThat(chatgptDto.getOutputRule()).isNull();
+        // The persisted rule is exposed as-is so the UI can display and manage it.
+        var ruleDto = chatgptDto.getOutputRule();
+        assertThat(ruleDto).isNotNull();
+        assertThat(ruleDto.getId()).isEqualTo("2");
+        assertThat(ruleDto.getCommandKey()).isEqualTo("chatgpt/image");
+        assertThat(ruleDto.getArgumentName()).isEqualTo("op");
+        assertThat(ruleDto.getTargetType()).isEqualTo(HubCommandOutputTargetType.DIRECTORY);
+        assertThat(ruleDto.getCreateTime()).isEqualTo(LocalDateTime.of(2026, 7, 13, 10, 0));
+        assertThat(ruleDto.getUpdateTime()).isEqualTo(LocalDateTime.of(2026, 7, 13, 10, 1));
+        // The managed output argument itself stays hidden from the public args contract.
         assertThat(chatgptDto.getArgs()).extracting(a -> a.getName()).containsExactly("prompt");
     }
 

@@ -18,11 +18,6 @@ function outputArguments(command: HubCommand) {
   return (command.args ?? []).filter((argument) => argument.valueRequired || argument.required)
 }
 
-function hasCompatibleOutputRule(command: HubCommand): boolean {
-  if (!command.outputRule) return true
-  return outputArguments(command).some((argument) => argument.name === command.outputRule?.argumentName)
-}
-
 function isSafeFileName(fileName: string): boolean {
   return /^[A-Za-z0-9._-]+$/.test(fileName) && fileName !== '.' && fileName !== '..'
 }
@@ -37,6 +32,15 @@ export function CommandCard({
   onDeleteOutputRule,
 }: CommandCardProps) {
   const argumentsForOutput = outputArguments(command)
+  // Editor options are the visible eligible args plus the persisted rule's argument
+  // name: the managed output argument is hidden from the public args contract, so it
+  // can only appear here as the current rule's value and must stay editable as-is.
+  const outputArgumentNames = [
+    ...new Set([
+      ...argumentsForOutput.map((argument) => argument.name),
+      ...(command.outputRule?.argumentName ? [command.outputRule.argumentName] : []),
+    ]),
+  ]
   const [expanded, setExpanded] = useState(false)
   const [blacklistReason, setBlacklistReason] = useState(command.blacklistReason ?? '')
   const [editingOutputRule, setEditingOutputRule] = useState(false)
@@ -58,8 +62,6 @@ export function CommandCard({
     setCurlCopied(false)
     setCurlCopyError(null)
   }, [command])
-
-  const outputRuleIsCompatible = hasCompatibleOutputRule(command)
 
   async function submitBlacklist(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -201,14 +203,13 @@ export function CommandCard({
             {command.outputRule ? <button type="button" className="btn" disabled={busy} onClick={() => void onDeleteOutputRule(command)}>删除输出规则</button> : null}
           </div>
           {command.outputRule ? <p>参数 <strong>{command.outputRule.argumentName}</strong> → {command.outputRule.targetType}{command.outputRule.fileName ? `（${command.outputRule.fileName}）` : ''}</p> : <p className="muted">尚未配置输出资源规则。</p>}
-          {!outputRuleIsCompatible ? <p className="inline-error" role="alert">输出规则与当前命令目录不兼容，请更新或删除该规则。</p> : null}
           {editingOutputRule ? (
             <form className="inline-form output-rule-form" onSubmit={(event) => void submitOutputRule(event)}>
               <label>
                 输出参数
                 <select value={argumentName} onChange={(event) => setArgumentName(event.target.value)}>
                   <option value="">请选择参数</option>
-                  {argumentsForOutput.map((argument) => <option key={argument.name} value={argument.name}>{argument.name}</option>)}
+                  {outputArgumentNames.map((name) => <option key={name} value={name}>{name}</option>)}
                 </select>
               </label>
               <label>
@@ -229,11 +230,11 @@ export function CommandCard({
               {validationError ? <p className="inline-error" role="alert">{validationError}</p> : null}
               <div className="form-actions">
                 <button type="button" className="btn" disabled={busy} onClick={() => setEditingOutputRule(false)}>取消</button>
-                <button type="submit" className="btn btn-primary" disabled={busy || argumentsForOutput.length === 0}>保存输出规则</button>
+                <button type="submit" className="btn btn-primary" disabled={busy || outputArgumentNames.length === 0}>保存输出规则</button>
               </div>
             </form>
-          ) : <button type="button" className="btn btn-primary" disabled={busy || argumentsForOutput.length === 0} onClick={() => setEditingOutputRule(true)}>编辑输出规则</button>}
-          {!argumentsForOutput.length ? <p className="muted">该命令没有可用于输出规则的参数。</p> : null}
+          ) : <button type="button" className="btn btn-primary" disabled={busy || outputArgumentNames.length === 0} onClick={() => setEditingOutputRule(true)}>编辑输出规则</button>}
+          {!outputArgumentNames.length ? <p className="muted">该命令没有可用于输出规则的参数。</p> : null}
         </section>
       </div> : null}
     </article>
