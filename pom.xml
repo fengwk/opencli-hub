@@ -5,14 +5,12 @@
     <modelVersion>4.0.0</modelVersion>
 
     <!--
-        opencli-hub deliberately does not inherit from convention4j-parent 1.2.1: that parent
-        injects lombok, mapstruct-processor, auto-mapper-processor and auto-service into every
-        module, while this project has no MapStruct or AutoService usage and AutoMapper
-        processing is required only by core (which declares auto-mapper-processor itself).
-        Maven 3.9 does not honor combine.self="override" on <dependencies> (the attribute only
-        applies to plugin configuration), so the parent is consumed as a plain BOM import
-        instead and its essential build configuration is mirrored below. Lombok stays globally
-        available (provided) to every module.
+        opencli-hub does not inherit from convention4j-parent 1.2.1 because that parent injects
+        mapstruct-processor, auto-mapper-processor and auto-service into every module. This
+        project needs only Lombok (all modules, provided below) and AutoMapper processing in
+        core (declared there), so the parent is imported as a plain BOM instead and the build
+        configuration it used to provide (compiler -parameters, surefire version, JaCoCo) is
+        declared directly below.
     -->
     <groupId>fun.fengwk.opencli-hub</groupId>
     <artifactId>opencli-hub-parent</artifactId>
@@ -133,6 +131,28 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>${maven-surefire-plugin.version}</version>
             </plugin>
+            <!-- JaCoCo coverage for every build (previously provided by convention4j-parent's
+                 always-active dev profile). -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco-maven-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 
@@ -143,37 +163,6 @@
         PostgreSQL is the default variant; no runtime multi-datasource exists.
     -->
     <profiles>
-        <!-- Same jacoco coverage profile convention4j-parent activated by default. -->
-        <profile>
-            <id>dev</id>
-            <activation>
-                <activeByDefault>true</activeByDefault>
-            </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.jacoco</groupId>
-                        <artifactId>jacoco-maven-plugin</artifactId>
-                        <version>${jacoco-maven-plugin.version}</version>
-                        <executions>
-                            <execution>
-                                <id>prepare-agent</id>
-                                <goals>
-                                    <goal>prepare-agent</goal>
-                                </goals>
-                            </execution>
-                            <execution>
-                                <id>report</id>
-                                <phase>test</phase>
-                                <goals>
-                                    <goal>report</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
         <profile>
             <id>postgresql</id>
             <activation>
