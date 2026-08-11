@@ -5,7 +5,15 @@ set -Eeuo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-readonly IMAGE_TAG="${1:-opencli-hub:local}"
+readonly database="${OPENCLI_HUB_DATABASE:-postgresql}"
+case "${database}" in
+    postgresql|mysql|sqlite) ;;
+    *)
+        printf '[build-local] unsupported OPENCLI_HUB_DATABASE: %s (expected postgresql, mysql or sqlite)\n' "${database}" >&2
+        exit 2
+        ;;
+esac
+readonly IMAGE_TAG="${1:-opencli-hub:local-${database}}"
 readonly JAVA_HOME_17_VALUE="${JAVA_HOME_17:?JAVA_HOME_17 is required}"
 readonly configured_signing_key="${OPENCLI_HUB_EXTENSION_SIGNING_KEY_FILE:-.secrets/opencli-extension-signing-key.pem}"
 if [[ "${configured_signing_key}" == /* ]]; then
@@ -33,15 +41,15 @@ printf '[build-local] building frontend with host npm cache\n'
     npm run build
 )
 
-printf '[build-local] packaging Hub with host Maven repository %s\n' "${HOME}/.m2/repository"
+printf '[build-local] packaging Hub (%s) with host Maven repository %s\n' "${database}" "${HOME}/.m2/repository"
 env JAVA_HOME="${JAVA_HOME_17_VALUE}" \
     mvn --batch-mode --no-transfer-progress -DskipTests \
         -Dmaven.wagon.http.connectionTimeout=5000 \
         -Dmaven.wagon.http.readTimeout=60000 \
         -Dmaven.wagon.http.retryHandler.count=5 \
-        clean package -f "${PROJECT_DIR}/pom.xml"
+        -P"${database}" clean package -f "${PROJECT_DIR}/pom.xml"
 
-readonly jar_path="${PROJECT_DIR}/web/target/opencli-hub-web-1.0.0.jar"
+readonly jar_path="${PROJECT_DIR}/web/target/opencli-hub-web-1.0.0-${database}.jar"
 [[ -s "${jar_path}" ]] || {
     printf '[build-local] packaged JAR missing: %s\n' "${jar_path}" >&2
     exit 1
@@ -51,11 +59,12 @@ artifact_dir="$(mktemp -d "${TMPDIR:-/tmp}/opencli-hub-artifact.XXXXXX")"
 mkdir -p "${artifact_dir}/artifact"
 cp "${jar_path}" "${artifact_dir}/artifact/opencli-hub.jar"
 
-printf '[build-local] assembling %s from the host-built JAR\n' "${IMAGE_TAG}"
+printf '[build-local] assembling %s (%s) from the host-built JAR\n' "${IMAGE_TAG}" "${database}"
 docker build \
     --platform linux/amd64 \
     --secret "id=opencli_extension_signing_key,src=${signing_key_file}" \
     --build-context "prebuilt-artifact=${artifact_dir}" \
     --build-arg HUB_ARTIFACT_SOURCE=prebuilt-artifact \
+    --build-arg OPENCLI_HUB_DATABASE="${database}" \
     --tag "${IMAGE_TAG}" \
     "${PROJECT_DIR}"

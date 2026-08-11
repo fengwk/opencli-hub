@@ -4,6 +4,10 @@
 ARG NODE_MAJOR=20
 ARG CHROME_FULL=150.0.7871.114-1
 ARG HUB_ARTIFACT_SOURCE=java-build
+# Database build variant: selects the Maven profile and packaged JAR name, and
+# is recorded as a read-only identifier in the final image. The database runtime
+# configuration is compiled into the JAR; there is no runtime profile switch.
+ARG OPENCLI_HUB_DATABASE=postgresql
 
 # Optional OpenCLI artifact overrides. Empty values mean "use
 # scripts/docker/opencli-artifact.lock.env" so docker build, Compose, local
@@ -27,6 +31,7 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM maven:3.9.9-eclipse-temurin-17 AS java-build
+ARG OPENCLI_HUB_DATABASE=postgresql
 WORKDIR /workspace
 COPY pom.xml lombok.config ./
 COPY share/ share/
@@ -34,14 +39,20 @@ COPY core/ core/
 COPY web/ web/
 COPY --from=frontend-build /workspace/frontend/dist frontend/dist
 RUN --mount=type=cache,id=opencli-hub-maven,target=/root/.m2/repository,sharing=locked \
-    find /root/.m2/repository -name '*.lastUpdated' -delete \
- && mvn --batch-mode --no-transfer-progress -Dmaven.test.skip=true \
+    set -eux; \
+    case "${OPENCLI_HUB_DATABASE}" in \
+        postgresql|mysql|sqlite) ;; \
+        *) echo "unsupported OPENCLI_HUB_DATABASE=${OPENCLI_HUB_DATABASE}" >&2; exit 1 ;; \
+    esac; \
+    find /root/.m2/repository -name '*.lastUpdated' -delete; \
+    mvn --batch-mode --no-transfer-progress -Dmaven.test.skip=true \
         -Dmaven.wagon.http.connectionTimeout=5000 \
         -Dmaven.wagon.http.readTimeout=60000 \
-        -Dmaven.wagon.http.retryHandler.count=5 package \
- && test -s web/target/opencli-hub-web-1.0.0.jar \
- && mkdir -p /artifact \
- && cp web/target/opencli-hub-web-1.0.0.jar /artifact/opencli-hub.jar
+        -Dmaven.wagon.http.retryHandler.count=5 \
+        -P"${OPENCLI_HUB_DATABASE}" package; \
+    test -s "web/target/opencli-hub-web-1.0.0-${OPENCLI_HUB_DATABASE}.jar"; \
+    mkdir -p /artifact; \
+    cp "web/target/opencli-hub-web-1.0.0-${OPENCLI_HUB_DATABASE}.jar" /artifact/opencli-hub.jar
 
 # The default source is the reproducible in-container Maven stage. Local smoke
 # builds may pass a named BuildKit context containing /artifact/opencli-hub.jar
@@ -203,6 +214,7 @@ RUN --mount=type=secret,id=opencli_extension_signing_key,required=true \
     test ! -e "${OPENCLI_INSTALL_DIR}/opencli-artifact.lock.env"
 
 FROM runtime-base AS final
+ARG OPENCLI_HUB_DATABASE=postgresql
 ENV HOME=/var/lib/opencli \
     OPENCLI_HOME=/var/lib/opencli \
     OPENCLI_DATA=/var/lib/opencli/data \
@@ -211,7 +223,7 @@ ENV HOME=/var/lib/opencli \
     OPENCLI_HUB_SCRIPTS=/opt/opencli/scripts \
     NPM_CONFIG_PREFIX=/opt/opencli/npm \
     PATH=/opt/opencli/scripts:/opt/opencli/npm/bin:${PATH} \
-    SPRING_PROFILES_ACTIVE=docker-h2 \
+    OPENCLI_HUB_DATABASE_VARIANT=${OPENCLI_HUB_DATABASE} \
     OPENCLI_DISABLE_UPDATE_CHECK=1
 RUN set -eux; \
     groupadd --system --gid 1000 openclihub; \

@@ -1,15 +1,14 @@
 services:
-  mysql:
-    image: mysql:5.7.44
+  postgresql:
+    image: postgres:16
     environment:
-      MYSQL_DATABASE: opencli_hub
-      MYSQL_USER: opencli_hub
-      MYSQL_PASSWORD: "${OPENCLI_HUB_MYSQL_PASSWORD:?OPENCLI_HUB_MYSQL_PASSWORD is required}"
-      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}"
+      POSTGRES_DB: opencli_hub
+      POSTGRES_USER: opencli_hub
+      POSTGRES_PASSWORD: "${OPENCLI_HUB_POSTGRESQL_PASSWORD:?OPENCLI_HUB_POSTGRESQL_PASSWORD is required}"
     volumes:
-      - opencli-hub-mysql-data:/var/lib/mysql
+      - opencli-hub-postgresql-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      test: ["CMD-SHELL", "pg_isready -U opencli_hub -d opencli_hub"]
       interval: 5s
       timeout: 3s
       retries: 30
@@ -19,28 +18,30 @@ services:
   hub:
     build:
       context: .
+      args:
+        OPENCLI_HUB_DATABASE: postgresql
       secrets:
         - opencli_extension_signing_key
-    image: opencli-hub:local
+    image: opencli-hub:local-postgresql
     platform: linux/amd64
     user: "1000:1000"
     environment:
-      # application-mysql.yml initializes the current schema/data after MySQL is healthy.
-      SPRING_PROFILES_ACTIVE: mysql
+      # The PostgreSQL variant (and its datasource configuration) is compiled
+      # into the JAR; there is no runtime profile switch.
       OPENCLI_HUB_DATA_DIR: /data/opencli-hub
-      OPENCLI_HUB_MYSQL_HOST: mysql
-      OPENCLI_HUB_MYSQL_PORT: "3306"
-      OPENCLI_HUB_MYSQL_DATABASE: opencli_hub
-      OPENCLI_HUB_MYSQL_USERNAME: opencli_hub
-      OPENCLI_HUB_MYSQL_PASSWORD: "${OPENCLI_HUB_MYSQL_PASSWORD:?OPENCLI_HUB_MYSQL_PASSWORD is required}"
+      OPENCLI_HUB_POSTGRESQL_HOST: postgresql
+      OPENCLI_HUB_POSTGRESQL_PORT: "5432"
+      OPENCLI_HUB_POSTGRESQL_DATABASE: opencli_hub
+      OPENCLI_HUB_POSTGRESQL_USERNAME: opencli_hub
+      OPENCLI_HUB_POSTGRESQL_PASSWORD: "${OPENCLI_HUB_POSTGRESQL_PASSWORD:?OPENCLI_HUB_POSTGRESQL_PASSWORD is required}"
     depends_on:
-      mysql:
+      postgresql:
         condition: service_healthy
     ports:
       - "${OPENCLI_HUB_BIND_ADDRESS:-127.0.0.1}:${OPENCLI_HUB_HOST_PORT:-8080}:8080"
     volumes:
-      - opencli-hub-mysql-hub-data:/data/opencli-hub
-      - opencli-hub-mysql-home:/var/lib/opencli
+      - opencli-hub-postgresql-hub-data:/data/opencli-hub
+      - opencli-hub-postgresql-home:/var/lib/opencli
     shm_size: 2gb
     security_opt:
       - seccomp=unconfined
@@ -48,9 +49,9 @@ services:
     restart: unless-stopped
 
 volumes:
-  opencli-hub-mysql-data:
-  opencli-hub-mysql-hub-data:
-  opencli-hub-mysql-home:
+  opencli-hub-postgresql-data:
+  opencli-hub-postgresql-hub-data:
+  opencli-hub-postgresql-home:
 
 secrets:
   opencli_extension_signing_key:

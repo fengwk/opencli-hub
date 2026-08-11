@@ -20,6 +20,10 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        database: [postgresql, mysql, sqlite]
 
     steps:
       - name: Validate Docker Hub and signing configuration
@@ -65,9 +69,10 @@ jobs:
         with:
           images: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=docker
-            type=raw,value=latest
-            type=sha,prefix=sha-
+            type=raw,value=${{ matrix.database }}
+            type=raw,value=latest,enable=${{ matrix.database == 'postgresql' }}
+            type=raw,value=docker,enable=${{ matrix.database == 'postgresql' }}
+            type=sha,prefix=sha-${{ matrix.database }}-,format=short
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -79,8 +84,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            OPENCLI_HUB_DATABASE=${{ matrix.database }}
+          cache-from: type=gha,scope=opencli-hub-${{ matrix.database }}
+          cache-to: type=gha,mode=max,scope=opencli-hub-${{ matrix.database }}
           no-cache-filters: opencli-assets
           secret-envs: |
             opencli_extension_signing_key=OPENCLI_HUB_EXTENSION_SIGNING_KEY

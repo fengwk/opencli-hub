@@ -5,7 +5,7 @@ set -Eeuo pipefail
 
 readonly script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly project_dir="$(cd "${script_dir}/../.." && pwd)"
-readonly compose_file="${COMPOSE_FILE:-compose.h2.yml}"
+readonly compose_file="${COMPOSE_FILE:-compose.sqlite.yml}"
 readonly compose_project="${OPENCLI_HUB_SMOKE_PROJECT:-opencli-hub-smoke-${UID}}"
 readonly service="${HUB_SERVICE:-hub}"
 readonly host_port="${OPENCLI_HUB_SMOKE_PORT:-18080}"
@@ -47,7 +47,7 @@ case "${build_mode}" in
         run_compose up --build --detach
         ;;
     local)
-        "${script_dir}/build-local.sh" opencli-hub:local
+        OPENCLI_HUB_DATABASE=sqlite "${script_dir}/build-local.sh" opencli-hub:local-sqlite
         run_compose up --detach
         ;;
     *)
@@ -71,5 +71,5 @@ run_compose exec -T "${service}" sh -ec '
     test "$(git config --system --get http.version)" = "HTTP/1.1"
 '
 run_compose exec -T "${service}" curl --fail --silent http://127.0.0.1:18181/healthz | grep -Fxq 'ok'
-printf 'H2 smoke passed (project=%s, host-port=%s). No Chrome E2E was run.\n' \
+printf 'SQLite smoke passed (project=%s, host-port=%s). No Chrome E2E was run.\n' \
     "${compose_project}" "${host_port}"
