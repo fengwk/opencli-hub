@@ -380,12 +380,12 @@ curl --fail --show-error --request PUT "$HUB_URL/api/settings" \
 | 领域 | 行为 |
 |---|---|
 | execute 契约 | `POST /api/opencli/execute` 由同步返回终态改为 **HTTP 202 Accepted + PENDING DTO**（含 `executionId`）。客户端必须轮询 `GET /api/executions/{id}?waitSeconds=N`（N 最大 120，long-poll 直到终态或超时）或调用 `POST /api/executions/{id}/cancel`（仅 PENDING 可取消，RUNNING 返回 `EXECUTION_NOT_CANCELLABLE`）。客户端/Gateway 断开不取消已接受任务。 |
-| 本地文件引用 | argv 中**必须先上传**，且只能使用上传响应返回的 `/resources/...` 虚拟路径。绝对路径、相对路径、`~` 展开、`file://` URI、Windows drive path、显式 traversal，以及相对 OpenCLI workdir 实际存在的文件/目录，一律以 `OPENCLI_LOCAL_PATH_NOT_ALLOWED` 拒绝。 |
+| 本地文件引用 | `/resources/...` 是唯一支持的文件引用协议：argv 中**必须先上传**，再使用上传响应返回的虚拟路径。独立 argv 值若为绝对路径、Windows drive path、`~` 展开、`file://` URI、含显式 `.`/`..` traversal 段，或相对 OpenCLI workdir **实际存在**的文件/目录，一律以 `OPENCLI_LOCAL_PATH_NOT_ALLOWED` 拒绝；http/https 等 URL、普通自然语言 prompt 和仅含斜杠的文本（日期、句子）不视为路径，原样通过。 |
 | 列表排序 | `GET /api/executions` 固定 `queued_at DESC, id DESC`（按 Instance 过滤时加 `instance_id` 等值条件）。`queued_at` 不可变：由应用写入，数据库不再 `ON UPDATE`。 |
 | 取消/清队列持久化 | `POST /api/executions/{id}/cancel`、`POST /api/instances/{id}/clear-queue` 与强制 shutdown 丢弃的 PENDING 任务一律持久化为 **CANCELLED**（CAS PENDING→CANCELLED），不会残留 DB PENDING 行。 |
 | 时间语义 | 所有时间戳（`queued_at`/`started_at`/`finished_at`/`state_changed_at`/`gmt_create`/`gmt_modified`）均为 **UTC LocalDateTime**，API 直接返回 UTC 值；`gmt_*` 列名保留以兼容旧客户端。应用使用 `Clock.systemUTC()`，各数据库连接被强制 UTC 会话。 |
 | 数据库 | 生产默认 PostgreSQL 16；MySQL 8.4 与 SQLite 为编译期变体；**H2 退出生产**（仅测试）。镜像按 `OPENCLI_HUB_DATABASE` 构建，JAR 名为 `opencli-hub-web-1.0.0-{postgresql|mysql|sqlite}.jar`。 |
-| Output Rule | 规则基于**真实 Catalog metadata** 校验：命令必须是公开 browser command，参数必须是具名、接受值的输出参数（positional 与布尔 flag 拒绝）；`targetType` 为 `DIRECTORY`/`FILE`，`FILE` 必填安全文件名。规则保存后原子生效；与 Catalog 不兼容时命令执行被明确拒绝。 |
+| Output Rule | 保存/upsert 时基于**当前 Catalog metadata** 校验：命令必须是公开 browser command，参数必须是具名、接受值的输出参数（positional 与布尔 flag 拒绝）；`targetType` 为 `DIRECTORY`/`FILE`，`FILE` 必填安全文件名。校验通过后规则以不可变快照原子生效；命令 DTO 返回真实规则 metadata（argumentName/targetType/fileName）。执行时按 commandKey 直接使用已保存规则注入托管输出参数，不逐次重验 catalog；调用方传入被托管参数返回 `OPENCLI_RESOURCE_OUTPUT_ARGUMENT_MANAGED`。 |
 | startup recovery barrier | 启动时 `ApplicationRunner` 先声明恢复屏障再调度恢复 sweep；期间 API `create`/`start`/`restart` 有界等待（默认 60s，`OPENCLI_HUB_START_COORDINATION_TIMEOUT_MILLIS`），超时返回 `INSTANCE_START_RECOVERY_IN_PROGRESS`。 |
 | 部署 | 三套 Compose（`compose.yml`/`compose.mysql.yml`/`compose.sqlite.yml`）与三套发布 tag（`postgresql`/`mysql`/`sqlite`，PostgreSQL 另有 `latest`/`docker`，均含 `sha-<db>-<short>`）。 |
 

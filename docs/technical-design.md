@@ -489,9 +489,9 @@ public enum HubCommandOutputTargetType {
 时间语义：所有时间戳列（`state_changed_at`、`queued_at`、`started_at`、`finished_at`、`gmt_create`、`gmt_modified`）
 保存**UTC LocalDateTime**。应用使用统一的 `Clock.systemUTC()` bean 生成时间；PostgreSQL 会话强制
 `set time zone 'UTC'`，MySQL JDBC 连接固定 `connectionTimeZone=UTC`，SQLite 的 `CURRENT_TIMESTAMP`
-按 UTC 求值。`gmt_*` 列名沿用历史命名以兼容旧客户端，语义仍是 UTC 时间戳。`state_changed_at` 与
-`queued_at` 都是不可变排序键：由应用显式写入，数据库不得 `ON UPDATE`（MySQL legacy schema 需执行
-对应迁移脚本去除 `ON UPDATE`）。
+按 UTC 求值。`gmt_*` 列名沿用历史命名以兼容旧客户端，语义仍是 UTC 时间戳。`queued_at` 是 Execution
+列表排序键；`state_changed_at` 记录 Instance 状态变更时间（列表排序不使用它）。两者都是不可变时间戳：
+由应用显式写入，数据库不得 `ON UPDATE`（MySQL legacy schema 需执行对应迁移脚本去除 `ON UPDATE`）。
 
 ### 9.2 hub_instance
 
@@ -927,7 +927,11 @@ opencli --profile <contextId> chatgpt image \
 
 执行后递归扫描该组目录，忽略符号链接，返回资源 DTO。空目录可以删除。
 
-规则与 Catalog 不兼容时，Commands 页面显示错误；该命令执行时明确拒绝，不悄悄使用默认输出目录。
+规则在保存/upsert 时按当前 Catalog 校验（命令必须是公开 browser command，参数必须是具名、接受值的
+输出参数）；校验通过后规则以不可变快照原子生效，命令 DTO 返回真实规则 metadata。执行时不重验
+catalog 兼容性：Hub 按 commandKey 直接使用已保存规则注入托管输出参数，调用方传入被托管参数时返回
+`OPENCLI_RESOURCE_OUTPUT_ARGUMENT_MANAGED`。规则与 Catalog 不再兼容时，Commands 页面显示不兼容警告；
+提交时不会对 stale 规则做静默重验或替换。
 
 ## 15. OpenCLI daemon 管理
 

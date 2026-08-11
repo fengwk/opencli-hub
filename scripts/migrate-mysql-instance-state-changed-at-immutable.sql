@@ -4,7 +4,8 @@
 --
 -- Bug: hub_instance.state_changed_at was defined with ON UPDATE CURRENT_TIMESTAMP,
 -- so ANY row UPDATE (state transition, profile edit, version bump) silently
--- rewrote the timestamp and broke the state-change sort key.
+-- rewrote the timestamp and it no longer reflects the actual state-transition
+-- time.
 --
 -- Fix: make state_changed_at immutable (DEFAULT only, no ON UPDATE). The
 -- application already writes state_changed_at explicitly on every state
