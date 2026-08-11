@@ -7,6 +7,8 @@
 ### 修复
 
 - Runtime 镜像安装 `ffmpeg`，提供 `ffprobe`，供 `jimeng-agent` 等插件做音视频时长预检。
+- VNC 远端剪贴板兼容 x11vnc 通过传统 `ServerCutText` 传输的 UTF-8 文本，避免中文复制到本机后出现 Latin-1 乱码。
+- noVNC 固定到包含大发送队列修复的 `1.5.0-g50e4685`，避免长脚本文本跨越 10 KiB 队列后发生传输损坏。
 
 ## 1.0.0
 

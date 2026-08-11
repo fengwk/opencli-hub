@@ -10,9 +10,34 @@ type ClipboardOperation = 'read' | 'write' | null
 // Apply the same 256 KiB UTF-8 safety bound in both clipboard directions.
 const MAX_CLIPBOARD_BYTES = 256 * 1024
 const clipboardTextEncoder = new TextEncoder()
+const clipboardTextDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
 function utf8ByteLength(text: string): number {
   return clipboardTextEncoder.encode(text).length
+}
+
+function decodeLegacyRfbUtf8(text: string): string {
+  // noVNC merges legacy and Extended Clipboard events, so byte-only strings that also form valid UTF-8
+  // are inherently ambiguous. Restrict repair to decoded text outside the Latin-1 range.
+  const bytes = new Uint8Array(text.length)
+  let hasNonAsciiByte = false
+  for (let index = 0; index < text.length; index += 1) {
+    const codeUnit = text.charCodeAt(index)
+    if (codeUnit > 0xff) {
+      return text
+    }
+    bytes[index] = codeUnit
+    hasNonAsciiByte ||= codeUnit > 0x7f
+  }
+  if (!hasNonAsciiByte) {
+    return text
+  }
+  try {
+    const decoded = clipboardTextDecoder.decode(bytes)
+    return containsNonLatin1(decoded) ? decoded : text
+  } catch {
+    return text
+  }
 }
 
 // Browser permission prompts for clipboard read/write stay open until the user answers; if they walk away the
@@ -191,7 +216,9 @@ export function VncViewer({ instanceId, available }: { instanceId: BackendId; av
         if (rfbRef.current !== rfb || typeof event.detail?.text !== 'string') {
           return
         }
-        const inboundText = event.detail.text
+        // Only accept a strict UTF-8 repair when it produces non-Latin-1 text. This fixes x11vnc Chinese
+        // while avoiding common double-decoding cases such as "Ã©".
+        const inboundText = decodeLegacyRfbUtf8(event.detail.text)
         const inboundBytes = utf8ByteLength(inboundText)
         if (inboundBytes > MAX_CLIPBOARD_BYTES) {
           setRemoteClipboardText(null)

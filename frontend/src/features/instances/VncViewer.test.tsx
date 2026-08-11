@@ -124,6 +124,100 @@ describe('VncViewer', () => {
     expect(screen.getByText(/已将远端剪贴板复制到本机/)).toBeInTheDocument()
   })
 
+  it('decodes UTF-8 bytes exposed by noVNC legacy clipboard events', async () => {
+    // x11vnc places UTF-8 X11 selection bytes in legacy ServerCutText; noVNC exposes those bytes as Latin-1 code units.
+    const remoteText = '让这个女人（参考图：https://example.com/参考.png）在镜头中央旋转。'
+    const legacyText = String.fromCharCode(...new TextEncoder().encode(remoteText))
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText: vi.fn(), writeText },
+    })
+    render(<VncViewer instanceId="42" available />)
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
+    const rfb = rfbMock.instances[0]
+    act(() => rfb.emit('connect'))
+
+    act(() => rfb.emit('clipboard', new CustomEvent('clipboard', {
+      detail: { text: legacyText },
+    })))
+    await user.click(screen.getByRole('button', { name: '远端剪贴板 → 本机' }))
+
+    expect(writeText).toHaveBeenCalledWith(remoteText)
+    expect(screen.getByText(/已将远端剪贴板复制到本机/)).toBeInTheDocument()
+  })
+
+  it('preserves Latin-1-range text whose code units also form valid UTF-8 bytes', async () => {
+    // noVNC does not expose the clipboard protocol variant, so byte-shaped Latin-1 text must not be silently rewritten.
+    const remoteText = 'Ã©'
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText: vi.fn(), writeText },
+    })
+    render(<VncViewer instanceId="42" available />)
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
+    const rfb = rfbMock.instances[0]
+    act(() => rfb.emit('connect'))
+
+    act(() => rfb.emit('clipboard', new CustomEvent('clipboard', {
+      detail: { text: remoteText },
+    })))
+    await user.click(screen.getByRole('button', { name: '远端剪贴板 → 本机' }))
+
+    expect(writeText).toHaveBeenCalledWith(remoteText)
+  })
+
+  it('preserves Unicode text already decoded by noVNC', async () => {
+    // Extended Clipboard emits decoded Unicode directly, including surrogate pairs, so it must bypass byte reconstruction.
+    const remoteText = '远端文本🙂'
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText: vi.fn(), writeText },
+    })
+    render(<VncViewer instanceId="42" available />)
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
+    const rfb = rfbMock.instances[0]
+    act(() => rfb.emit('connect'))
+
+    act(() => rfb.emit('clipboard', new CustomEvent('clipboard', {
+      detail: { text: remoteText },
+    })))
+    await user.click(screen.getByRole('button', { name: '远端剪贴板 → 本机' }))
+
+    expect(writeText).toHaveBeenCalledWith(remoteText)
+  })
+
+  it('preserves clipboard text that is not a complete UTF-8 byte sequence', async () => {
+    // A genuine legacy Latin-1 byte that cannot be decoded as UTF-8 must remain available instead of being replaced.
+    const remoteText = 'café'
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText: vi.fn(), writeText },
+    })
+    render(<VncViewer instanceId="42" available />)
+    await user.click(screen.getByRole('button', { name: '连接 VNC' }))
+    await waitFor(() => expect(rfbMock.RFB).toHaveBeenCalledTimes(1))
+    const rfb = rfbMock.instances[0]
+    act(() => rfb.emit('connect'))
+
+    act(() => rfb.emit('clipboard', new CustomEvent('clipboard', {
+      detail: { text: remoteText },
+    })))
+    await user.click(screen.getByRole('button', { name: '远端剪贴板 → 本机' }))
+
+    expect(writeText).toHaveBeenCalledWith(remoteText)
+  })
+
   it('reports browser clipboard permission failures without dropping VNC', async () => {
     // Clipboard permission errors must be actionable and must not tear down the live RFB session.
     const user = userEvent.setup()
@@ -289,9 +383,10 @@ describe('VncViewer', () => {
   })
 
   it('accepts clipboard payloads exactly at the 256 KiB UTF-8 boundary', async () => {
-    // Exactly 262_144 ASCII bytes is on the cap; one byte less already covered above, this asserts the inclusive edge.
+    // A long script at the inclusive boundary must remain one atomic clipboard replacement rather than application-level chunks.
     const user = userEvent.setup()
-    const readText = vi.fn().mockResolvedValue('a'.repeat(256 * 1024))
+    const script = 'const value = window.location.href;\n'.repeat(8_000).slice(0, 256 * 1024)
+    const readText = vi.fn().mockResolvedValue(script)
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { readText, writeText: vi.fn() },
@@ -304,7 +399,9 @@ describe('VncViewer', () => {
 
     await user.click(screen.getByRole('button', { name: '本机剪贴板 → 远端' }))
 
-    expect(rfb.clipboardPasteFrom).toHaveBeenCalledWith('a'.repeat(256 * 1024))
+    expect(new TextEncoder().encode(script)).toHaveLength(256 * 1024)
+    expect(rfb.clipboardPasteFrom).toHaveBeenCalledTimes(1)
+    expect(rfb.clipboardPasteFrom).toHaveBeenCalledWith(script)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
