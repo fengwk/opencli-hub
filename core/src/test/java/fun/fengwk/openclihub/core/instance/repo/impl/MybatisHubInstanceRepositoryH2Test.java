@@ -32,7 +32,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * generated mapper XML is exercised exactly as it would be in production.
  *
  * <p>All insert / update paths use the same repository the service layer depends on,
- * which makes this the authoritative test that the {@code schema-h2.sql} constraints
+ * which makes this the authoritative test that the test H2 schema constraints
  * and the Auto Mapper generated SQL agree with the domain model.
  *
  * <p>Codes are randomized per test to coexist with {@link fun.fengwk.openclihub.core.CorePersistenceSmokeTest}

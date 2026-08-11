@@ -15,7 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * H2 round-trip coverage for {@link HubCommandOutputRuleRepository}. Exercises insert,
  * update, delete-by-id, delete-by-command-key and the unique-key uniqueness check that
- * schema-mysql.sql relies on in production.
+ * the database schemas rely on in production.
  *
  * @author fengwk
  */

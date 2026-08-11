@@ -1,6 +1,11 @@
--- MySQL 5.7 defaults sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES,…'; `timestamp not null` without
--- DEFAULT would be rejected at create time. MyBatis INSERT statements set gmt_create/gmt_modified
--- explicitly so the DEFAULT only acts as a strict-mode safety net.
+-- PostgreSQL fresh schema, idempotent for Spring SQL init (schema only; no data SQL).
+--
+-- Timestamps are timestamp(3) WITHOUT time zone: the application persists UTC LocalDateTime
+-- values and the datasource forces every pooled session to UTC (see application-database.yml),
+-- so the gmt_create/gmt_modified/state_changed_at UTC contract holds.
+--
+-- state_changed_at must NOT auto-update: state transitions are written by the application
+-- with explicit timestamps, and DB-side auto-update would silently rewrite the sort key.
 
 create table if not exists hub_instance (
     id varchar(36) not null,
@@ -14,18 +19,16 @@ create table if not exists hub_instance (
     proxy_mode varchar(16) not null default 'INHERIT',
     proxy_server varchar(512) null,
     last_error_message text null,
-    state_changed_at timestamp(3) not null default current_timestamp(3) on update current_timestamp(3),
+    state_changed_at timestamp(3) not null default current_timestamp(3),
     gmt_create timestamp(3) not null default current_timestamp(3),
     gmt_modified timestamp(3) not null default current_timestamp(3),
     version bigint not null default 0,
     primary key (id),
-    unique key uk_hub_instance_code (code),
-    unique key uk_hub_instance_context_id (context_id),
-    key idx_hub_instance_state (state)
-) engine=InnoDB default charset=utf8mb4 comment='OpenCLI browser instance';
+    constraint uk_hub_instance_code unique (code),
+    constraint uk_hub_instance_context_id unique (context_id)
+);
 
--- Existing MySQL DBs: do not rely on this file to ALTER live tables.
--- Run scripts/migrate-mysql-instance-priority.sql once before deploying images that use priority.
+create index if not exists idx_hub_instance_state on hub_instance (state);
 
 create table if not exists hub_system_settings (
     id int not null,
@@ -35,7 +38,7 @@ create table if not exists hub_system_settings (
     gmt_modified timestamp(3) not null default current_timestamp(3),
     version bigint not null default 0,
     primary key (id)
-) engine=InnoDB default charset=utf8mb4 comment='Hub-wide browser settings singleton';
+);
 
 create table if not exists hub_execution (
     id varchar(36) not null,
@@ -45,27 +48,30 @@ create table if not exists hub_execution (
     site varchar(80) not null,
     site_session varchar(16) not null,
     argv_json text not null,
-    reuse_instance tinyint(1) not null default 0,
+    reuse_instance boolean not null default false,
     status varchar(32) not null,
     exit_code int null,
-    stdout_content mediumtext null,
-    stdout_truncated tinyint(1) not null default 0,
-    stderr_content mediumtext null,
-    stderr_truncated tinyint(1) not null default 0,
+    stdout_content text null,
+    stdout_truncated boolean not null default false,
+    stderr_content text null,
+    stderr_truncated boolean not null default false,
     error_message text null,
     timeout_millis bigint not null,
-    -- queued_at is immutable enqueue time; do NOT use ON UPDATE (status updates must not rewrite sort key).
+    -- queued_at is immutable enqueue time; no ON UPDATE equivalent exists here and the
+    -- application never rewrites it.
     queued_at timestamp(3) not null default current_timestamp(3),
     started_at timestamp(3) null,
     finished_at timestamp(3) null,
     gmt_create timestamp(3) not null default current_timestamp(3),
     gmt_modified timestamp(3) not null default current_timestamp(3),
     version bigint not null default 0,
-    primary key (id),
-    key idx_hub_execution_queued_at_id (queued_at, id),
-    key idx_hub_execution_instance_queued_at_id (instance_id, queued_at, id),
-    key idx_hub_execution_status (status)
-) engine=InnoDB default charset=utf8mb4 comment='OpenCLI execution history';
+    primary key (id)
+);
+
+create index if not exists idx_hub_execution_queued_at_id on hub_execution (queued_at, id);
+create index if not exists idx_hub_execution_instance_queued_at_id
+    on hub_execution (instance_id, queued_at, id);
+create index if not exists idx_hub_execution_status on hub_execution (status);
 
 create table if not exists hub_command_blacklist (
     id varchar(36) not null,
@@ -75,8 +81,8 @@ create table if not exists hub_command_blacklist (
     gmt_modified timestamp(3) not null default current_timestamp(3),
     version bigint not null default 0,
     primary key (id),
-    unique key uk_hub_command_blacklist_command_key (command_key)
-) engine=InnoDB default charset=utf8mb4 comment='Globally disabled OpenCLI commands';
+    constraint uk_hub_command_blacklist_command_key unique (command_key)
+);
 
 create table if not exists hub_command_output_rule (
     id varchar(36) not null,
@@ -88,24 +94,25 @@ create table if not exists hub_command_output_rule (
     gmt_modified timestamp(3) not null default current_timestamp(3),
     version bigint not null default 0,
     primary key (id),
-    unique key uk_hub_command_output_rule_command_key (command_key)
-) engine=InnoDB default charset=utf8mb4 comment='Managed OpenCLI resource output rules';
+    constraint uk_hub_command_output_rule_command_key unique (command_key)
+);
 
 create table if not exists hub_plugin_source (
     id varchar(36) not null,
     name varchar(128) not null,
     source varchar(1024) not null,
     desired_plugins_json text not null,
-    enabled tinyint(1) not null default 1,
-    auto_update tinyint(1) not null default 0,
+    enabled boolean not null default true,
+    auto_update boolean not null default false,
     last_status varchar(32) not null,
     last_error text null,
     last_synced_at timestamp(3) null,
-    last_result_json mediumtext null,
+    last_result_json text null,
     gmt_create timestamp(3) not null default current_timestamp(3),
     gmt_modified timestamp(3) not null default current_timestamp(3),
     version bigint not null default 0,
     primary key (id),
-    unique key uk_hub_plugin_source_name (name),
-    key idx_hub_plugin_source_enabled (enabled)
-) engine=InnoDB default charset=utf8mb4 comment='Configured OpenCLI plugin sources managed via official plugin CLI';
+    constraint uk_hub_plugin_source_name unique (name)
+);
+
+create index if not exists idx_hub_plugin_source_enabled on hub_plugin_source (enabled);

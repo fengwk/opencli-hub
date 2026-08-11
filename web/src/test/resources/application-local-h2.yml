@@ -1,8 +1,4 @@
 spring:
-  mvc:
-    async:
-      # slightly above Hub max execute timeout (30m)
-      request-timeout: 1860000
   datasource:
     driver-class-name: org.h2.Driver
     url: jdbc:h2:mem:opencli-hub-local;DB_CLOSE_DELAY=-1;MODE=MySQL;DATABASE_TO_LOWER=TRUE
@@ -10,9 +6,10 @@ spring:
     password:
   sql:
     init:
-      mode: always
-      schema-locations: classpath:schema-h2.sql
-      data-locations: classpath:data-h2.sql
+      # Never run DDL in the web full-context test: the core schema lives in core test
+      # resources (not on the web test classpath) and this profile only boots the context
+      # with a datasource; no repository is exercised here.
+      mode: never
 
 logging:
   file:
@@ -23,5 +20,8 @@ opencli:
     data-dir: ${java.io.tmpdir}/opencli-hub-local
     opencli:
       workdir: ${java.io.tmpdir}
+    runtime:
+      # No schema means no instance rows to recover; keep the boot sweep off the database.
+      startup-recovery-enabled: false
     resource:
       root-dir: ${java.io.tmpdir}/opencli-hub-local/resources

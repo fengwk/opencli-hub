@@ -11,9 +11,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * H2 round-trip coverage for {@link HubCommandBlacklistRepository}. The shared
- * {@code local-h2} schema is used so generated Auto Mapper SQL is exercised on the same
- * MySQL-compatibility DDL that production ships.
+ * H2 round-trip coverage for {@link HubCommandBlacklistRepository}. The shared test H2
+ * schema is used so the generated Auto Mapper SQL is exercised against the same
+ * MySQL-compatibility DDL the core test context boots with.
  *
  * @author fengwk
  */

@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://${OPENCLI_HUB_POSTGRESQL_HOST:127.0.0.1}:${OPENCLI_HUB_POSTGRESQL_PORT:5432}/${OPENCLI_HUB_POSTGRESQL_DATABASE:opencli_hub}?connectTimeout=3&socketTimeout=3
+    username: ${OPENCLI_HUB_POSTGRESQL_USERNAME:postgres}
+    password: ${OPENCLI_HUB_POSTGRESQL_PASSWORD:}
+    hikari:
+      # gmt_*/state_changed_at columns are timestamp(3) without time zone and the application
+      # writes UTC LocalDateTime values; force every pooled session to UTC so DB-side
+      # current_timestamp defaults and expressions agree with the application clock.
+      connection-init-sql: set time zone 'UTC'
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-database.sql

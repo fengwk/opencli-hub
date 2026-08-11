@@ -1,0 +1,16 @@
+spring:
+  datasource:
+    driver-class-name: org.sqlite.JDBC
+    url: jdbc:sqlite:${OPENCLI_HUB_SQLITE_DATABASE_FILE:${OPENCLI_HUB_DATA_DIR:/data/opencli-hub}/database/opencli-hub.db}?journal_mode=WAL&busy_timeout=5000
+    username:
+    password:
+    hikari:
+      # SQLite allows one writer at a time; pin the pool to a single connection so reads and
+      # writes serialize, and keep the busy timeout (applied by the JDBC URL on every new
+      # connection) so concurrent access waits instead of failing immediately. WAL mode is
+      # persisted in the db file once the first connection opens it.
+      maximum-pool-size: 1
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-database.sql

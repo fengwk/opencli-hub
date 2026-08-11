@@ -1,9 +1,0 @@
-spring:
-  mvc:
-    async:
-      request-timeout: 1860000
-  sql:
-    init:
-      mode: always
-      schema-locations: classpath:schema-mysql.sql
-      data-locations: classpath:data-mysql.sql

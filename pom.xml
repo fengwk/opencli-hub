@@ -21,7 +21,13 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <opencli-hub.version>1.0.0</opencli-hub.version>
-        <spring-boot.version>3.5.0</spring-boot.version>
+        <spring-boot.version>3.5.16</spring-boot.version>
+        <!-- Override convention4j-parent's managed Spring Boot dependencies BOM (3.5.0) with
+             3.5.16. Imported by convention4j-parent via ${spring-boot-dependencies.version}. -->
+        <spring-boot-dependencies.version>3.5.16</spring-boot-dependencies.version>
+        <!-- Spring Boot 3.5.16 ships Jackson 2.21.4; the project contract pins the Jackson
+             BOM to 2.21.5 via an explicit import that is closer than the parent's BOM. -->
+        <jackson-bom.version>2.21.5</jackson-bom.version>
         <!-- Override convention4j-parent's managed 0.0.48 with the Maven Central 1.0.0
              release so the build works without a locally installed AutoMapper snapshot. -->
         <auto-mapper.version>1.0.0</auto-mapper.version>
@@ -29,6 +35,15 @@
 
     <dependencyManagement>
         <dependencies>
+            <!-- Project-level Jackson BOM wins over the one embedded in the inherited
+                 spring-boot-dependencies BOM (nearest declaration wins). -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson-bom.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>fun.fengwk.opencli-hub</groupId>
                 <artifactId>opencli-hub-share</artifactId>
@@ -52,4 +67,37 @@
         <module>core</module>
         <module>web</module>
     </modules>
+
+    <!--
+        Compile-time database variants: exactly one profile is active per clean build and
+        selects the AutoMapper dialect (auto-mapper.config), the database DDL/config resource
+        directory (${db.variant}) and the production JDBC driver packaged into the boot JAR.
+        PostgreSQL is the default variant; no runtime multi-datasource exists.
+    -->
+    <profiles>
+        <profile>
+            <id>postgresql</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <properties>
+                <db.variant>postgresql</db.variant>
+                <auto-mapper.db-type>POSTGRESQL</auto-mapper.db-type>
+            </properties>
+        </profile>
+        <profile>
+            <id>mysql</id>
+            <properties>
+                <db.variant>mysql</db.variant>
+                <auto-mapper.db-type>MYSQL</auto-mapper.db-type>
+            </properties>
+        </profile>
+        <profile>
+            <id>sqlite</id>
+            <properties>
+                <db.variant>sqlite</db.variant>
+                <auto-mapper.db-type>SQLITE</auto-mapper.db-type>
+            </properties>
+        </profile>
+    </profiles>
 </project>

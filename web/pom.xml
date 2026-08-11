@@ -25,6 +25,13 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-websocket</artifactId>
         </dependency>
+        <!-- Explicit test-scope H2 driver for the web full-context test profile
+             (test-only application-local-h2.yml); never packaged into the boot JAR. -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>fun.fengwk.convention4j</groupId>
             <artifactId>convention4j-spring-boot-starter-test</artifactId>
@@ -33,6 +40,21 @@
     </dependencies>
 
     <build>
+        <!-- One executable JAR per build variant: opencli-hub-web-1.0.0-{postgresql|mysql|sqlite}.jar -->
+        <finalName>opencli-hub-web-${project.version}-${db.variant}</finalName>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <!-- The active profile's datasource config is copied to the classpath root as
+                 application-database.yml so application.yml can import a variant-independent name. -->
+            <resource>
+                <directory>src/main/database/${db.variant}</directory>
+                <includes>
+                    <include>application-database.yml</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <!--
                 Package the pre-built frontend into the Spring Boot JAR static

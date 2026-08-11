@@ -1,6 +1,10 @@
 spring:
   application:
     name: opencli-hub
+  config:
+    # The active Maven database variant's datasource config (see web/src/main/database)
+    # is copied to the classpath root as application-database.yml at build time.
+    import: classpath:application-database.yml
   mvc:
     async:
       # slightly above Hub max execute timeout (30m)
@@ -18,14 +22,6 @@ spring:
         keep-alive: 60s
         allow-core-thread-timeout: true
       thread-name-prefix: hub-execute-
-  datasource:
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${OPENCLI_HUB_MYSQL_HOST:127.0.0.1}:${OPENCLI_HUB_MYSQL_PORT:3306}/${OPENCLI_HUB_MYSQL_DATABASE:opencli_hub}?useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&connectTimeout=3000&socketTimeout=3000&useSSL=false&allowPublicKeyRetrieval=true&defaultAuthenticationPlugin=mysql_native_password
-    username: ${OPENCLI_HUB_MYSQL_USERNAME:root}
-    password: ${OPENCLI_HUB_MYSQL_PASSWORD:}
-  sql:
-    init:
-      mode: never
   servlet:
     multipart:
       max-file-size: ${OPENCLI_HUB_RESOURCE_MAX_FILE_SIZE:104857600}B
