@@ -49,7 +49,7 @@ RUN --mount=type=cache,id=opencli-hub-maven,target=/root/.m2/repository,sharing=
         -Dmaven.wagon.http.connectionTimeout=5000 \
         -Dmaven.wagon.http.readTimeout=60000 \
         -Dmaven.wagon.http.retryHandler.count=5 \
-        -P"${OPENCLI_HUB_DATABASE}" package; \
+        -P"${OPENCLI_HUB_DATABASE}" clean package; \
     test -s "web/target/opencli-hub-web-1.0.0-${OPENCLI_HUB_DATABASE}.jar"; \
     mkdir -p /artifact; \
     cp "web/target/opencli-hub-web-1.0.0-${OPENCLI_HUB_DATABASE}.jar" /artifact/opencli-hub.jar

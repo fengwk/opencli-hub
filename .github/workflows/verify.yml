@@ -36,15 +36,15 @@ jobs:
           case "${{ matrix.database }}" in
             postgresql)
               grep -Eq 'BOOT-INF/lib/postgresql-[^/]+\.jar' <<<"${libs}"
-              ! grep -Eq 'BOOT-INF/lib/(mysql-connector|sqlite-jdbc)[^/]*\.jar' <<<"${libs}"
+              ! grep -Eq 'BOOT-INF/lib/(mysql-connector|sqlite-jdbc|h2-)[^/]*\.jar' <<<"${libs}"
               ;;
             mysql)
               grep -Eq 'BOOT-INF/lib/mysql-connector[^/]*\.jar' <<<"${libs}"
-              ! grep -Eq 'BOOT-INF/lib/(postgresql-|sqlite-jdbc)[^/]*\.jar' <<<"${libs}"
+              ! grep -Eq 'BOOT-INF/lib/(postgresql-|sqlite-jdbc|h2-)[^/]*\.jar' <<<"${libs}"
               ;;
             sqlite)
               grep -Eq 'BOOT-INF/lib/sqlite-jdbc-[^/]+\.jar' <<<"${libs}"
-              ! grep -Eq 'BOOT-INF/lib/(postgresql-|mysql-connector)[^/]*\.jar' <<<"${libs}"
+              ! grep -Eq 'BOOT-INF/lib/(postgresql-|mysql-connector|h2-)[^/]*\.jar' <<<"${libs}"
               ;;
           esac
 

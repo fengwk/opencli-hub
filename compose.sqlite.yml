@@ -18,6 +18,10 @@ services:
       - "${OPENCLI_HUB_BIND_ADDRESS:-127.0.0.1}:${OPENCLI_HUB_HOST_PORT:-8080}:8080"
     volumes:
       - opencli-hub-sqlite-data:/data/opencli-hub
+      # Explicit named home volume: Dockerfile VOLUME would otherwise create an
+      # unreferenced anonymous volume and lose plugin/OpenCLI home state on
+      # container recreation.
+      - opencli-hub-sqlite-home:/var/lib/opencli
     shm_size: 2gb
     security_opt:
       - seccomp=unconfined
@@ -26,6 +30,7 @@ services:
 
 volumes:
   opencli-hub-sqlite-data:
+  opencli-hub-sqlite-home:
 
 secrets:
   opencli_extension_signing_key:
