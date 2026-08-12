@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <!--
-        opencli-hub does not inherit from convention4j-parent 1.2.1 because that parent injects
+        opencli-hub does not inherit from convention4j-parent 1.2.3 because that parent injects
         mapstruct-processor, auto-mapper-processor and auto-service into every module. This
         project needs only Lombok (all modules, provided below) and AutoMapper processing in
         core (declared there), so the parent is imported as a plain BOM instead and the build
@@ -31,9 +31,6 @@
         <!-- Spring Boot 3.5.16 ships Jackson 2.21.4; the project contract pins the Jackson
              BOM to 2.21.5 via an explicit import that is declared before the parent BOM. -->
         <jackson-bom.version>2.21.5</jackson-bom.version>
-        <!-- Override convention4j-parent's managed 0.0.48 with the Maven Central 1.0.0
-             release so the build works without a locally installed AutoMapper snapshot. -->
-        <auto-mapper.version>1.0.0</auto-mapper.version>
         <!-- Plugin versions previously pinned by convention4j-parent, mirrored here so the
              project keeps the same compile/test/coverage behavior without inheriting it. -->
         <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
@@ -54,26 +51,19 @@
                 <scope>import</scope>
             </dependency>
             <dependency>
-                <groupId>fun.fengwk.auto-mapper</groupId>
-                <artifactId>auto-mapper-parent</artifactId>
-                <version>${auto-mapper.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
                 <version>${spring-boot-dependencies.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            <!-- convention4j-parent 1.2.1 imported as a plain BOM: contributes the
+            <!-- convention4j-parent 1.2.3 imported as a plain BOM: contributes the
                  convention4j-* artifact versions and mybatis-spring-boot-starter without its
-                 global annotation-processor dependencies. -->
+                 global annotation-processor dependencies, and manages AutoMapper 1.0.1. -->
             <dependency>
                 <groupId>fun.fengwk.convention4j</groupId>
                 <artifactId>convention4j-parent</artifactId>
-                <version>1.2.1</version>
+                <version>1.2.3</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -111,7 +101,7 @@
         <module>web</module>
     </modules>
 
-    <!-- Mirror of the build configuration convention4j-parent 1.2.1 used to provide. -->
+    <!-- Mirror of the build configuration convention4j-parent 1.2.3 provides. -->
     <build>
         <plugins>
             <!-- 携带参数名进行编译 -->

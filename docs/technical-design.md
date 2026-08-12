@@ -676,8 +676,7 @@ public interface HubInstanceMapper extends BaseMapper {
     HubInstanceDO findById(String id);
     HubInstanceDO findByCode(String code);
     HubInstanceDO findByContextId(String contextId);
-    @Select("... order by gmt_create asc, id asc")
-    List<HubInstanceDO> findAllOrderByCreateTimeAscIdAsc();
+    List<HubInstanceDO> findAllOrderByCreateTimeAndId();
 }
 ```
 
@@ -688,12 +687,12 @@ public interface HubExecutionMapper extends BaseMapper {
     int updateById(HubExecutionDO executionDO);
     HubExecutionDO findById(String id);
     long countAll();
-    @Select("... order by queued_at desc, id desc ...")
+    @MethodExpr("pageAllOrderByQueuedAtDescAndIdDesc")
     List<HubExecutionDO> pageAllOrderByQueuedAtDescIdDesc(
         @Param("offset") long offset,
         @Param("limit") int limit);
     long countByInstanceId(String instanceId);
-    @Select("... where instance_id = #{instanceId} order by queued_at desc, id desc ...")
+    @MethodExpr("pageByInstanceIdOrderByQueuedAtDescAndIdDesc")
     List<HubExecutionDO> pageByInstanceIdOrderByQueuedAtDescIdDesc(
         @Param("instanceId") String instanceId,
         @Param("offset") long offset,
@@ -701,7 +700,7 @@ public interface HubExecutionMapper extends BaseMapper {
 }
 ```
 
-黑名单和输出规则使用同样的命名方式。常规单字段 CRUD 由 Auto Mapper 生成；创建时间加 ID 的多字段稳定排序使用 MyBatis `@Select`，避免把 UUID 当作时间序列。不得在 `src/main/resources` 提交同路径空 Mapper XML；当前 Auto Mapper 注解处理器在 Maven `compile` 阶段直接将其余完整 XML 生成到 `target/classes`。若源码资源中存在同路径空 XML，会因 `resources` 先于 `compile` 执行而遮蔽生成结果。
+AutoMapper `1.0.1` 由 `convention4j-parent:1.2.3` 统一管理。黑名单和输出规则使用同样的命名方式；常规 CRUD 与简单稳定排序直接由方法签名生成，`HubInstanceDO.createTime` 的 `@FieldName("gmt_create")` 同样用于解析 `OrderByCreateTime`。仅当现有 Java 方法名无法直接表达完整规则时使用 `@MethodExpr` 保持方法名兼容。不得在 `src/main/resources` 提交同路径空 Mapper XML；Auto Mapper 注解处理器在 Maven `compile` 阶段直接将完整 XML 生成到 `target/classes`。若源码资源中存在同路径空 XML，会因 `resources` 先于 `compile` 执行而遮蔽生成结果。
 
 ### 10.3 Repository 约束
 

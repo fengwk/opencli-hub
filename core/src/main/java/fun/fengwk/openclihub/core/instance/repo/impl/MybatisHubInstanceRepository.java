@@ -66,7 +66,7 @@ public class MybatisHubInstanceRepository implements HubInstanceRepository {
 
     @Override
     public List<HubInstance> listAll() {
-        return mapper.findAllOrderByCreateTimeAscIdAsc().stream().map(this::fromDO).toList();
+        return mapper.findAllOrderByCreateTimeAndId().stream().map(this::fromDO).toList();
     }
 
     private HubInstanceDO toDO(HubInstance instance) {

@@ -101,7 +101,7 @@ class CorePersistenceSmokeTest {
 
     /**
      * Mapper pagination must order by the queued wall time ({@code queued_at desc}) with the
-     * opaque ID as the stable tie-break — derived by AutoMapper 1.0.0 via {@code @MethodExpr}.
+     * opaque ID as the stable tie-break — derived by AutoMapper via {@code @MethodExpr}.
      * Distinct started/finished times prove the order key is {@code queued_at}, not activity time.
      */
     @Test

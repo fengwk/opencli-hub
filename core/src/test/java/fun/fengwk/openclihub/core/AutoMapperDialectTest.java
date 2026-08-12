@@ -20,8 +20,8 @@ import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
  *
  * <p>MySQL quotes identifiers with backticks ({@code `id`}) while PostgreSQL and SQLite use
  * double quotes ({@code "id"}), so the generated XML is the authoritative dialect marker.
- * The hand-written annotation SQL mappers never produce XML, so exactly the four
- * {@code @AutoMapper} mappers are checked.
+ * Each {@code @AutoMapper} interface produces one generated XML, so exactly the four mapper
+ * resources are checked.
  */
 class AutoMapperDialectTest {
 
@@ -88,6 +88,24 @@ class AutoMapperDialectTest {
         // LIMIT/OFFSET pagination is valid SQL in MySQL, PostgreSQL and SQLite alike; a
         // dialect-specific rewrite would indicate a dialect leak in the generated SQL.
         assertThat(content).contains("limit #{limit} offset #{offset}");
+    }
+
+    @Test
+    void shouldResolveInstanceOrderByThroughFieldName() throws Exception {
+        Resource instanceXml = new PathMatchingResourcePatternResolver()
+            .getResources("classpath*:**/instance/**/HubInstanceMapper.xml")[0];
+        String content = instanceXml.getContentAsString(StandardCharsets.UTF_8);
+        String dbType = dbTypeFromPackagedConfig();
+        String quotedId = switch (dbType) {
+            case "MYSQL" -> "`id`";
+            case "POSTGRESQL", "SQLITE" -> "\"id\"";
+            default -> throw new IllegalStateException("unexpected dbType " + dbType);
+        };
+        // createTime is mapped to the legacy physical column gmt_create via @FieldName.
+        assertThat(content)
+            .contains("<select id=\"findAllOrderByCreateTimeAndId\"")
+            .contains("order by gmt_create, " + quotedId)
+            .doesNotContain("order by create_time");
     }
 
     private static String dbTypeFromPackagedConfig() throws IOException {

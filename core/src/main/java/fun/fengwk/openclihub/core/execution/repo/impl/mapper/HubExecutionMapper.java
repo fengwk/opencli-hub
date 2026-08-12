@@ -27,8 +27,8 @@ public interface HubExecutionMapper extends BaseMapper {
 
     /**
      * Derives {@code select ... order by queued_at desc, id desc limit #{limit} offset #{offset}}
-     * with AutoMapper 1.0.0. The method name keeps its historical Java spelling; the
-     * {@link MethodExpr} supplies the missing {@code And} between the two order-by fields.
+     * with AutoMapper. The method name keeps its historical Java spelling; the {@link MethodExpr}
+     * supplies the missing {@code And} between the two order-by fields.
      */
     @MethodExpr("pageAllOrderByQueuedAtDescAndIdDesc")
     List<HubExecutionDO> pageAllOrderByQueuedAtDescIdDesc(
@@ -38,7 +38,7 @@ public interface HubExecutionMapper extends BaseMapper {
 
     /**
      * Derives {@code select ... where instance_id = #{instanceId} order by queued_at desc,
-     * id desc limit #{limit} offset #{offset}} with AutoMapper 1.0.0; see
+     * id desc limit #{limit} offset #{offset}} with AutoMapper; see
      * {@link #pageAllOrderByQueuedAtDescIdDesc(long, int)} for the naming rationale.
      */
     @MethodExpr("pageByInstanceIdOrderByQueuedAtDescAndIdDesc")
