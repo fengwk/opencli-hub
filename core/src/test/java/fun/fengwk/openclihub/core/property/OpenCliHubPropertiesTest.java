@@ -14,4 +14,12 @@ class OpenCliHubPropertiesTest {
         assertThat(properties.getVnc().getAllowedOrigins()).isEmpty();
     }
 
+    /** Long JSON command results need enough headroom to remain parseable by the Hub. */
+    @Test
+    void shouldDefaultExecutionCaptureToOneMiCharacters() {
+        OpenCliHubProperties properties = new OpenCliHubProperties();
+
+        assertThat(properties.getExecution().getMaxCaptureChars()).isEqualTo(1_048_576);
+    }
+
 }

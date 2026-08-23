@@ -166,6 +166,9 @@ curl --fail --show-error http://127.0.0.1:8080/api/instances
 | `OPENCLI_HUB_POSTGRESQL_PASSWORD` | 无默认 | 应用密码（必填） |
 | `OPENCLI_HUB_DATA_DIR` | `/data/opencli-hub` | Hub data 根目录 |
 
+三种 Compose 均支持通过 `OPENCLI_HUB_MAX_CAPTURE_CHARS` 调整每次执行的 stdout/stderr 最大捕获字符数，
+默认 `1048576`。超出后 Hub 仍会截断并在 Execution 中记录截断状态。
+
 镜像默认发布到 `127.0.0.1:8080`，并使用三个 named volume：`opencli-hub-postgresql-data`（数据库）、
 `opencli-hub-postgresql-hub-data`（日志、资源、Instance Profile 根目录）、`opencli-hub-postgresql-home`（OpenCLI home/data）。
 

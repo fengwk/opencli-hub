@@ -105,7 +105,7 @@ public class OpenCliHubProperties {
         private long defaultTimeoutMillis = 600000L;
         private long maxTimeoutMillis = 1800000L;
         private long processStopGraceMillis = 3000L;
-        private int maxCaptureChars = 65535;
+        private int maxCaptureChars = 1_048_576;
         private int defaultMaxPending = 5;
 
     }

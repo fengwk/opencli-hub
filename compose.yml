@@ -34,6 +34,7 @@ services:
       OPENCLI_HUB_POSTGRESQL_DATABASE: opencli_hub
       OPENCLI_HUB_POSTGRESQL_USERNAME: opencli_hub
       OPENCLI_HUB_POSTGRESQL_PASSWORD: "${OPENCLI_HUB_POSTGRESQL_PASSWORD:?OPENCLI_HUB_POSTGRESQL_PASSWORD is required}"
+      OPENCLI_HUB_MAX_CAPTURE_CHARS: "${OPENCLI_HUB_MAX_CAPTURE_CHARS:-1048576}"
     depends_on:
       postgresql:
         condition: service_healthy

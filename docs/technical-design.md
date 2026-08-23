@@ -343,7 +343,7 @@ opencli:
       default-timeout-millis: 600000
       max-timeout-millis: 1800000
       process-stop-grace-millis: 3000
-      max-capture-chars: 65535
+      max-capture-chars: ${OPENCLI_HUB_MAX_CAPTURE_CHARS:1048576}
       default-max-pending: 5
 
     resource:
@@ -1473,7 +1473,7 @@ opencli
 - exitCode=0 且 stdout 可解析为 JSON：`SUCCEEDED`；
 - exitCode!=0：`FAILED`；
 - exitCode=0 但 JSON 无法解析：`FAILED`，错误 `OPENCLI_INVALID_JSON_OUTPUT`；
-- stdout/stderr 按 `maxCaptureChars` 截断并记录是否截断；
+- stdout/stderr 默认分别最多捕获 1,048,576 个字符，可通过 `OPENCLI_HUB_MAX_CAPTURE_CHARS` 调整，超出后截断并记录是否截断；
 - 资源列表来自 execution resource group 扫描。
 
 ### 22.6 HTTP 返回

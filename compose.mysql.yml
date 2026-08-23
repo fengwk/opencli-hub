@@ -35,6 +35,7 @@ services:
       OPENCLI_HUB_MYSQL_DATABASE: opencli_hub
       OPENCLI_HUB_MYSQL_USERNAME: opencli_hub
       OPENCLI_HUB_MYSQL_PASSWORD: "${OPENCLI_HUB_MYSQL_PASSWORD:?OPENCLI_HUB_MYSQL_PASSWORD is required}"
+      OPENCLI_HUB_MAX_CAPTURE_CHARS: "${OPENCLI_HUB_MAX_CAPTURE_CHARS:-1048576}"
     depends_on:
       mysql:
         condition: service_healthy

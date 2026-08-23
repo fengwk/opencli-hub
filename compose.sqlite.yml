@@ -14,6 +14,7 @@ services:
       # the JAR; the database file defaults to
       # ${OPENCLI_HUB_DATA_DIR}/database/opencli-hub.db.
       OPENCLI_HUB_DATA_DIR: /data/opencli-hub
+      OPENCLI_HUB_MAX_CAPTURE_CHARS: "${OPENCLI_HUB_MAX_CAPTURE_CHARS:-1048576}"
     ports:
       - "${OPENCLI_HUB_BIND_ADDRESS:-127.0.0.1}:${OPENCLI_HUB_HOST_PORT:-8080}:8080"
     volumes:

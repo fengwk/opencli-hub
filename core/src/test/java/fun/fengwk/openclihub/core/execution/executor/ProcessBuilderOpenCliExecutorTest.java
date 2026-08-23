@@ -103,6 +103,25 @@ class ProcessBuilderOpenCliExecutorTest {
         assertThat(result.getStdout().trim()).isEqualTo("480");
     }
 
+    /** A normal long JSON result must remain complete beyond the former 65,535-character cap. */
+    @Test
+    void shouldCaptureLongJsonWithinDefaultLimit() throws Exception {
+        Path script = script("long-json-output.sh", """
+            printf '{"text":"'
+            head -c 100000 /dev/zero | tr '\\0' 'o'
+            printf '"}'
+            """);
+        ProcessBuilderOpenCliExecutor executor = newExecutor(recoveryService);
+
+        OpenCliExecutionResult result = executor.execute(
+            instance, List.of(script.toString()), 5_000L, EXECUTION_ID);
+
+        assertThat(result.getExitCode()).isZero();
+        assertThat(result.getStdout()).hasSize(100_011);
+        assertThat(result.isStdoutTruncated()).isFalse();
+        assertThat(objectMapper.readTree(result.getStdout()).get("text").asText()).hasSize(100_000);
+    }
+
     @Test
     void shouldDrainAndTruncateLargeStdoutAndStderrWithoutDeadlock() throws Exception {
         properties.getExecution().setMaxCaptureChars(1_024);

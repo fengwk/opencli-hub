@@ -88,7 +88,7 @@ opencli:
       default-timeout-millis: ${OPENCLI_HUB_DEFAULT_TIMEOUT_MILLIS:600000}
       max-timeout-millis: ${OPENCLI_HUB_MAX_TIMEOUT_MILLIS:1800000}
       process-stop-grace-millis: 3000
-      max-capture-chars: 65535
+      max-capture-chars: ${OPENCLI_HUB_MAX_CAPTURE_CHARS:1048576}
       default-max-pending: 5
     resource:
       root-dir: ${OPENCLI_HUB_RESOURCE_DIR:${OPENCLI_HUB_DATA_DIR:/data/opencli-hub}/resources}
