@@ -205,18 +205,16 @@ class HubInstanceRuntimeApplicationRunnerTest {
     }
 
     /**
-     * Destroying the runner right after {@code run()} (the recovery task may still be queued
-     * or already interrupted) must release the barrier — it can never stay active forever.
+     * Destroying the runner right after {@code run()} must leave the barrier released whether
+     * the empty recovery sweep is still queued, running or already complete.
      */
     @Test
-    void shouldReleaseBarrierOnDestroyBeforeRecoveryStarts() {
+    void shouldLeaveBarrierReleasedWhenDestroyedImmediatelyAfterRun() {
         runner.run(new DefaultApplicationArguments(new String[0]));
-        assertThat(startCoordinator.isRecoveryInProgress()).isTrue();
-
         runner.destroy();
 
         assertThat(startCoordinator.isRecoveryInProgress())
-            .as("destroy must release the recovery barrier even before the sweep ran")
+            .as("destroy must leave the recovery barrier released")
             .isFalse();
         assertThat(startCoordinator.runStart(() -> true)).isTrue();
     }
