@@ -107,6 +107,16 @@ public class HubDispatchRegistry {
             dispatcher.pendingCount());
     }
 
+    /**
+     * Returns the admission load used by automatic execution routing. Runtime snapshots keep
+     * exposing active and pending executor metrics, while routing must count every accepted
+     * task until its future reaches {@code done()}.
+     */
+    public int getRoutingLoad(String instanceId) {
+        HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
+        return dispatcher == null ? 0 : dispatcher.acceptedNotTerminalCount();
+    }
+
     public int getMaxPending(String instanceId) {
         HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
         return dispatcher == null ? 0 : dispatcher.getMaxPending();

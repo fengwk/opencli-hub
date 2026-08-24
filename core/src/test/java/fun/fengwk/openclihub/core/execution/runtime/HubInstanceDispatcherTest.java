@@ -386,6 +386,9 @@ class HubInstanceDispatcherTest {
             // worker or queued command. This is the same observable state as the Worker-start gap.
             assertThat(dispatcher.activeCount()).isZero();
             assertThat(dispatcher.pendingCount()).isZero();
+            assertThat(dispatcher.acceptedNotTerminalCount())
+                .as("routing must count the accepted handoff before executor metrics expose it")
+                .isOne();
             assertThat(submitted).isNotDone();
 
             // The bind-like idle op must be rejected without ever invoking the body
@@ -407,6 +410,7 @@ class HubInstanceDispatcherTest {
             // next idle op can complete.
             executor.runHeldTask();
             assertThat(submitted.get(2, TimeUnit.SECONDS)).isEqualTo("never");
+            assertThat(dispatcher.acceptedNotTerminalCount()).isZero();
             assertThat(dispatcher.shutdownIfIdle())
                 .as("idle shutdown resumes once the accepted task terminal-ised")
                 .isTrue();

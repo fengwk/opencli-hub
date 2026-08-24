@@ -32,6 +32,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -73,6 +74,13 @@ public class HubExecutionService {
     private final OpenCliHubProperties properties;
     private final Clock clock;
 
+    /**
+     * Serialises the local route/persist/enqueue admission boundary. The lock is released
+     * immediately after the dispatcher accepts or rejects the task; the actual OpenCLI work
+     * always runs outside this critical section.
+     */
+    private final ReentrantLock admissionLock = new ReentrantLock();
+
     public HubExecutionService(
         OpenCliArgvValidator argvValidator,
         HubCommandBlacklistService blacklistService,
@@ -113,64 +121,88 @@ public class HubExecutionService {
         argvBuilder.assertNoCallerOutputArgument(normalized, outputRule);
 
         long timeoutMillis = resolveTimeout(request.getTimeoutMillis());
-        HubInstance instance = router.chooseInstance(
-            normalized.getCommand().getSite(), request.getInstanceId());
-        HubExecutionDeadline deadline = HubExecutionDeadline.fromNow(timeoutMillis);
+        HubInstance instance;
+        HubExecution execution;
+        String executionId;
+        RuntimeException dispatchFailure = null;
 
-        HubExecution execution = newExecution(request, normalized, instance, timeoutMillis);
-        persistAdd(execution);
-        log.info(
-            "Execution submitted id={} command={} site={} instanceId={} instanceCode={} timeoutMillis={}",
-            execution.getId(),
-            execution.getCommandKey(),
-            execution.getSite(),
-            instance.getId(),
-            instance.getCode(),
-            timeoutMillis);
-
-        String executionId = execution.getId();
+        admissionLock.lock();
         try {
-            // Enqueue without FutureTask-level deadline abort (that would complete the Future
-            // exceptionally without our terminal DB write). Worker checks deadline itself.
-            // onQueuedDiscard persists CANCELLED when the queue handle is discarded before
-            // running (clear queue, force shutdown, client cancel) so a dropped handle can
-            // never leave the DB row PENDING.
-            dispatchRegistry.submit(
-                instance,
-                executionId,
-                () -> {
-                    try {
-                        if (System.nanoTime() >= deadline.deadlineNanos()) {
-                            terminalAfterDispatchFailure(
-                                executionId,
-                                HubErrorCodes.QUEUE_WAIT_TIMEOUT.asThrowable(
-                                    "Execution deadline elapsed while queued"));
-                            return null;
+            instance = router.chooseInstance(
+                normalized.getCommand().getSite(), request.getInstanceId());
+            final HubInstance admittedInstance = instance;
+            final HubExecutionDeadline deadline = HubExecutionDeadline.fromNow(timeoutMillis);
+
+            execution = newExecution(request, normalized, admittedInstance, timeoutMillis);
+            persistAdd(execution);
+            log.info(
+                "Execution submitted id={} command={} site={} instanceId={} instanceCode={} timeoutMillis={}",
+                execution.getId(),
+                execution.getCommandKey(),
+                execution.getSite(),
+                admittedInstance.getId(),
+                admittedInstance.getCode(),
+                timeoutMillis);
+
+            executionId = execution.getId();
+            final String admittedExecutionId = executionId;
+            try {
+                // Enqueue without FutureTask-level deadline abort (that would complete the Future
+                // exceptionally without our terminal DB write). Worker checks deadline itself.
+                // onQueuedDiscard persists CANCELLED when the queue handle is discarded before
+                // running (clear queue, force shutdown, client cancel) so a dropped handle can
+                // never leave the DB row PENDING.
+                dispatchRegistry.submit(
+                    admittedInstance,
+                    admittedExecutionId,
+                    () -> {
+                        try {
+                            if (System.nanoTime() >= deadline.deadlineNanos()) {
+                                terminalAfterDispatchFailure(
+                                    admittedExecutionId,
+                                    HubErrorCodes.QUEUE_WAIT_TIMEOUT.asThrowable(
+                                        "Execution deadline elapsed while queued"));
+                                return null;
+                            }
+                            runOnInstance(
+                                admittedExecutionId,
+                                admittedInstance,
+                                normalized,
+                                outputRule,
+                                deadline);
+                        } catch (RuntimeException ex) {
+                            if (isError(ex, HubErrorCodes.EXECUTION_PERSIST_FAILED)) {
+                                log.error("Execution persist failed in worker id={}", admittedExecutionId, ex);
+                            } else {
+                                log.warn(
+                                    "Execution worker failed id={} error={}",
+                                    admittedExecutionId,
+                                    ex.getMessage());
+                                terminalAfterDispatchFailure(admittedExecutionId, ex);
+                            }
                         }
-                        runOnInstance(executionId, instance, normalized, outputRule, deadline);
-                    } catch (RuntimeException ex) {
-                        if (isError(ex, HubErrorCodes.EXECUTION_PERSIST_FAILED)) {
-                            log.error("Execution persist failed in worker id={}", executionId, ex);
-                        } else {
-                            log.warn("Execution worker failed id={} error={}", executionId, ex.getMessage());
-                            terminalAfterDispatchFailure(executionId, ex);
-                        }
-                    }
-                    return null;
-                },
-                Long.MAX_VALUE,
-                () -> persistQueuedTaskDiscard(executionId));
-        } catch (RuntimeException ex) {
-            if (isError(ex, HubErrorCodes.EXECUTION_PERSIST_FAILED)) {
-                throw ex;
+                        return null;
+                    },
+                    Long.MAX_VALUE,
+                    () -> persistQueuedTaskDiscard(admittedExecutionId));
+            } catch (RuntimeException ex) {
+                if (isError(ex, HubErrorCodes.EXECUTION_PERSIST_FAILED)) {
+                    throw ex;
+                }
+                dispatchFailure = ex;
             }
+        } finally {
+            admissionLock.unlock();
+        }
+
+        if (dispatchFailure != null) {
             log.warn(
                 "Execution enqueue failed id={} command={} instanceId={} error={}",
                 execution.getId(),
                 execution.getCommandKey(),
                 instance.getId(),
-                ex.getMessage());
-            return terminalAfterDispatchFailure(executionId, ex);
+                dispatchFailure.getMessage());
+            return terminalAfterDispatchFailure(executionId, dispatchFailure);
         }
         return converter.toDTO(execution, List.of());
     }

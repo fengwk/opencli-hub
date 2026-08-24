@@ -157,12 +157,12 @@ public class HubExecutionRouter {
     }
 
     /**
-     * Current load for an instance (active + pending). Used by automatic routing's
-     * least-busy selection and verified by the explicit path via the same candidate
-     * check above.
+     * Current admission load for an instance. This is the exact number of accepted,
+     * non-terminal tasks, including the handoff window that is not yet visible in the
+     * runtime snapshot's active/pending metrics.
      */
     private int loadOf(HubInstance instance) {
-        return dispatchRegistry.getSnapshot(instance.getId()).getLoad();
+        return dispatchRegistry.getRoutingLoad(instance.getId());
     }
 
     private enum CandidateCheck {

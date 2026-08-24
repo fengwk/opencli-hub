@@ -9,6 +9,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -53,8 +54,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -91,7 +94,7 @@ class HubExecutionServiceTest {
         outputRuleService = mock(HubCommandOutputRuleService.class);
         router = mock(HubExecutionRouter.class);
         resources = mock(HubExecutionResources.class);
-        dispatchRegistry = new HubDispatchRegistry();
+        dispatchRegistry = new AdmissionTestDispatchRegistry();
         repository = new InMemoryExecutionRepository();
         executor = new FakeOpenCliExecutor();
         properties = new OpenCliHubProperties();
@@ -192,6 +195,110 @@ class HubExecutionServiceTest {
         HubExecution saved = repository.findById(result.getId());
         assertThat(saved.getCreateTime()).isEqualTo(saved.getQueuedAt());
         assertThat(saved.getUpdateTime()).isEqualTo(saved.getFinishedAt());
+    }
+
+    /**
+     * Holds the first persistence call after routing, then keeps its dispatcher submission
+     * until the worker is visible. This makes the route/persist/enqueue gap deterministic:
+     * a correct admission lock blocks the second route, while the old implementation observes
+     * the same zero load and assigns both submissions to the first instance.
+     */
+    @Test
+    void shouldSerializeConcurrentAutomaticAdmissionAcrossRoutePersistAndEnqueue() throws Exception {
+        HubInstance secondary = new HubInstance();
+        secondary.setId("8");
+        secondary.setCode("secondary");
+        secondary.setContextId("ctx-secondary");
+        secondary.setState(HubInstanceState.RUNNING);
+        secondary.setWebsites(List.of("bilibili"));
+        secondary.setMaxPending(3);
+        dispatchRegistry.register(secondary);
+
+        CountDownLatch firstAddEntered = new CountDownLatch(1);
+        CountDownLatch allowFirstAdd = new CountDownLatch(1);
+        repository.blockNextAdd(firstAddEntered, allowFirstAdd);
+
+        CountDownLatch firstWorkerStarted = new CountDownLatch(1);
+        CountDownLatch releaseWorkers = new CountDownLatch(1);
+        CountDownLatch workersFinished = new CountDownLatch(2);
+        ((AdmissionTestDispatchRegistry) dispatchRegistry)
+            .waitForFirstSubmissionToReachWorker(firstWorkerStarted);
+        executor.setBehavior(() -> {
+            firstWorkerStarted.countDown();
+            try {
+                if (!releaseWorkers.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("workers were not released");
+                }
+                return FakeOpenCliExecutor.Behaviour.successJson("{\"ok\":true}");
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("interrupted while waiting for worker release", ex);
+            } finally {
+                workersFinished.countDown();
+            }
+        });
+
+        reset(router);
+        AtomicBoolean firstRoute = new AtomicBoolean();
+        CountDownLatch secondRouteEntered = new CountDownLatch(1);
+        when(router.chooseInstance(eq("bilibili"), org.mockito.ArgumentMatchers.isNull()))
+            .thenAnswer(invocation -> {
+                if (firstRoute.compareAndSet(false, true)) {
+                    return instance;
+                }
+                secondRouteEntered.countDown();
+                return dispatchRegistry.getRoutingLoad(instance.getId()) == 0
+                    ? instance : secondary;
+            });
+
+        AtomicReference<HubExecutionDTO> firstResult = new AtomicReference<>();
+        AtomicReference<HubExecutionDTO> secondResult = new AtomicReference<>();
+        AtomicReference<Throwable> firstFailure = new AtomicReference<>();
+        AtomicReference<Throwable> secondFailure = new AtomicReference<>();
+        Thread first = new Thread(() -> {
+            try {
+                firstResult.set(service.submit(request(null, 30_000L)));
+            } catch (Throwable ex) {
+                firstFailure.set(ex);
+            }
+        }, "admission-first");
+        Thread second = new Thread(() -> {
+            try {
+                secondResult.set(service.submit(request(null, 30_000L)));
+            } catch (Throwable ex) {
+                secondFailure.set(ex);
+            }
+        }, "admission-second");
+
+        try {
+            first.start();
+            assertThat(firstAddEntered.await(2, TimeUnit.SECONDS)).isTrue();
+
+            second.start();
+            assertThat(secondRouteEntered.await(1, TimeUnit.SECONDS))
+                .as("second route must remain behind the first route/persist/enqueue admission")
+                .isFalse();
+
+            allowFirstAdd.countDown();
+            first.join(2_000L);
+            second.join(2_000L);
+            assertThat(first.isAlive()).isFalse();
+            assertThat(second.isAlive()).isFalse();
+            assertThat(firstFailure.get()).isNull();
+            assertThat(secondFailure.get()).isNull();
+            assertThat(firstResult.get()).isNotNull();
+            assertThat(secondResult.get()).isNotNull();
+            assertThat(List.of(firstResult.get(), secondResult.get()))
+                .extracting(HubExecutionDTO::getInstanceId)
+                .containsExactlyInAnyOrder(instance.getId(), secondary.getId());
+        } finally {
+            allowFirstAdd.countDown();
+            releaseWorkers.countDown();
+            first.join(2_000L);
+            second.join(2_000L);
+            workersFinished.await(2, TimeUnit.SECONDS);
+            dispatchRegistry.unregister(secondary.getId());
+        }
     }
 
     @Test
@@ -762,6 +869,39 @@ class HubExecutionServiceTest {
             List.of("bilibili", "hot"));
     }
 
+    private static final class AdmissionTestDispatchRegistry extends HubDispatchRegistry {
+
+        private volatile CountDownLatch firstWorkerStarted;
+
+        void waitForFirstSubmissionToReachWorker(CountDownLatch workerStarted) {
+            this.firstWorkerStarted = workerStarted;
+        }
+
+        @Override
+        public <T> Future<T> submit(
+            HubInstance instance,
+            String executionId,
+            Callable<T> task,
+            long deadlineNanos,
+            Runnable onQueuedDiscard) {
+            Future<T> future = super.submit(
+                instance, executionId, task, deadlineNanos, onQueuedDiscard);
+            CountDownLatch workerStarted = this.firstWorkerStarted;
+            if (workerStarted != null) {
+                try {
+                    if (!workerStarted.await(2, TimeUnit.SECONDS)) {
+                        throw new AssertionError("worker did not start after dispatch acceptance");
+                    }
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError("interrupted while waiting for worker start", ex);
+                }
+            }
+            return future;
+        }
+
+    }
+
     private static final class InMemoryExecutionRepository implements HubExecutionRepository {
 
         private int addCount;
@@ -770,8 +910,17 @@ class HubExecutionServiceTest {
         private int failUpdateAt;
         private boolean failGenerate;
         private boolean failAdd;
+        private CountDownLatch addEntered;
+        private CountDownLatch allowAdd;
+        private boolean blockNextAdd;
         private final Map<String, HubExecution> executions = new LinkedHashMap<>();
         private final List<HubExecutionStatus> updatedStatuses = new CopyOnWriteArrayList<>();
+
+        private void blockNextAdd(CountDownLatch addEntered, CountDownLatch allowAdd) {
+            this.addEntered = addEntered;
+            this.allowAdd = allowAdd;
+            this.blockNextAdd = true;
+        }
 
         @Override
         public synchronized String generateId() {
@@ -786,6 +935,18 @@ class HubExecutionServiceTest {
             addCount++;
             if (failAdd) {
                 return false;
+            }
+            if (blockNextAdd) {
+                blockNextAdd = false;
+                addEntered.countDown();
+                try {
+                    if (!allowAdd.await(5, TimeUnit.SECONDS)) {
+                        throw new AssertionError("first execution insert was not released");
+                    }
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError("interrupted while waiting for first insert", ex);
+                }
             }
             executions.put(execution.getId(), snapshot(execution));
             return true;

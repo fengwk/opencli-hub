@@ -270,6 +270,20 @@ public class HubInstanceDispatcher {
     }
 
     /**
+     * Returns the exact number of accepted tasks that have not reached
+     * {@link FutureTask#done()} yet. Unlike the executor's active/queue metrics, this also
+     * covers the handoff window after acceptance and before a worker exposes the task as active.
+     */
+    public int acceptedNotTerminalCount() {
+        submitLock.lock();
+        try {
+            return acceptedNotTerminalCount;
+        } finally {
+            submitLock.unlock();
+        }
+    }
+
+    /**
      * Drain pending (queued, not yet running) tasks and cancel them so blocked
      * {@link #dispatch} callers receive {@link HubErrorCodes#INSTANCE_QUEUE_CLEARED}.
      * Every discarded task notifies its {@code onQueuedDiscard} owner so the execution

@@ -1335,10 +1335,19 @@ state == RUNNING
 ### 20.2 选择策略
 
 ```text
-load = activeCount + pendingCount
+routingLoad = acceptedNotTerminalCount
 ```
 
-选择 load 最小者；load 相同时选 `priority` 更大者（默认 0，越大越优先）；仍相同时按不透明字符串 ID 的字典序排序，仅用于稳定打破平局，不表达创建时间。
+`routingLoad` 是已被 Dispatcher 接受但尚未达到 terminal 的任务数，包含任务从
+`submit` 到 worker 暴露为 active/pending 的过渡窗口。选择 `routingLoad` 最小者；
+负载相同时选 `priority` 更大者（默认 0，越大越优先）；仍相同时按不透明字符串 ID
+的字典序排序，仅用于稳定打破平局，不表达创建时间。运行时 API 展示的
+`activeCount`、`pendingCount` 和 `load` 仍保持原有的 executor 指标定义。
+
+同一 Hub 进程内，所有 Execution 提交的 `choose instance -> insert PENDING ->
+Dispatcher accept` 由短临界区 admission lock 串行化，避免并发请求在前一任务尚未
+计入 `routingLoad` 时重复选择同一 Instance。任务被 Dispatcher 接受或拒绝后立即
+释放该锁，OpenCLI 实际执行不在临界区内。
 
 ### 20.3 指定 Instance
 

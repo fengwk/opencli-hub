@@ -2,11 +2,15 @@ package fun.fengwk.openclihub.core.execution.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.openclihub.core.execution.runtime.HubDispatchRegistry;
 import fun.fengwk.openclihub.core.instance.runtime.HubInstanceRuntime;
 import fun.fengwk.openclihub.core.instance.runtime.HubInstanceRuntimeRegistry;
+import fun.fengwk.openclihub.core.instance.runtime.HubInstanceRuntimeSnapshot;
 import fun.fengwk.openclihub.core.instance.runtime.UnexpectedExitListener;
 import fun.fengwk.openclihub.core.instance.runtime.test.InMemoryHubInstanceService;
 import fun.fengwk.openclihub.core.instance.service.HubInstanceService;
@@ -28,7 +32,7 @@ import org.junit.jupiter.api.Test;
  * <p>Coverage:
  * <ul>
  *   <li>explicit instanceId — state, websites, runtime, live context, queue capacity, no failover,</li>
- *   <li>automatic — least-busy + ascending id tie-break, candidates, no-instance fallback,</li>
+ *   <li>automatic — least-busy + priority/id tie-breaks, candidates, no-instance fallback,</li>
  *   <li>candidate rejection — runtime absent, context offline, stale contextId mismatch, queue full.</li>
  * </ul>
  */
@@ -105,9 +109,6 @@ class HubExecutionRouterTest {
     }
 
     /**
-     * "least-busy" — exact load by snapshot's pending count determines the winner.
-     */
-    /**
      * When load is equal, higher priority wins (default 0).
      */
     @Test
@@ -122,19 +123,51 @@ class HubExecutionRouterTest {
     }
 
     @Test
-    void shouldSelectTheInstanceWithLowerPendingLoad() throws Exception {
+    void shouldSelectTheInstanceWithLowerAdmissionLoad() throws Exception {
         HubInstance a = persist("a", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-a");
         HubInstance b = persist("b", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-b");
         registerRuntime(a, "ctx-a");
         registerRuntime(b, "ctx-b");
 
-        // Bump B's pending count to make A the busier one — wait, the route wants the
-        // least-busy, so give B more pending and pick A.
+        // Give B more accepted work so least-busy routing picks A.
         busy(a, 2);
         busy(b, 5);
 
         HubInstance chosen = router.chooseInstance("bilibili", null);
         assertThat(chosen.getId()).isEqualTo(a.getId());
+    }
+
+    /**
+     * The dispatcher acceptance-window test proves the counter is non-zero while executor
+     * metrics are both zero; this test pins that routing uses the counter rather than the
+     * runtime display snapshot's active + pending load.
+     */
+    @Test
+    void shouldRouteUsingAcceptedLoadBeforeExecutorMetricsExposeTask() throws Exception {
+        HubInstance accepted = persist(
+            "accepted", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-accepted");
+        HubInstance idle = persist(
+            "idle", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-idle");
+        registerRuntime(accepted, "ctx-accepted");
+        registerRuntime(idle, "ctx-idle");
+
+        HubDispatchRegistry routingRegistry = mock(HubDispatchRegistry.class);
+        HubInstanceRuntimeSnapshot emptyMetrics = new HubInstanceRuntimeSnapshot(
+            true, null, null, 0, 0);
+        when(routingRegistry.getSnapshot(accepted.getId())).thenReturn(emptyMetrics);
+        when(routingRegistry.getSnapshot(idle.getId())).thenReturn(emptyMetrics);
+        when(routingRegistry.getMaxPending(accepted.getId())).thenReturn(5);
+        when(routingRegistry.getMaxPending(idle.getId())).thenReturn(5);
+        when(routingRegistry.getRoutingLoad(accepted.getId())).thenReturn(1);
+        when(routingRegistry.getRoutingLoad(idle.getId())).thenReturn(0);
+
+        HubExecutionRouter routingRouter = new HubExecutionRouter(
+            instanceService, runtimeRegistry, routingRegistry);
+
+        assertThat(routingRouter.chooseInstance("bilibili", null).getId())
+            .isEqualTo(idle.getId());
+        verify(routingRegistry).getRoutingLoad(accepted.getId());
+        verify(routingRegistry).getRoutingLoad(idle.getId());
     }
 
     /**
@@ -272,11 +305,10 @@ class HubExecutionRouterTest {
         dispatchRegistry.register(instance);
     }
 
-    private void busy(HubInstance instance, int pending) {
-        // Inject pending work through the dispatch registry directly to simulate load.
+    private void busy(HubInstance instance, int load) {
+        // Inject accepted work through the dispatch registry directly to simulate routing load.
         // We piggy-back on a Thread that holds the worker in active state (sleep), then
-        // use the non-blocking submit() helper so the test thread does not deadlock
-        // waiting on the synchronous dispatch().
+        // use non-blocking submit() for the remaining work.
         dispatchRegistry.register(instance);
         Thread filler = new Thread(() -> {
             try {
@@ -290,8 +322,7 @@ class HubExecutionRouterTest {
         });
         filler.setDaemon(true);
         filler.start();
-        // Poll until the active worker has been observed, then push `pending-1` more
-        // tasks onto the bounded queue.
+        // Poll until the active worker has been observed, then push `load-1` more tasks.
         try {
             for (int i = 0; i < 100 && dispatchRegistry.getSnapshot(instance.getId())
                 .getActiveCount() == 0; i++) {
@@ -301,7 +332,7 @@ class HubExecutionRouterTest {
             Thread.currentThread().interrupt();
             return;
         }
-        for (int idx = 0; idx < pending - 1; idx++) {
+        for (int idx = 0; idx < load - 1; idx++) {
             final int captured = idx;
             try {
                 dispatchRegistry.submit(instance, () -> "queued-" + captured, Long.MAX_VALUE);
