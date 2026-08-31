@@ -6,11 +6,13 @@
 
 ### 新增
 
+- 新增 `scripts/migrate-postgresql-instance-concurrency.sql`、`scripts/migrate-mysql-instance-concurrency.sql`、`scripts/migrate-sqlite-instance-concurrency.sh`：为 PostgreSQL 16、MySQL 5.7/8.4 与 SQLite 旧数据库补齐 `hub_instance.max_concurrency`（默认 1，合法范围 1..4，旧行保持 1 串行行为，均可安全重复执行或无损退出）。
 - 新增 `scripts/migrate-mysql-instance-state-changed-at-immutable.sql`：移除 `hub_instance.state_changed_at` 的 `ON UPDATE`（MySQL 5.7/8.4 兼容、可重复执行；既有已漂移值不可恢复，不伪造历史时间）。
-- 文档对齐三种编译期数据库变体（PostgreSQL 16 默认 / MySQL 8.4 LTS / SQLite）、H2 生产退役指引与发布镜像 tag 矩阵。
+- 文档对齐三种编译期数据库变体（PostgreSQL 16 默认 / MySQL 8.4 LTS / SQLite）、三库标准升级停机迁移步骤（停服务→备份→迁移→升级应用→验证）、Canary 灰度与 Chrome/shm 稳定性边界、H2 生产退役指引与发布镜像 tag 矩阵。
 
 ### 变更
 
+- Instance 支持配置并发度 `maxConcurrency`（1..4，默认 1，升级后旧行保持 1）与排队容量 `maxPending`（0..50，0 表示无排队缓冲，满时立即 429 `INSTANCE_QUEUE_FULL`）；总承载容量为 `maxConcurrency + maxPending`；仅临时会话（`EPHEMERAL`）+ 只读（`READ`）+ 后台（`background`）+ 无受管输出（`HubCommandOutputRule`）的任务允许并发，其余写命令、持久会话和受管输出任务保持独占串行。
 - 客户端行为变化（详见根 README「客户端行为变化」表）：`POST /api/opencli/execute` 返回 HTTP 202 + PENDING DTO，需轮询 `waitSeconds`（最大 120）或取消；本地文件必须上传后仅用 `/resources/...` 虚拟路径（绝对路径、`~`、`file://`、Windows drive path、显式 traversal 及相对 OpenCLI workdir 实际存在的文件/目录拒绝）；Execution 列表按 `queued_at DESC, id DESC`；cancel/clear-queue 丢弃的任务持久化 CANCELLED；时间戳统一 UTC LocalDateTime（`gmt_*` 列名保留兼容）。
 - 生产数据库从 H2/MySQL 5.7 迁移到 PostgreSQL 16（默认）、MySQL 8.4、SQLite 编译期变体；H2 仅保留测试用途。
 - 升级到 `convention4j-parent:1.2.3`，使用其默认管理的 AutoMapper `1.0.1`；Instance 创建时间排序由 `@FieldName` 驱动的生成 SQL 取代手写兼容 SQL。

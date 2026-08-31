@@ -104,7 +104,7 @@ Java Hub 负责：
 - Instance 配置和生命周期；
 - 进程管理；
 - Command Catalog 和调用校验；
-- 路由和单 Instance 串行队列；
+- 路由和 Instance 并发/排队调度；
 - Execution 记录；
 - 资源和日志文件；
 - REST API、WebSocket VNC 和管理前端。
@@ -374,6 +374,7 @@ public class HubInstance {
     private HubInstanceState state;
     private List<String> websites;
     private int maxPending;
+    private int maxConcurrency = 1;
     private HubProxyMode proxyMode;
     private String proxyServer;
     private String lastErrorMessage;
@@ -504,6 +505,7 @@ create table hub_instance (
     state varchar(32) not null,
     websites_json text not null,
     max_pending int not null,
+    max_concurrency int not null default 1,
     priority int not null default 0,
     proxy_mode varchar(16) not null default 'INHERIT',
     proxy_server varchar(512) null,
@@ -1361,18 +1363,36 @@ Dispatcher accept` 由短临界区 admission lock 串行化，避免并发请求
 
 任何失败直接返回，不 failover。
 
-### 20.4 单 Instance 串行
+### 20.4 Instance 并发与排队调度
 
-每个 Instance 使用：
+每个 Instance 的并发度与排队容量受 `maxConcurrency` 与 `maxPending` 控制：
 
-```text
-ThreadPoolExecutor(1, 1, ArrayBlockingQueue(maxPending))
-```
+- `maxConcurrency`：合法范围 `1..4`，默认值 `1`。升级后已有旧记录保持 `1`，默认不改变原有单并发行为；
+- `maxPending`：合法范围 `0..50`，默认值 `10`（或既有设定值）。`maxPending = 0` 表示无排队等待缓冲，实例达到最大并发数时立即返回 `429`（`INSTANCE_QUEUE_FULL`）；
+- 总承载容量公式：`总容量 = maxConcurrency + maxPending`。
 
-- active 最大为 1；
-- queue 有界；
-- 满时返回 429；
-- 删除/停止前必须 active=0、pending=0。
+#### 执行并发规则与互斥边界
+
+Hub 根据命令类型、会话模式与资源输出规则区分并发任务与独占任务：
+
+1. **允许并发并行（最多 `maxConcurrency` 个并行执行）**：必须**同时**满足以下四个条件：
+   - `siteSession == EPHEMERAL`（临时 session，命令执行后立即释放 tab lease）；
+   - 命令语义为 `READ`（只读操作，不改变页面或站点状态）；
+   - `background` 运行模式（不需要前台独占窗口焦点）；
+   - 命令无受管输出规则（未配置 `HubCommandOutputRule`，不向受管本地目录/文件写入输出资源）。
+2. **独占串行执行（互斥独占）**：只要满足以下任一条件，即必须在 Instance 上独占执行：
+   - 写操作（`WRITE` 命令）；
+   - 持久会话（`PERSISTENT` session，固定 `site:{site}` 保持页面）；
+   - 前台交互或非 background 模式；
+   - 配置了受管输出规则（`HubCommandOutputRule`）。
+
+独占任务与并发任务互斥：独占任务开始前必须等待 Instance 上已有的并发任务全部完成；独占任务执行期间不允许任何其他任务（无论并发还是独占）进入执行。
+
+#### 错误码与生命周期约束
+
+- 实例总容量满（`pending >= maxPending`）或 Dispatcher 拒绝时返回 HTTP 429（`INSTANCE_QUEUE_FULL`）；
+- 自动路由无法找到匹配且未满的 Instance 时返回 HTTP 400（`NO_INSTANCE_AVAILABLE`）；
+- 删除或停止 Instance 前，必须满足 `activeCount == 0 && pendingCount == 0`。
 
 ## 21. Persistent Session 路由
 
