@@ -92,7 +92,7 @@ function InstanceCard({
       <dl className="metadata-grid instance-metadata">
         <div><dt>运行时</dt><dd>{runtime?.registered ? `已注册 · 显示器 :${runtime.displayNumber ?? '—'}` : '等待注册'}</dd></div>
         <div><dt>远程控制</dt><dd>{vncAvailable ? 'VNC 可连接' : 'VNC 不可用'}</dd></div>
-        <div><dt>执行队列</dt><dd>活跃 {runtime?.activeCount ?? 0} · 待处理 {runtime?.pendingCount ?? 0}/{instance.maxPending}</dd></div>
+        <div><dt>执行队列</dt><dd>活跃 {runtime?.activeCount ?? 0}/{instance.maxConcurrency} · 待处理 {runtime?.pendingCount ?? 0}/{instance.maxPending}</dd></div>
         <div><dt>优先级</dt><dd>{instance.priority ?? 0}</dd></div>
         <div><dt>会话上下文</dt><dd className="mono-value" title={instance.contextId ?? undefined}>{instance.contextId || '尚未分配'}</dd></div>
       </dl>

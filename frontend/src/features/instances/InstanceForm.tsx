@@ -17,8 +17,13 @@ export interface InstanceFormProps {
 const instanceCodePattern = /^[a-z0-9]([a-z0-9_-]{0,62}[a-z0-9])?$/
 const maximumCodeLength = 64
 const maximumDisplayNameLength = 128
-const minimumPendingCount = 1
+const minimumConcurrencyCount = 1
+const maximumConcurrencyCount = 4
+const defaultConcurrencyCount = 1
+
+const minimumPendingCount = 0
 const maximumPendingCount = 50
+const defaultPendingCount = 5
 
 function catalogErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '无法加载网站目录。'
@@ -36,7 +41,8 @@ export function InstanceForm({
   const [code, setCode] = useState(initialValues?.code ?? '')
   const [displayName, setDisplayName] = useState(initialValues?.displayName ?? '')
   const [websites, setWebsites] = useState<string[]>(initialValues?.websites ?? [])
-  const [maxPending, setMaxPending] = useState(String(initialValues?.maxPending ?? 1))
+  const [maxConcurrency, setMaxConcurrency] = useState(String(initialValues?.maxConcurrency ?? defaultConcurrencyCount))
+  const [maxPending, setMaxPending] = useState(String(initialValues?.maxPending ?? defaultPendingCount))
   const [priority, setPriority] = useState(String(initialValues?.priority ?? 0))
   const [proxyMode, setProxyMode] = useState<InstanceProxyMode>(initialValues?.proxyMode ?? 'INHERIT')
   const [proxyServer, setProxyServer] = useState(initialValues?.proxyServer ?? '')
@@ -63,6 +69,7 @@ export function InstanceForm({
     event.preventDefault()
     const normalizedCode = code.trim()
     const normalizedDisplayName = displayName.trim()
+    const parsedMaxConcurrency = Number(maxConcurrency)
     const parsedMaxPending = Number(maxPending)
     if (!instanceCodePattern.test(normalizedCode)) {
       setValidationError('实例代码须为 1 至 64 位小写字母、数字、连字符或下划线，且必须以字母或数字开头和结尾。')
@@ -74,6 +81,10 @@ export function InstanceForm({
     }
     if (websites.length === 0) {
       setValidationError('请至少选择一个支持的网站。')
+      return
+    }
+    if (!Number.isInteger(parsedMaxConcurrency) || parsedMaxConcurrency < minimumConcurrencyCount || parsedMaxConcurrency > maximumConcurrencyCount) {
+      setValidationError(`最大并发数必须是 ${minimumConcurrencyCount} 到 ${maximumConcurrencyCount} 之间的整数。`)
       return
     }
     if (!Number.isInteger(parsedMaxPending) || parsedMaxPending < minimumPendingCount || parsedMaxPending > maximumPendingCount) {
@@ -98,6 +109,7 @@ export function InstanceForm({
       code: normalizedCode,
       displayName: normalizedDisplayName,
       websites,
+      maxConcurrency: parsedMaxConcurrency,
       maxPending: parsedMaxPending,
       priority: parsedPriority,
       proxyMode,
@@ -122,6 +134,23 @@ export function InstanceForm({
         }} />
       </label>
       <label>
+        最大并发数
+        <input
+          type="number"
+          min={minimumConcurrencyCount}
+          max={maximumConcurrencyCount}
+          step="1"
+          value={maxConcurrency}
+          required
+          disabled={busy}
+          title="同时执行任务的上限，范围 1 到 4，默认 1"
+          onChange={(event) => {
+            setMaxConcurrency(event.target.value)
+            setValidationError(null)
+          }}
+        />
+      </label>
+      <label>
         最大待处理数
         <input
           type="number"
@@ -131,6 +160,7 @@ export function InstanceForm({
           value={maxPending}
           required
           disabled={busy}
+          title="排队等待任务的上限，范围 0 到 50，默认 5（0 表示不允许排队）"
           onChange={(event) => {
             setMaxPending(event.target.value)
             setValidationError(null)

@@ -22,7 +22,7 @@ const instanceId = '2c6eefbd-a8cf-44fb-8016-14d6886c2557'
 
 const stoppedInstance: HubInstance = {
   id: instanceId, code: 'alpha', displayName: 'Alpha browser', contextId: null, state: 'STOPPED',
-  websites: ['demo'], maxPending: 3, priority: 0, proxyMode: 'INHERIT', proxyServer: null, lastErrorMessage: 'last launch failed', stateChangedAt: null,
+  websites: ['demo'], maxPending: 3, maxConcurrency: 1, priority: 0, proxyMode: 'INHERIT', proxyServer: null, lastErrorMessage: 'last launch failed', stateChangedAt: null,
   runtime: { registered: false, displayNumber: null, vncPort: null, activeCount: 0, pendingCount: 0 },
   createTime: null, updateTime: null,
 }
@@ -61,7 +61,7 @@ describe('InstancesPage', () => {
     resolveInstances?.([stoppedInstance])
     expect(await screen.findByRole('heading', { name: 'Alpha browser' })).toBeInTheDocument()
     expect(screen.getByText('等待注册')).toBeInTheDocument()
-    expect(screen.getByText(/活跃 0 · 待处理 0\/3/)).toBeInTheDocument()
+    expect(screen.getByText(/活跃 0\/1 · 待处理 0\/3/)).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('最近错误：last launch failed')
     expect(screen.getByRole('link', { name: '详情与控制台' })).toHaveAttribute('href', `/instances/${instanceId}`)
   })
@@ -78,8 +78,8 @@ describe('InstancesPage', () => {
     expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
   })
 
-  it('opens creation on demand, sends the DTO, and closes the panel after creation completes', async () => {
-    // The closed-first panel keeps the fleet view compact; the unresolved POST proves its submit cannot be repeated.
+  it('opens creation on demand, sends the DTO with defaults, and closes the panel after creation completes', async () => {
+    // The create form defaults maxConcurrency to 1 and maxPending to 5; submitting sends valid payload.
     const user = userEvent.setup()
     let resolveCreate: ((value: HubInstance) => void) | undefined
     mockCatalogAndInstances([])
@@ -88,17 +88,21 @@ describe('InstancesPage', () => {
     renderPage()
     expect(screen.queryByRole('dialog', { name: '创建浏览器实例' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '创建实例' }))
-    expect(screen.getByRole('dialog', { name: '创建浏览器实例' })).toBeInTheDocument()
+    const dialog = screen.getByRole('dialog', { name: '创建浏览器实例' })
+    expect(dialog).toBeInTheDocument()
+    expect(within(dialog).getByRole('spinbutton', { name: '最大并发数' })).toHaveValue(1)
+    expect(within(dialog).getByRole('spinbutton', { name: '最大待处理数' })).toHaveValue(5)
+
     await screen.findByRole('checkbox', { name: 'demo' })
-    await user.type(screen.getByRole('textbox', { name: '实例代码' }), 'new-browser')
-    await user.type(screen.getByRole('textbox', { name: '显示名称' }), 'New browser')
-    await user.clear(screen.getByRole('spinbutton', { name: '最大待处理数' }))
-    await user.type(screen.getByRole('spinbutton', { name: '最大待处理数' }), '4')
-    await user.click(screen.getByRole('checkbox', { name: 'demo' }))
-    await user.click(within(screen.getByRole('dialog', { name: '创建浏览器实例' })).getByRole('button', { name: '创建实例' }))
+    await user.type(within(dialog).getByRole('textbox', { name: '实例代码' }), 'new-browser')
+    await user.type(within(dialog).getByRole('textbox', { name: '显示名称' }), 'New browser')
+    await user.clear(within(dialog).getByRole('spinbutton', { name: '最大待处理数' }))
+    await user.type(within(dialog).getByRole('spinbutton', { name: '最大待处理数' }), '4')
+    await user.click(within(dialog).getByRole('checkbox', { name: 'demo' }))
+    await user.click(within(dialog).getByRole('button', { name: '创建实例' }))
 
     expect(apiClient.post).toHaveBeenCalledWith('/instances', {
-      code: 'new-browser', displayName: 'New browser', websites: ['demo'], maxPending: 4, priority: 0,
+      code: 'new-browser', displayName: 'New browser', websites: ['demo'], maxConcurrency: 1, maxPending: 4, priority: 0,
       proxyMode: 'INHERIT', proxyServer: null,
     })
     expect(screen.getByRole('button', { name: '正在保存…' })).toBeDisabled()
@@ -107,8 +111,33 @@ describe('InstancesPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '创建浏览器实例' })).not.toBeInTheDocument())
   })
 
+  it('allows creating an instance with maxPending=0 to disallow queuing', async () => {
+    // maxPending=0 is valid contract meaning no queue is allowed; verifying 0 is submitted properly.
+    const user = userEvent.setup()
+    mockCatalogAndInstances([])
+    vi.mocked(apiClient.post).mockResolvedValue(stoppedInstance)
+
+    renderPage()
+    await user.click(screen.getByRole('button', { name: '创建实例' }))
+    const dialog = screen.getByRole('dialog', { name: '创建浏览器实例' })
+    await screen.findByRole('checkbox', { name: 'demo' })
+    await user.type(within(dialog).getByRole('textbox', { name: '实例代码' }), 'no-queue')
+    await user.type(within(dialog).getByRole('textbox', { name: '显示名称' }), 'No Queue Browser')
+    await user.clear(within(dialog).getByRole('spinbutton', { name: '最大并发数' }))
+    await user.type(within(dialog).getByRole('spinbutton', { name: '最大并发数' }), '2')
+    await user.clear(within(dialog).getByRole('spinbutton', { name: '最大待处理数' }))
+    await user.type(within(dialog).getByRole('spinbutton', { name: '最大待处理数' }), '0')
+    await user.click(within(dialog).getByRole('checkbox', { name: 'demo' }))
+    await user.click(within(dialog).getByRole('button', { name: '创建实例' }))
+
+    expect(apiClient.post).toHaveBeenCalledWith('/instances', {
+      code: 'no-queue', displayName: 'No Queue Browser', websites: ['demo'], maxConcurrency: 2, maxPending: 0, priority: 0,
+      proxyMode: 'INHERIT', proxyServer: null,
+    })
+  })
+
   it('validates instance fields against the backend contract before creating', async () => {
-    // Client bounds mirror HubInstanceValidator so invalid codes, empty sites, and queue limits never reach the API.
+    // Client bounds mirror HubInstanceValidator so invalid codes, concurrency, and queue limits never reach the API.
     const user = userEvent.setup()
     mockCatalogAndInstances([])
 
@@ -117,6 +146,7 @@ describe('InstancesPage', () => {
     const dialog = screen.getByRole('dialog', { name: '创建浏览器实例' })
     const codeInput = within(dialog).getByRole('textbox', { name: '实例代码' })
     const displayNameInput = within(dialog).getByRole('textbox', { name: '显示名称' })
+    const concurrencyInput = within(dialog).getByRole('spinbutton', { name: '最大并发数' })
     const pendingInput = within(dialog).getByRole('spinbutton', { name: '最大待处理数' })
     const website = await within(dialog).findByRole('checkbox', { name: 'demo' })
     const submit = within(dialog).getByRole('button', { name: '创建实例' })
@@ -134,10 +164,17 @@ describe('InstancesPage', () => {
     expect(within(dialog).getByRole('alert')).toHaveTextContent('至少选择一个')
 
     await user.click(website)
+    await user.clear(concurrencyInput)
+    await user.type(concurrencyInput, '5')
+    await user.click(submit)
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('1 到 4')
+
+    await user.clear(concurrencyInput)
+    await user.type(concurrencyInput, '1')
     await user.clear(pendingInput)
     await user.type(pendingInput, '51')
     await user.click(submit)
-    expect(within(dialog).getByRole('alert')).toHaveTextContent('1 到 50')
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('0 到 50')
 
     await user.clear(pendingInput)
     await user.type(pendingInput, '4')
@@ -146,6 +183,31 @@ describe('InstancesPage', () => {
     await user.click(submit)
     expect(within(dialog).getByRole('alert')).toHaveTextContent('host:port')
     expect(apiClient.post).not.toHaveBeenCalled()
+  })
+
+  it('normalizes legacy instance responses missing maxConcurrency and maxPending to safe defaults in the fleet list', async () => {
+    // Legacy responses lacking concurrency or queue limits must fallback to maxConcurrency=1 and maxPending=5.
+    const legacyInstance = {
+      id: 'legacy-id',
+      code: 'legacy',
+      displayName: 'Legacy browser',
+      contextId: null,
+      state: 'RUNNING' as const,
+      websites: ['demo'],
+      priority: 0,
+      lastErrorMessage: null,
+      stateChangedAt: null,
+      runtime: { registered: true, displayNumber: 1, vncPort: 5900, activeCount: 0, pendingCount: 0 },
+      createTime: null,
+      updateTime: null,
+    }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => Promise.resolve(
+      url === '/instances' ? [legacyInstance] : [command],
+    ) as never)
+
+    renderPage()
+    expect(await screen.findByRole('heading', { name: 'Legacy browser' })).toBeInTheDocument()
+    expect(screen.getByText(/活跃 0\/1 · 待处理 0\/5/)).toBeInTheDocument()
   })
 
   it('contains keyboard focus in the creation drawer and restores it when Escape closes the drawer', async () => {
