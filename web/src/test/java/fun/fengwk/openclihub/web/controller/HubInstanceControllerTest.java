@@ -74,6 +74,8 @@ class HubInstanceControllerTest {
         dto.setId("11");
         dto.setCode("primary");
         dto.setState(HubInstanceState.RUNNING);
+        dto.setMaxConcurrency(2);
+        dto.setMaxPending(0);
         dto.setProxyMode(HubProxyMode.CUSTOM);
         dto.setProxyServer("http://proxy.example:8080");
         HubInstanceRuntimeSnapshot snapshot = new HubInstanceRuntimeSnapshot(
@@ -94,6 +96,8 @@ class HubInstanceControllerTest {
         mockMvc.perform(get("/api/instances/11"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.code").value("primary"))
+            .andExpect(jsonPath("$.data.maxConcurrency").value(2))
+            .andExpect(jsonPath("$.data.maxPending").value(0))
             .andExpect(jsonPath("$.data.proxyMode").value("CUSTOM"))
             .andExpect(jsonPath("$.data.proxyServer").value("http://proxy.example:8080"));
     }
@@ -105,6 +109,7 @@ class HubInstanceControllerTest {
         request.setCode("primary");
         request.setDisplayName("Primary");
         request.setWebsites(List.of("bilibili"));
+        request.setMaxConcurrency(2);
         request.setMaxPending(5);
         request.setProxyMode(HubProxyMode.CUSTOM);
         request.setProxyServer("http://proxy.example:8080");
@@ -116,7 +121,9 @@ class HubInstanceControllerTest {
             .andExpect(status().isCreated())
             .andExpect(jsonPath("$.data.id").value("11"));
         verify(lifecycleService).create(argThat(value ->
-            value.getProxyMode() == HubProxyMode.CUSTOM
+            Integer.valueOf(2).equals(value.getMaxConcurrency())
+                && Integer.valueOf(5).equals(value.getMaxPending())
+                && value.getProxyMode() == HubProxyMode.CUSTOM
                 && "http://proxy.example:8080".equals(value.getProxyServer())));
     }
 
@@ -162,6 +169,7 @@ class HubInstanceControllerTest {
         request.setCode("primary");
         request.setDisplayName("Primary");
         request.setWebsites(List.of("bilibili"));
+        request.setMaxConcurrency(3);
         request.setMaxPending(5);
         request.setProxyMode(HubProxyMode.DIRECT);
         when(lifecycleService.update(any(String.class), any())).thenReturn(instance);

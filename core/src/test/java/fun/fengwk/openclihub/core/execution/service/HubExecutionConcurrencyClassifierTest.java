@@ -32,15 +32,27 @@ class HubExecutionConcurrencyClassifierTest {
         assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.PARALLEL_SAFE);
     }
 
-    /**
-     * Null siteSession defaults to EPHEMERAL and null defaultWindowMode is allowed for PARALLEL_SAFE.
-     */
+    /** Missing session metadata must fail safe instead of being inferred as EPHEMERAL. */
     @Test
-    void shouldTreatNullSessionAndNullWindowModeAsParallelSafeWhenOtherConditionsMet() {
+    void shouldClassifyNullSessionAsExclusive() {
         OpenCliCommand command = new OpenCliCommand();
         command.setBrowser(true);
         command.setAccess(HubCommandAccess.READ);
         command.setSiteSession(null);
+        command.setDefaultWindowMode(null);
+
+        HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(command, null);
+
+        assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
+    }
+
+    /** Null window metadata is explicitly safe when every other condition matches exactly. */
+    @Test
+    void shouldTreatNullWindowModeAsParallelSafeWhenOtherConditionsMet() {
+        OpenCliCommand command = new OpenCliCommand();
+        command.setBrowser(true);
+        command.setAccess(HubCommandAccess.READ);
+        command.setSiteSession(SiteSessionMode.EPHEMERAL);
         command.setDefaultWindowMode(null);
 
         HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(command, null);

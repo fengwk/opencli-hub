@@ -345,6 +345,7 @@ opencli:
       process-stop-grace-millis: 3000
       max-capture-chars: ${OPENCLI_HUB_MAX_CAPTURE_CHARS:1048576}
       default-max-pending: 5
+      default-max-concurrency: ${OPENCLI_HUB_DEFAULT_MAX_CONCURRENCY:1}
 
     resource:
       root-dir: ${OPENCLI_HUB_RESOURCE_DIR:${opencli.hub.data-dir}/resources}
@@ -1379,12 +1380,12 @@ Hub 根据命令类型、会话模式与资源输出规则区分并发任务与�
 
 1. **允许并发并行（最多 `maxConcurrency` 个并行执行）**：必须**同时**满足以下五个条件：
    - 命令是浏览器命令（`browser == true`）；
-   - `siteSession == EPHEMERAL`（未设置时按默认 `EPHEMERAL`；命令执行后立即释放 tab lease）；
+   - `siteSession == EPHEMERAL`（必须存在该元数据；命令执行后立即释放 tab lease）；
    - 命令语义为 `READ`（只读操作，不改变页面或站点状态）；
-   - `defaultWindowMode` 未设置或为 `background`（不需要前台独占窗口焦点）；
+   - `defaultWindowMode == null` 或精确为 `background`（不需要前台独占窗口焦点；空字符串、前后空格和大小写变体均不匹配）；
    - 命令无受管输出规则（未配置 `HubCommandOutputRule`，不向受管本地目录/文件写入输出资源）。
 2. **独占串行执行（互斥独占）**：所有不满足上述五项条件的命令均独占执行，典型情况包括：
-   - 非浏览器命令，或 `access` 等安全分类元数据缺失；
+   - 非浏览器命令，或 `siteSession` / `access` 等安全分类元数据缺失；
    - 写操作（`WRITE` 命令）；
    - 持久会话（`PERSISTENT` session，固定 `site:{site}` 保持页面）；
    - 前台交互或非 background 模式；

@@ -291,11 +291,12 @@ scripts/docker/test-install-opencli.sh
 - **配置范围与默认值**：
   - `maxConcurrency`：合法范围 `1..4`，默认值 `1`。所有数据库升级脚本均将现有历史 Instance 行设置为 `1`，确保升级后保持原有的单并发/串行行为，不产生非预期的并发冲击。
   - `maxPending`：合法范围现为 `0..50`（新建默认 `5`；旧 Instance 保留既有设定值），现有旧库的 `max_pending` 列无需重建。
+  - Compose 可通过 `OPENCLI_HUB_DEFAULT_MAX_CONCURRENCY` 覆盖创建请求未提供 `maxConcurrency` 时的默认值；建议生产保持 `1`，仅对明确选定的 Instance 在管理页单独灰度调高。
 - **maxPending=0 语义**：`maxPending = 0` 表示该 Instance 不启用排队缓冲。当该 Instance 正在执行的任务数达到 `maxConcurrency` 时，新提交的请求将无法排队，立即被拒绝并返回 HTTP 429 (`INSTANCE_QUEUE_FULL`)。
 - **总承载容量**：每个 Instance 的最大承载任务数为 `maxConcurrency + maxPending`。
 - **并发调度与独占规则**：
-  - 只有**同时**满足 `EPHEMERAL` 临时会话、`READ` 只读操作、`background` 后台模式且**无受管输出规则**（`HubCommandOutputRule`）的命令才允许并行执行（最多并行 `maxConcurrency` 个）；
-  - 包含写操作（`WRITE`）、持久会话（`PERSISTENT`）、前台窗口交互或配置了受管输出文件的命令均作为**独占任务**执行，与并发任务互斥。
+  - 只有**同时**满足浏览器命令（`browser=true`）、`siteSession=EPHEMERAL`、`access=READ`、`defaultWindowMode=null` 或精确为 `background`，且**无受管输出规则**（`HubCommandOutputRule`）的命令才允许并行执行（最多并行 `maxConcurrency` 个）；
+  - 所有不满足上述条件的命令（包括 `siteSession` / `access` 元数据缺失、空字符串或大小写不匹配的窗口模式、写操作、持久会话、前台窗口交互或受管输出）均作为**独占任务**执行，与同 Instance 的其他任务互斥。
 - **Canary 灰度与运维建议**：
   - 在多 Instance 生产环境中，建议采用 Canary 灰度策略：先选取 1 个非核心 Instance 将 `maxConcurrency` 从 `1` 调至 `2`，观察 Chrome 稳定性、内存占用与业务返回质量，确认稳定后再逐步推广。
 - **Chrome / shm / 渲染进程稳定性边界**：

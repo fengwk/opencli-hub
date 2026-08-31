@@ -25,7 +25,7 @@ public final class HubExecutionConcurrencyClassifier {
      * <p>Only commands strictly meeting all of the following conditions are {@code PARALLEL_SAFE}:
      * <ul>
      *   <li>command != null and command.browser == true</li>
-     *   <li>siteSession (null treated as EPHEMERAL) == EPHEMERAL</li>
+     *   <li>siteSession == EPHEMERAL (null is not EPHEMERAL)</li>
      *   <li>access == READ (null is not READ)</li>
      *   <li>defaultWindowMode is null or exactly "background"</li>
      *   <li>effective outputRule == null</li>
@@ -41,10 +41,7 @@ public final class HubExecutionConcurrencyClassifier {
         if (!command.isBrowser()) {
             return HubExecutionConcurrencyMode.EXCLUSIVE;
         }
-        SiteSessionMode sessionMode = command.getSiteSession() == null
-            ? SiteSessionMode.EPHEMERAL
-            : command.getSiteSession();
-        if (sessionMode != SiteSessionMode.EPHEMERAL) {
+        if (command.getSiteSession() != SiteSessionMode.EPHEMERAL) {
             return HubExecutionConcurrencyMode.EXCLUSIVE;
         }
         if (command.getAccess() != HubCommandAccess.READ) {

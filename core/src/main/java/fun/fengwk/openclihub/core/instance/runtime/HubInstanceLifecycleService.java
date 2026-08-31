@@ -125,7 +125,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
 
     /**
      * Updates editable properties under the same per-instance lock as every lifecycle
-     * transition, then propagates the queue limit to an already-running dispatcher.
+     * transition, then propagates the concurrency and queue limits to an already-running dispatcher.
      */
     public HubInstance update(String instanceId, HubInstanceUpdateDTO dto) {
         ReentrantLock lock = lockExistingInstance(instanceId);
