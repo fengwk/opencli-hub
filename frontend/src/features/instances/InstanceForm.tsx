@@ -83,11 +83,11 @@ export function InstanceForm({
       setValidationError('请至少选择一个支持的网站。')
       return
     }
-    if (!Number.isInteger(parsedMaxConcurrency) || parsedMaxConcurrency < minimumConcurrencyCount || parsedMaxConcurrency > maximumConcurrencyCount) {
+    if (!maxConcurrency.trim() || !Number.isInteger(parsedMaxConcurrency) || parsedMaxConcurrency < minimumConcurrencyCount || parsedMaxConcurrency > maximumConcurrencyCount) {
       setValidationError(`最大并发数必须是 ${minimumConcurrencyCount} 到 ${maximumConcurrencyCount} 之间的整数。`)
       return
     }
-    if (!Number.isInteger(parsedMaxPending) || parsedMaxPending < minimumPendingCount || parsedMaxPending > maximumPendingCount) {
+    if (!maxPending.trim() || !Number.isInteger(parsedMaxPending) || parsedMaxPending < minimumPendingCount || parsedMaxPending > maximumPendingCount) {
       setValidationError(`最大待处理数必须是 ${minimumPendingCount} 到 ${maximumPendingCount} 之间的整数。`)
       return
     }

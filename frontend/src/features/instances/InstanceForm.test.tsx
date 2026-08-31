@@ -120,4 +120,20 @@ describe('InstanceForm', () => {
 
     expect(onSubmit).not.toHaveBeenCalled()
   })
+
+  it('rejects an empty maxPending instead of treating it as zero', async () => {
+    // Empty input must not silently opt the instance into no-queue mode.
+    const user = userEvent.setup()
+    const { onSubmit } = renderForm()
+    await screen.findByRole('checkbox', { name: 'demo' })
+
+    await user.type(screen.getByRole('textbox', { name: '实例代码' }), 'inst-empty')
+    await user.type(screen.getByRole('textbox', { name: '显示名称' }), 'Empty Pending')
+    await user.click(screen.getByRole('checkbox', { name: 'demo' }))
+    await user.clear(screen.getByRole('spinbutton', { name: '最大待处理数' }))
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('最大待处理数必须是 0 到 50 之间的整数。')
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
 })

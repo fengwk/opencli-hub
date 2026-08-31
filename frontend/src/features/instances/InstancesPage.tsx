@@ -201,7 +201,7 @@ function CreateInstancePanel({ busy, error, onClose, onSubmit }: {
           <div>
             <p className="eyebrow">NEW INSTANCE</p>
             <h2 id="create-instance-title" className="dialog-title">创建浏览器实例</h2>
-            <p id="create-instance-description" className="dialog-body">配置可认证的网站与队列上限。提交后 Hub 会立即启动浏览器运行时并等待扩展绑定 contextId。</p>
+            <p id="create-instance-description" className="dialog-body">配置可认证的网站、并发度与排队上限。提交后 Hub 会立即启动浏览器运行时并等待扩展绑定 contextId。</p>
           </div>
           <button type="button" className="icon-button" aria-label="关闭创建实例面板" disabled={busy} onClick={onClose}><X aria-hidden="true" /></button>
         </div>
