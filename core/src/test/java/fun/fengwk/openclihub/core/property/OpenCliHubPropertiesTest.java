@@ -22,4 +22,12 @@ class OpenCliHubPropertiesTest {
         assertThat(properties.getExecution().getMaxCaptureChars()).isEqualTo(1_048_576);
     }
 
+    /** Newly created instances default to serial command execution unless configured otherwise. */
+    @Test
+    void shouldDefaultExecutionMaxConcurrencyToOne() {
+        OpenCliHubProperties properties = new OpenCliHubProperties();
+
+        assertThat(properties.getExecution().getDefaultMaxConcurrency()).isEqualTo(1);
+    }
+
 }

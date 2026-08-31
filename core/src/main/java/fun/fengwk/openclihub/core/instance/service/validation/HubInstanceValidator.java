@@ -22,7 +22,8 @@ import org.springframework.stereotype.Component;
  *   <li>{@code displayName} must be non-blank and within 128 chars after trim.</li>
  *   <li>{@code websites} must be non-empty, trimmed, deduplicated and each item must belong
  *       to the catalog website set.</li>
- *   <li>{@code maxPending} must be positive and within a reasonable upper bound.</li>
+ *   <li>{@code maxPending} must be non-negative (0..50) and within a reasonable upper bound.</li>
+ *   <li>{@code maxConcurrency} (when provided) must be within 1..4.</li>
  *   <li>Proxy fields must form a supported Instance policy and safe browser proxy URI.</li>
  * </ul>
  *
@@ -60,8 +61,9 @@ public class HubInstanceValidator {
 
     /**
      * Validates the editable properties and returns the normalized website list (trimmed,
-     * deduplicated, order-preserving). Side effect: writes the normalized code, displayName
-     * and maxPending back to {@code dto} so the caller persists the canonical form.
+     * deduplicated, order-preserving). Side effect: writes the normalized code, displayName,
+     * maxPending and maxConcurrency (when provided) back to {@code dto} so the caller
+     * persists the canonical form.
      *
      * @param dto input properties, may be {@code null}
      * @return normalized websites
