@@ -111,6 +111,10 @@ class SqliteSchemaExecutableTest {
                     current_timestamp, current_timestamp, current_timestamp, 0
                 )
                 """);
+            try (ResultSet rs = statement.executeQuery("select max_concurrency from hub_instance where id = 'inst-1'")) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getInt(1)).isEqualTo(1);
+            }
             assertThatThrownBy(() -> statement.executeUpdate("""
                 insert into hub_instance (
                     id, code, display_name, state, websites_json, max_pending,

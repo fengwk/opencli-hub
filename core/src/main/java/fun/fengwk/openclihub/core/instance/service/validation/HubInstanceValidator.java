@@ -46,8 +46,10 @@ public class HubInstanceValidator {
 
     public static final int CODE_MAX_LENGTH = 64;
     public static final int DISPLAY_NAME_MAX_LENGTH = 128;
-    public static final int MAX_PENDING_MIN = 1;
+    public static final int MAX_PENDING_MIN = 0;
     public static final int MAX_PENDING_MAX = 50;
+    public static final int MAX_CONCURRENCY_MIN = 1;
+    public static final int MAX_CONCURRENCY_MAX = 4;
     public static final int CONTEXT_ID_MAX_LENGTH = 128;
 
     private final CatalogWebsiteLookup websiteSource;
@@ -72,6 +74,9 @@ public class HubInstanceValidator {
         dto.setCode(validateCode(dto.getCode()));
         dto.setDisplayName(validateDisplayName(dto.getDisplayName()));
         dto.setMaxPending(validateMaxPending(dto.getMaxPending()));
+        if (dto.getMaxConcurrency() != null) {
+            dto.setMaxConcurrency(validateMaxConcurrency(dto.getMaxConcurrency()));
+        }
         dto.setPriority(validatePriority(dto.getPriority()));
         ProxyConfiguration proxy = HubProxyValidator.normalizeInstance(
             dto.getProxyMode(), dto.getProxyServer());
@@ -148,6 +153,26 @@ public class HubInstanceValidator {
                 "maxPending must be at most " + MAX_PENDING_MAX);
         }
         return maxPending;
+    }
+
+    /**
+     * Validates maxConcurrency range.
+     *
+     * @return the validated value as primitive int
+     */
+    public int validateMaxConcurrency(Integer maxConcurrency) {
+        if (maxConcurrency == null) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("maxConcurrency is required");
+        }
+        if (maxConcurrency < MAX_CONCURRENCY_MIN) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable(
+                "maxConcurrency must be at least " + MAX_CONCURRENCY_MIN);
+        }
+        if (maxConcurrency > MAX_CONCURRENCY_MAX) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable(
+                "maxConcurrency must be at most " + MAX_CONCURRENCY_MAX);
+        }
+        return maxConcurrency;
     }
 
     /**

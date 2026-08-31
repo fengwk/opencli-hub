@@ -161,6 +161,7 @@ class HubInstanceLifecycleServiceTest {
         assertThat(created.getCode()).isEqualTo("bilibili-a");
         assertThat(created.getState()).isEqualTo(HubInstanceState.RUNNING);
         assertThat(created.getContextId()).isEqualTo("ctx-success");
+        assertThat(created.getMaxConcurrency()).isEqualTo(1);
         assertThat(created.getStateChangedAt()).isNotNull();
 
         // Runtime registered.
@@ -191,6 +192,17 @@ class HubInstanceLifecycleServiceTest {
         String chromeCommand = lastChromeCommand();
         assertThat(chromeCommand).contains("--disable-gpu", "--no-proxy-server");
         assertThat(chromeCommand).doesNotContain("--disable-software-rasterizer");
+    }
+
+    @Test
+    void shouldApplyExplicitMaxConcurrencyOnCreate() {
+        daemon.addConnectedContextAfterFetch("ctx-explicit-concurrency", 2);
+
+        HubInstanceCreateDTO dto = createDto("bilibili-exp-c");
+        dto.setMaxConcurrency(3);
+        HubInstance created = lifecycle.create(dto);
+
+        assertThat(created.getMaxConcurrency()).isEqualTo(3);
     }
 
     /** A newly visible RUNNING row must already have runtime and dispatcher registrations. */

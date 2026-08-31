@@ -57,7 +57,7 @@ public interface HubInstanceService {
 
     /**
      * Updates administrator-editable properties: {@code code}, {@code displayName},
-     * {@code websites}, {@code maxPending}. The instance id is required.
+     * {@code websites}, {@code maxPending}, {@code maxConcurrency}. The instance id is required.
      *
      * <p>The persisted state, context id and creation time are not modified here. The update
      * time is refreshed for the successful write.

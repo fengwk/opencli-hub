@@ -53,6 +53,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
         instance.setCode(validator.validateCode(instance.getCode()));
         instance.setDisplayName(validator.validateDisplayName(instance.getDisplayName()));
         instance.setMaxPending(validator.validateMaxPending(instance.getMaxPending()));
+        instance.setMaxConcurrency(validator.validateMaxConcurrency(instance.getMaxConcurrency()));
         instance.setPriority(validator.validatePriority(instance.getPriority()));
         instance.setWebsites(validator.validateWebsites(instance.getWebsites()));
         var proxy = validator.normalizeInstanceProxy(
@@ -136,6 +137,9 @@ public class HubInstanceServiceImpl implements HubInstanceService {
         existing.setDisplayName(dto.getDisplayName());
         existing.setWebsites(normalizedWebsites);
         existing.setMaxPending(dto.getMaxPending());
+        if (dto.getMaxConcurrency() != null) {
+            existing.setMaxConcurrency(dto.getMaxConcurrency());
+        }
         existing.setPriority(dto.getPriority());
         existing.setProxyMode(dto.getProxyMode());
         existing.setProxyServer(dto.getProxyServer());

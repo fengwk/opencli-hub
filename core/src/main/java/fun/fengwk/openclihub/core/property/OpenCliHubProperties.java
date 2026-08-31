@@ -107,6 +107,7 @@ public class OpenCliHubProperties {
         private long processStopGraceMillis = 3000L;
         private int maxCaptureChars = 1_048_576;
         private int defaultMaxPending = 5;
+        private int defaultMaxConcurrency = 1;
 
     }
 
