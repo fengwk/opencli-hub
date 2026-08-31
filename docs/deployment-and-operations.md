@@ -290,7 +290,7 @@ scripts/docker/test-install-opencli.sh
 
 - **配置范围与默认值**：
   - `maxConcurrency`：合法范围 `1..4`，默认值 `1`。所有数据库升级脚本均将现有历史 Instance 行设置为 `1`，确保升级后保持原有的单并发/串行行为，不产生非预期的并发冲击。
-  - `maxPending`：合法范围现为 `0..50`（默认 `10` 或既有设定值），现有旧库的 `max_pending` 列无需重建。
+  - `maxPending`：合法范围现为 `0..50`（新建默认 `5`；旧 Instance 保留既有设定值），现有旧库的 `max_pending` 列无需重建。
 - **maxPending=0 语义**：`maxPending = 0` 表示该 Instance 不启用排队缓冲。当该 Instance 正在执行的任务数达到 `maxConcurrency` 时，新提交的请求将无法排队，立即被拒绝并返回 HTTP 429 (`INSTANCE_QUEUE_FULL`)。
 - **总承载容量**：每个 Instance 的最大承载任务数为 `maxConcurrency + maxPending`。
 - **并发调度与独占规则**：
@@ -299,7 +299,7 @@ scripts/docker/test-install-opencli.sh
 - **Canary 灰度与运维建议**：
   - 在多 Instance 生产环境中，建议采用 Canary 灰度策略：先选取 1 个非核心 Instance 将 `maxConcurrency` 从 `1` 调至 `2`，观察 Chrome 稳定性、内存占用与业务返回质量，确认稳定后再逐步推广。
 - **Chrome / shm / 渲染进程稳定性边界**：
-  - Chrome 每个并发执行的 Tab 均会分配独立的渲染进程，增加 CPU 与内存（尤其是 `/dev/shm` 共享内存）开销；
+  - 增加并发 Tab 会提高 Chrome renderer、CPU、内存和 `/dev/shm` 共享内存压力；具体进程数量由 Chrome 的站点隔离与进程复用策略决定；
   - 容器必须维持 `shm_size: 2gb` 配置；
   - 运维需持续监控宿主内存、CPU 负载、Chrome renderer 崩溃（Crash）与 context 断开重连事件；若高负载下频繁发生 Tab 崩溃或 context 掉线，应将 `maxConcurrency` 降回较低值（例如 1 或 2）。
 
@@ -360,7 +360,7 @@ curl --fail --show-error 'http://127.0.0.1:8080/api/logs/system?lines=200'
 检查以下状态：
 
 - `health` 为 `UP`；
-- Instance `state`、`lastErrorMessage`、`runtime.activeCount`、`runtime.pendingCount` 合理；
+- Instance `state`、`lastErrorMessage`、`maxConcurrency`、`maxPending`、`runtime.activeCount`、`runtime.pendingCount` 合理；
 - `GET /api/instances/{id}/vnc/status` 的 `vncAvailable` 与实际状态一致；
 - CRX loopback server 仅容器内部可用；
 - 日志、资源、Profile 和数据库备份按保留策略执行。

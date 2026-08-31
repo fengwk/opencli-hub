@@ -2,7 +2,6 @@ package fun.fengwk.openclihub.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -80,6 +79,12 @@ class SqliteInstanceConcurrencyMigrationTest {
         // Verify column and values via sqlite3 CLI
         String tableInfo = executeSqliteQuery(dbPath, "PRAGMA table_info(hub_instance);");
         assertThat(tableInfo).contains("max_concurrency");
+        String columnContract = executeSqliteQuery(dbPath, """
+            SELECT "notnull" || '|' || dflt_value
+            FROM pragma_table_info('hub_instance')
+            WHERE name = 'max_concurrency';
+            """);
+        assertThat(columnContract.trim()).isEqualTo("1|1");
 
         String legacyConcurrency = executeSqliteQuery(dbPath,
             "SELECT max_concurrency FROM hub_instance WHERE id = 'legacy-inst-1';");

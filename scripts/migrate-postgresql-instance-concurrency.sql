@@ -5,6 +5,8 @@
 -- Adds hub_instance.max_concurrency for multi-concurrency execution (default 1, range 1..4).
 -- Existing rows receive DEFAULT 1 to preserve legacy single-concurrency behavior.
 
+\set ON_ERROR_STOP on
+
 select table_name, column_name, data_type, is_nullable, column_default
 from information_schema.columns
 where table_schema = current_schema()

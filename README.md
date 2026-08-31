@@ -35,7 +35,7 @@
 
 - 每个 Instance 独占 Chrome Profile、Xvfb、openbox、x11vnc 和 Browser Bridge `contextId`。
 - Hub 共享一个 OpenCLI daemon，并按受控 Command Catalog 校验参数和重建 argv；不接受任意 shell/CLI 透传。
-- 单个 Instance 支持配置并发度（maxConcurrency 1..4，默认 1）与排队容量（maxPending 0..50）；仅临时会话只读后台任务允许并发，写操作与持久会话保持独占串行；支持显式 `instanceId` 粘性路由；不自动 failover，也不自动重试写命令。
+- 单个 Instance 支持配置并发度（`maxConcurrency` 1..4，默认 1）与排队容量（`maxPending` 0..50，默认 5，0 表示不排队）；仅临时会话只读后台任务允许并发，写操作与持久会话保持独占串行；支持显式 `instanceId` 粘性路由；不自动 failover，也不自动重试写命令。
 - 提供 Instance 生命周期、VNC WebSocket、执行历史、资源、日志、命令黑名单/输出规则和浏览器代理设置。
 - 支持通过管理端配置 OpenCLI 插件源，并调用官方 `opencli plugin install/update/list` 同步；详见 [插件维护](docs/plugins.md)。
 - 支持三种编译期数据库变体：PostgreSQL 16（默认）、MySQL 8.4 LTS、SQLite。变体通过 Spring SQL initialization 幂等应用当前 schema（schema-only，system settings 由应用懒初始化）；既有旧库提供 PostgreSQL、MySQL、SQLite 对应的结构升级迁移脚本。

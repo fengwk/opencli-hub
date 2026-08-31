@@ -34,6 +34,7 @@ class MigrationScriptsValidationTest {
         assertThat(content)
             .contains("alter table hub_instance")
             .contains("add column if not exists max_concurrency int not null default 1")
+            .contains("\\set ON_ERROR_STOP on")
             .contains("begin;")
             .contains("commit;")
             .contains("information_schema.columns")
@@ -64,6 +65,7 @@ class MigrationScriptsValidationTest {
         assertThat(content)
             .startsWith("#!/usr/bin/env bash")
             .contains("set -Eeuo pipefail")
+            .contains("sqlite3 -batch -bail")
             .contains("ALTER TABLE hub_instance ADD COLUMN max_concurrency int NOT NULL DEFAULT 1;")
             .contains("PRAGMA table_info(hub_instance)")
             .contains("OPENCLI_HUB_SQLITE_PATH");
