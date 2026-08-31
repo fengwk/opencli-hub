@@ -734,6 +734,28 @@ class HubInstanceLifecycleServiceTest {
         assertThat(lastChromeCommand()).contains("--no-proxy-server");
     }
 
+    /**
+     * Updating maxConcurrency on a RUNNING instance propagates dynamically to the registered dispatcher.
+     */
+    @Test
+    void shouldPropagateRunningMaxConcurrencyWithoutRestartingChrome() {
+        String id = seedPersistedInstance("bilibili-update-concurrency", "ctx-update-concurrency");
+        daemon.addConnectedContextAfterFetch("ctx-update-concurrency", 2);
+        lifecycle.start(id);
+        assertThat(dispatchRegistry.getMaxConcurrency(id)).isEqualTo(1);
+
+        HubInstanceUpdateDTO update = updateDto(instanceService.get(id), 0);
+        update.setMaxConcurrency(3);
+        HubInstance updated = lifecycle.update(id, update);
+
+        assertThat(updated.getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(updated.getMaxConcurrency()).isEqualTo(3);
+        assertThat(updated.getMaxPending()).isZero();
+        assertThat(dispatchRegistry.getMaxConcurrency(id)).isEqualTo(3);
+        assertThat(dispatchRegistry.getMaxPending(id)).isZero();
+        assertThat(dispatchRegistry.getTotalCapacity(id)).isEqualTo(3);
+    }
+
     @Test
     void shouldBindChatgptAgentActiveTabThroughConnectedProfile() {
         String id = seedPersistedInstance("chatgpt-bind-success", "ctx-bind-success");

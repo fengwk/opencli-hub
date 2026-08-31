@@ -156,8 +156,10 @@ class HubExecutionRouterTest {
             true, null, null, 0, 0);
         when(routingRegistry.getSnapshot(accepted.getId())).thenReturn(emptyMetrics);
         when(routingRegistry.getSnapshot(idle.getId())).thenReturn(emptyMetrics);
-        when(routingRegistry.getMaxPending(accepted.getId())).thenReturn(5);
-        when(routingRegistry.getMaxPending(idle.getId())).thenReturn(5);
+        when(routingRegistry.getMaxConcurrency(accepted.getId())).thenReturn(1);
+        when(routingRegistry.getMaxConcurrency(idle.getId())).thenReturn(1);
+        when(routingRegistry.getTotalCapacity(accepted.getId())).thenReturn(6);
+        when(routingRegistry.getTotalCapacity(idle.getId())).thenReturn(6);
         when(routingRegistry.getRoutingLoad(accepted.getId())).thenReturn(1);
         when(routingRegistry.getRoutingLoad(idle.getId())).thenReturn(0);
 
@@ -268,16 +270,84 @@ class HubExecutionRouterTest {
         }
     }
 
+    /** Routing uses hot-updated dispatcher concurrency rather than a stale persisted snapshot. */
+    @Test
+    void shouldRouteByNormalizedConcurrencyRatio() throws Exception {
+        HubInstance a = persist("a", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-a");
+        HubInstance b = persist("b", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-b");
+        registerRuntime(a, "ctx-a");
+        registerRuntime(b, "ctx-b");
+        dispatchRegistry.updateLimits(a.getId(), 2, 5);
+        dispatchRegistry.updateLimits(b.getId(), 4, 5);
+
+        busy(a, 1);
+        busy(b, 1);
+
+        HubInstance chosen = router.chooseInstance("bilibili", null);
+        assertThat(chosen.getId()).as("B has lower normalized load (1/4 vs 1/2)").isEqualTo(b.getId());
+    }
+
+    /** Full checks use the live dispatcher capacity after a hot limit update. */
+    @Test
+    void shouldRejectUsingHotUpdatedDispatcherCapacity() throws Exception {
+        HubInstance instance = persist(
+            "a", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-a");
+        registerRuntime(instance, "ctx-a");
+        dispatchRegistry.updateLimits(instance.getId(), 1, 0);
+        busy(instance, 1);
+
+        assertThatThrownBy(() -> router.chooseInstance("bilibili", instance.getId()))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                .isEqualTo(HubErrorCodes.INSTANCE_QUEUE_FULL.getCode()));
+    }
+
+    /**
+     * Automatic routing returns INSTANCE_QUEUE_FULL (429) when eligible instances are full.
+     * when otherwise-eligible candidates exist but all are full.
+     */
+    @Test
+    void shouldReturnQueueFullWhenAllOtherwiseEligibleCandidatesAreFullInAutomaticRouting() throws Exception {
+        HubInstance a = persist("a", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-a", 1, 0, 0);
+        HubInstance b = persist("b", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-b", 1, 0, 0);
+        registerRuntime(a, "ctx-a");
+        registerRuntime(b, "ctx-b");
+
+        busy(a, 1); // Capacity is 1 + 0 = 1, so load=1 is full
+        busy(b, 1); // Capacity is 1 + 0 = 1, so load=1 is full
+
+        assertThatThrownBy(() -> router.chooseInstance("bilibili", null))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                .isEqualTo(HubErrorCodes.INSTANCE_QUEUE_FULL.getCode()));
+    }
+
+    /**
+     * When there are no eligible instances configured for a website at all, return NO_INSTANCE_AVAILABLE.
+     */
+    @Test
+    void shouldReturnNoInstanceAvailableWhenNoEligibleInstanceExists() {
+        assertThatThrownBy(() -> router.chooseInstance("unknown-site", null))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                .isEqualTo(HubErrorCodes.NO_INSTANCE_AVAILABLE.getCode()));
+    }
+
     private HubInstance persist(String code, List<String> websites, HubInstanceState state, String ctx) {
-        return persist(code, websites, state, ctx, 5, 0);
+        return persist(code, websites, state, ctx, 1, 5, 0);
     }
 
     private HubInstance persist(String code, List<String> websites, HubInstanceState state, String ctx, int maxPending) {
-        return persist(code, websites, state, ctx, maxPending, 0);
+        return persist(code, websites, state, ctx, 1, maxPending, 0);
     }
 
     private HubInstance persist(String code, List<String> websites, HubInstanceState state, String ctx,
                                 int maxPending, int priority) {
+        return persist(code, websites, state, ctx, 1, maxPending, priority);
+    }
+
+    private HubInstance persist(String code, List<String> websites, HubInstanceState state, String ctx,
+                                int maxConcurrency, int maxPending, int priority) {
         HubInstance instance = new HubInstance();
         instance.setId(Long.toString(runtimeSeq.incrementAndGet()));
         instance.setCode(code);
@@ -285,6 +355,7 @@ class HubExecutionRouterTest {
         instance.setState(state);
         instance.setContextId(ctx);
         instance.setWebsites(websites);
+        instance.setMaxConcurrency(maxConcurrency);
         instance.setMaxPending(maxPending);
         instance.setPriority(priority);
         instance.setStateChangedAt(java.time.LocalDateTime.now());

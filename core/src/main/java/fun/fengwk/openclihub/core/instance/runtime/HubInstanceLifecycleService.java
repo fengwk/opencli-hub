@@ -132,7 +132,8 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         try {
             loadInstance(instanceId);
             HubInstance updated = instanceService.update(instanceId, dto);
-            dispatchRegistry.updateMaxPending(instanceId, updated.getMaxPending());
+            dispatchRegistry.updateLimits(
+                instanceId, updated.getMaxConcurrency(), updated.getMaxPending());
             return updated;
         } finally {
             lock.unlock();

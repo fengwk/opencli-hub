@@ -15,6 +15,7 @@ import fun.fengwk.openclihub.core.execution.executor.OpenCliExecutionResult;
 import fun.fengwk.openclihub.core.execution.executor.OpenCliExecutor;
 import fun.fengwk.openclihub.core.execution.repo.HubExecutionRepository;
 import fun.fengwk.openclihub.core.execution.runtime.HubDispatchRegistry;
+import fun.fengwk.openclihub.core.execution.runtime.HubExecutionConcurrencyMode;
 import fun.fengwk.openclihub.core.execution.service.converter.HubExecutionConverter;
 import fun.fengwk.openclihub.core.execution.service.model.HubExecution;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
@@ -25,7 +26,6 @@ import fun.fengwk.openclihub.share.model.execution.HubExecutionDTO;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionRequestDTO;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionStatus;
 import fun.fengwk.openclihub.share.model.execution.SiteSessionMode;
-import fun.fengwk.openclihub.share.model.resource.HubResourceItemDTO;
 import fun.fengwk.openclihub.share.util.HubIds;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -120,6 +120,9 @@ public class HubExecutionService {
         HubCommandOutputRule outputRule = resolveEffectiveOutputRule(normalized);
         argvBuilder.assertNoCallerOutputArgument(normalized, outputRule);
 
+        HubExecutionConcurrencyMode concurrencyMode = HubExecutionConcurrencyClassifier.classify(
+            normalized.getCommand(), outputRule);
+
         long timeoutMillis = resolveTimeout(request.getTimeoutMillis());
         HubInstance instance;
         HubExecution execution;
@@ -169,7 +172,8 @@ public class HubExecutionService {
                                 admittedInstance,
                                 normalized,
                                 outputRule,
-                                deadline);
+                                deadline,
+                                concurrencyMode);
                         } catch (RuntimeException ex) {
                             if (isError(ex, HubErrorCodes.EXECUTION_PERSIST_FAILED)) {
                                 log.error("Execution persist failed in worker id={}", admittedExecutionId, ex);
@@ -320,7 +324,8 @@ public class HubExecutionService {
         HubInstance instance,
         NormalizedOpenCliArgv normalized,
         HubCommandOutputRule outputRule,
-        HubExecutionDeadline deadline) {
+        HubExecutionDeadline deadline,
+        HubExecutionConcurrencyMode concurrencyMode) {
         LocalDateTime now = LocalDateTime.now(clock);
         if (!executionRepository.markRunningIfPending(executionId, now)) {
             log.info("Skip execution id={} (no longer PENDING; cancelled or raced)", executionId);
@@ -333,14 +338,43 @@ public class HubExecutionService {
         }
         execution.markRunning(now);
 
+        try {
+            dispatchRegistry.executeGuarded(
+                instance.getId(),
+                concurrencyMode,
+                deadline.deadlineNanos(),
+                () -> {
+                    executeOpenCli(execution, instance, normalized, outputRule, deadline);
+                    return null;
+                });
+        } catch (RuntimeException ex) {
+            OpenCliExecutionResult result = isError(ex, HubErrorCodes.QUEUE_WAIT_TIMEOUT)
+                ? timedOutResult(message(ex))
+                : failedResult(ex);
+            execution.markFinished(result, LocalDateTime.now(clock));
+        }
+        persistUpdate(execution);
+        log.info(
+            "Execution finished id={} status={} exitCode={} durationMillis={}",
+            execution.getId(),
+            execution.getStatus(),
+            execution.getExitCode(),
+            execution.getDurationMillis());
+    }
+
+    private void executeOpenCli(
+        HubExecution execution,
+        HubInstance instance,
+        NormalizedOpenCliArgv normalized,
+        HubCommandOutputRule outputRule,
+        HubExecutionDeadline deadline) {
         HubExecutionResources.ResourceContext resourceContext = null;
-        List<HubResourceItemDTO> resources = List.of();
         try {
             long remainingMillis = deadline.remainingMillis();
             if (remainingMillis <= 0) {
-                OpenCliExecutionResult timeout = timedOutResult("Execution deadline elapsed before OpenCLI start");
-                execution.markFinished(timeout, LocalDateTime.now(clock));
-                persistUpdate(execution);
+                execution.markFinished(
+                    timedOutResult("Execution deadline elapsed before OpenCLI start"),
+                    LocalDateTime.now(clock));
                 return;
             }
 
@@ -369,10 +403,11 @@ public class HubExecutionService {
         } catch (RuntimeException ex) {
             execution.markFinished(failedResult(ex), LocalDateTime.now(clock));
         } finally {
-            HubExecutionResourceGroup group = resourceContext == null ? null : resourceContext.getGroup();
+            HubExecutionResourceGroup group =
+                resourceContext == null ? null : resourceContext.getGroup();
             if (resourceContext != null) {
                 try {
-                    resources = executionResources.scan(group);
+                    executionResources.scan(group);
                 } catch (RuntimeException ex) {
                     recordResourceScanFailure(execution, ex);
                     log.warn("Failed to scan resources for execution {}: {}",
@@ -387,13 +422,6 @@ public class HubExecutionService {
                 executionResources.removeGroupIfEmpty(group);
             }
         }
-        persistUpdate(execution);
-        log.info(
-            "Execution finished id={} status={} exitCode={} durationMillis={}",
-            execution.getId(),
-            execution.getStatus(),
-            execution.getExitCode(),
-            execution.getDurationMillis());
     }
 
     private void recordResourceScanFailure(

@@ -16,38 +16,40 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.BooleanSupplier;
 
 /**
- * Single-threaded bounded execution queue for one instance. Mirrors the design contract in
- * {@code docs/technical-design.md §20.4} — one active worker, finite pending queue, idle-only
- * shutdown, and a deadline-aware submit path used by the execution service to enforce
- * end-to-end timeouts.
+ * Bounded execution queue and concurrency gate for one instance.
  *
- * <p>Submit is performed via the standard {@link ThreadPoolExecutor#execute(Runnable)}
- * path so the worker's lifecycle (creation, drain, shutdown) follows the platform contract;
- * queue-full is translated from {@link RejectedExecutionException} to the domain
- * {@code INSTANCE_QUEUE_FULL}. The deadline budget is enforced twice: once at submit time
- * (caller-side, fast) and once inside the worker (right before the user task body runs),
- * so a task that has been queued past its budget can never reach the resource-acquisition
- * or process-launch stages.
+ * <p>Concurrency contract:
+ * <ul>
+ *   <li>{@code maxConcurrency} defines the upper bound of concurrent worker threads (1..4).</li>
+ *   <li>{@code maxPending} defines the extra waiting queue capacity (0..50).</li>
+ *   <li>Total accepted capacity is strictly {@code maxConcurrency + maxPending}.</li>
+ *   <li>Dynamic concurrency update: expanding increases maximum before core; shrinking decreases
+ *       core before maximum. Existing active tasks drain naturally.</li>
+ *   <li>Per-instance fairness gate via {@link ReentrantReadWriteLock}: {@code PARALLEL_SAFE} takes
+ *       read lock; {@code EXCLUSIVE} takes write lock. Waiting writers prevent subsequent readers
+ *       from barging.</li>
+ * </ul>
  *
  * @author fengwk
  */
 public class HubInstanceDispatcher {
 
+    private int maxConcurrency;
     private int maxPending;
     private final ThreadPoolExecutor executor;
     /**
-     * Serialises submit and maxPending changes against {@link #shutdownIfIdle()} so a
-     * submittable window and a shutdown decision cannot race. The physical queue may retain
-     * already-accepted tasks above a reduced limit; every new acceptance is bounded here.
-     * {@link ThreadPoolExecutor#execute(Runnable)} already
-     * races with its own {@code shutdown}, which is fine because the executor coerces
-     * a post-shutdown submit into {@link RejectedExecutionException} — but our explicit
-     * flag allows {@link #shutdownIfIdle()} to refuse to commit to a teardown while a
-     * submit is in flight.
+     * Fair read-write gate enforcing concurrency isolation within the instance.
+     */
+    private final ReentrantReadWriteLock executionGate = new ReentrantReadWriteLock(true);
+    /**
+     * Serialises submit, maxConcurrency and maxPending changes against {@link #shutdownIfIdle()}
+     * so a submittable window and a shutdown decision cannot race.
      */
     private final ReentrantLock submitLock = new ReentrantLock();
     /** Number of accepted FutureTasks that have not reached FutureTask.done() yet. */
@@ -55,9 +57,13 @@ public class HubInstanceDispatcher {
     private volatile boolean shutdown;
 
     public HubInstanceDispatcher(String instanceCode, int maxPending) {
-        this(instanceCode, maxPending, new ThreadPoolExecutor(
-            1,
-            1,
+        this(instanceCode, 1, maxPending);
+    }
+
+    public HubInstanceDispatcher(String instanceCode, int maxConcurrency, int maxPending) {
+        this(instanceCode, maxConcurrency, maxPending, new ThreadPoolExecutor(
+            maxConcurrency,
+            maxConcurrency,
             0L,
             TimeUnit.MILLISECONDS,
             new LinkedBlockingQueue<>(),
@@ -67,14 +73,42 @@ public class HubInstanceDispatcher {
 
     /** Package-private test wiring for deterministic executor acceptance control. */
     HubInstanceDispatcher(String instanceCode, int maxPending, ThreadPoolExecutor executor) {
-        if (maxPending <= 0) {
-            throw new IllegalArgumentException("maxPending must be positive");
+        this(instanceCode, 1, maxPending, executor);
+    }
+
+    /** Package-private test wiring for deterministic executor acceptance control. */
+    HubInstanceDispatcher(String instanceCode, int maxConcurrency, int maxPending, ThreadPoolExecutor executor) {
+        if (maxConcurrency <= 0) {
+            throw new IllegalArgumentException("maxConcurrency must be positive");
+        }
+        if (maxPending < 0) {
+            throw new IllegalArgumentException("maxPending must not be negative");
         }
         if (executor == null) {
             throw new IllegalArgumentException("executor must not be null");
         }
+        this.maxConcurrency = maxConcurrency;
         this.maxPending = maxPending;
         this.executor = executor;
+    }
+
+    public int getMaxConcurrency() {
+        submitLock.lock();
+        try {
+            return maxConcurrency;
+        } finally {
+            submitLock.unlock();
+        }
+    }
+
+    /** Changes the worker concurrency limit without dropping accepted work. */
+    public void updateMaxConcurrency(int maxConcurrency) {
+        submitLock.lock();
+        try {
+            updateLimitsLocked(maxConcurrency, maxPending);
+        } finally {
+            submitLock.unlock();
+        }
     }
 
     public int getMaxPending() {
@@ -92,14 +126,77 @@ public class HubInstanceDispatcher {
      * new submissions are rejected until the pending count falls below the new limit.
      */
     public void updateMaxPending(int maxPending) {
-        if (maxPending <= 0) {
-            throw new IllegalArgumentException("maxPending must be positive");
-        }
         submitLock.lock();
         try {
-            this.maxPending = maxPending;
+            updateLimitsLocked(maxConcurrency, maxPending);
         } finally {
             submitLock.unlock();
+        }
+    }
+
+    /**
+     * Applies both admission limits atomically. Expanding sets executor maximum before core;
+     * shrinking sets core before maximum so running tasks drain naturally.
+     */
+    public void updateLimits(int maxConcurrency, int maxPending) {
+        submitLock.lock();
+        try {
+            updateLimitsLocked(maxConcurrency, maxPending);
+        } finally {
+            submitLock.unlock();
+        }
+    }
+
+    public int totalCapacity() {
+        submitLock.lock();
+        try {
+            return maxConcurrency + maxPending;
+        } finally {
+            submitLock.unlock();
+        }
+    }
+
+    /**
+     * Executes a task under the fair instance concurrency gate until the supplied deadline.
+     * Parallel-safe work takes the read lock; every other mode fails safe to the write lock.
+     */
+    public <T> T executeGuarded(
+        HubExecutionConcurrencyMode mode, long deadlineNanos, Callable<T> task) {
+        if (task == null) {
+            throw new IllegalArgumentException("task must not be null");
+        }
+        Lock lock = mode == HubExecutionConcurrencyMode.PARALLEL_SAFE
+            ? executionGate.readLock() : executionGate.writeLock();
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        if (remainingNanos <= 0L) {
+            throw HubErrorCodes.QUEUE_WAIT_TIMEOUT.asThrowable(
+                "Execution deadline elapsed while waiting for concurrency gate");
+        }
+        boolean acquired;
+        try {
+            acquired = lock.tryLock(remainingNanos, TimeUnit.NANOSECONDS);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw HubErrorCodes.OPENCLI_EXECUTION_FAILED.asThrowable(
+                ex, "Interrupted while waiting for concurrency gate");
+        }
+        if (!acquired) {
+            throw HubErrorCodes.QUEUE_WAIT_TIMEOUT.asThrowable(
+                "Execution deadline elapsed while waiting for concurrency gate");
+        }
+        try {
+            return task.call();
+        } catch (RuntimeException | Error ex) {
+            throw ex;
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw HubErrorCodes.OPENCLI_EXECUTION_FAILED.asThrowable(
+                ex, "Interrupted while executing under concurrency gate");
+        } catch (Exception ex) {
+            throw HubErrorCodes.OPENCLI_EXECUTION_FAILED.asThrowable(
+                ex, "Execution failed under concurrency gate");
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -150,15 +247,6 @@ public class HubInstanceDispatcher {
      * the {@link Future} so callers can either observe completion or, when the deadline
      * eventually elapses inside the worker, receive the propagated
      * {@code QUEUE_WAIT_TIMEOUT} throwable.
-     *
-     * <p>Failure modes (in evaluation order):
-     * <ol>
-     *   <li>{@code task == null} → {@link IllegalArgumentException},</li>
-     *   <li>{@link #isShuttingDown()} → {@code INSTANCE_QUEUE_FULL},</li>
-     *   <li>deadline already elapsed → {@code QUEUE_WAIT_TIMEOUT} without enqueueing,</li>
-     *   <li>logical pending limit reached or executor rejected during shutdown →
-     *       {@code INSTANCE_QUEUE_FULL}.</li>
-     * </ol>
      */
     public <T> Future<T> submit(Callable<T> task, long deadlineNanos) {
         return submit(null, task, deadlineNanos, null);
@@ -174,15 +262,6 @@ public class HubInstanceDispatcher {
      * DB row as CANCELLED so a discarded queue handle can never leave the execution
      * PENDING. The callback must be idempotent: it may race with the worker's own
      * PENDING→RUNNING CAS and with other discard paths.
-     *
-     * <p>Failure modes (in evaluation order):
-     * <ol>
-     *   <li>{@code task == null} → {@link IllegalArgumentException},</li>
-     *   <li>{@link #isShuttingDown()} → {@code INSTANCE_QUEUE_FULL},</li>
-     *   <li>deadline already elapsed → {@code QUEUE_WAIT_TIMEOUT} without enqueueing,</li>
-     *   <li>logical pending limit reached or executor rejected during shutdown →
-     *       {@code INSTANCE_QUEUE_FULL}.</li>
-     * </ol>
      */
     public <T> Future<T> submit(String executionId,
                                 Callable<T> task,
@@ -201,9 +280,10 @@ public class HubInstanceDispatcher {
                 throw HubErrorCodes.QUEUE_WAIT_TIMEOUT.asThrowable(
                     "Queue deadline already exceeded before enqueue");
             }
-            if (executor.getQueue().size() >= maxPending) {
+            if (acceptedNotTerminalCount >= maxConcurrency + maxPending) {
                 throw HubErrorCodes.INSTANCE_QUEUE_FULL.asThrowable(
-                    "Instance pending queue reached maxPending=" + maxPending);
+                    "Instance capacity reached maxConcurrency=" + maxConcurrency
+                        + " maxPending=" + maxPending);
             }
             TrackedFutureTask<T> future = new TrackedFutureTask<>(
                 executionId, onQueuedDiscard,
@@ -392,6 +472,25 @@ public class HubInstanceDispatcher {
 
     public boolean isShuttingDown() {
         return shutdown;
+    }
+
+    /** Caller must hold {@link #submitLock}. */
+    private void updateLimitsLocked(int maxConcurrency, int maxPending) {
+        if (maxConcurrency <= 0) {
+            throw new IllegalArgumentException("maxConcurrency must be positive");
+        }
+        if (maxPending < 0) {
+            throw new IllegalArgumentException("maxPending must not be negative");
+        }
+        if (maxConcurrency > this.maxConcurrency) {
+            executor.setMaximumPoolSize(maxConcurrency);
+            executor.setCorePoolSize(maxConcurrency);
+        } else if (maxConcurrency < this.maxConcurrency) {
+            executor.setCorePoolSize(maxConcurrency);
+            executor.setMaximumPoolSize(maxConcurrency);
+        }
+        this.maxConcurrency = maxConcurrency;
+        this.maxPending = maxPending;
     }
 
     /** Caller must hold {@link #submitLock}. */

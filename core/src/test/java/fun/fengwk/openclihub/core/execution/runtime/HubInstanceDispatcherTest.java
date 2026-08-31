@@ -2,6 +2,9 @@ package fun.fengwk.openclihub.core.execution.runtime;
 
 import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
@@ -11,6 +14,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -732,4 +736,435 @@ class HubInstanceDispatcherTest {
         }
     }
 
+    /**
+     * Dispatcher with maxConcurrency=3 must run up to 3 workers simultaneously; the 4th task
+     * remains queued in pending until a worker frees up.
+     */
+    @Test
+    void shouldAllowConfiguredWorkersToRunConcurrentlyUpToMaxConcurrencyAndQueueRemaining() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("concurrent-3", 3, 2);
+        CountDownLatch threeRunning = new CountDownLatch(3);
+        CountDownLatch release = new CountDownLatch(1);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        try {
+            Future<String> t1 = dispatcher.submit(() -> {
+                threeRunning.countDown();
+                release.await(5, TimeUnit.SECONDS);
+                return "t1";
+            }, deadline);
+            Future<String> t2 = dispatcher.submit(() -> {
+                threeRunning.countDown();
+                release.await(5, TimeUnit.SECONDS);
+                return "t2";
+            }, deadline);
+            Future<String> t3 = dispatcher.submit(() -> {
+                threeRunning.countDown();
+                release.await(5, TimeUnit.SECONDS);
+                return "t3";
+            }, deadline);
+
+            assertThat(threeRunning.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(dispatcher.activeCount()).isEqualTo(3);
+
+            Future<String> t4 = dispatcher.submit(() -> "t4", deadline);
+            assertThat(dispatcher.pendingCount()).isEqualTo(1);
+            assertThat(dispatcher.acceptedNotTerminalCount()).isEqualTo(4);
+
+            release.countDown();
+            assertThat(t1.get(2, TimeUnit.SECONDS)).isEqualTo("t1");
+            assertThat(t2.get(2, TimeUnit.SECONDS)).isEqualTo("t2");
+            assertThat(t3.get(2, TimeUnit.SECONDS)).isEqualTo("t3");
+            assertThat(t4.get(2, TimeUnit.SECONDS)).isEqualTo("t4");
+        } finally {
+            release.countDown();
+            dispatcher.shutdownNow();
+        }
+    }
+
+    /**
+     * When maxPending=0, up to maxConcurrency tasks can be accepted and run immediately;
+     * once all workers are occupied, any further submission is immediately rejected.
+     */
+    @Test
+    void shouldAcceptTasksUpToMaxConcurrencyWhenMaxPendingIsZeroAndRejectImmediatelyWhenFull() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("zero-pending", 2, 0);
+        CountDownLatch twoRunning = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        try {
+            Future<String> t1 = dispatcher.submit(() -> {
+                twoRunning.countDown();
+                release.await(5, TimeUnit.SECONDS);
+                return "t1";
+            }, deadline);
+            Future<String> t2 = dispatcher.submit(() -> {
+                twoRunning.countDown();
+                release.await(5, TimeUnit.SECONDS);
+                return "t2";
+            }, deadline);
+
+            assertThat(twoRunning.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(dispatcher.acceptedNotTerminalCount()).isEqualTo(2);
+
+            assertThatThrownBy(() -> dispatcher.submit(() -> "rejected", deadline))
+                .isInstanceOf(ThrowableConventionErrorCode.class)
+                .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                    .isEqualTo(HubErrorCodes.INSTANCE_QUEUE_FULL.getCode()));
+
+            release.countDown();
+            assertThat(t1.get(2, TimeUnit.SECONDS)).isEqualTo("t1");
+            assertThat(t2.get(2, TimeUnit.SECONDS)).isEqualTo("t2");
+
+            assertThat(awaitIdle(dispatcher, 2000L)).isTrue();
+            Future<String> t3 = dispatcher.submit(() -> "t3", deadline);
+            assertThat(t3.get(2, TimeUnit.SECONDS)).isEqualTo("t3");
+        } finally {
+            release.countDown();
+            dispatcher.shutdownNow();
+        }
+    }
+
+    /**
+     * Total accepted capacity must be strictly maxConcurrency + maxPending.
+     */
+    @Test
+    void shouldEnforceTotalCapacityStrictlyAsMaxConcurrencyPlusMaxPending() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("capacity-check", 2, 3);
+        CountDownLatch running = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        try {
+            List<Future<String>> futures = new ArrayList<>();
+            for (int i = 0; i < 2; i++) {
+                final int id = i;
+                futures.add(dispatcher.submit(() -> {
+                    running.countDown();
+                    release.await(5, TimeUnit.SECONDS);
+                    return "active-" + id;
+                }, deadline));
+            }
+            assertThat(running.await(2, TimeUnit.SECONDS)).isTrue();
+
+            for (int i = 0; i < 3; i++) {
+                final int id = i;
+                futures.add(dispatcher.submit(() -> "queued-" + id, deadline));
+            }
+
+            assertThat(dispatcher.acceptedNotTerminalCount()).isEqualTo(5);
+
+            assertThatThrownBy(() -> dispatcher.submit(() -> "overflow", deadline))
+                .isInstanceOf(ThrowableConventionErrorCode.class)
+                .satisfies(t -> assertThat(((ThrowableConventionErrorCode) t).getCode())
+                    .isEqualTo(HubErrorCodes.INSTANCE_QUEUE_FULL.getCode()));
+
+            release.countDown();
+            for (Future<String> f : futures) {
+                assertThat(f.get(2, TimeUnit.SECONDS)).isNotNull();
+            }
+        } finally {
+            release.countDown();
+            dispatcher.shutdownNow();
+        }
+    }
+
+    /**
+     * Gate read locks (PARALLEL_SAFE) must be acquirable concurrently by multiple workers.
+     */
+    @Test
+    void shouldAllowParallelSafeReadLocksToExecuteConcurrently() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("gate-read", 3, 0);
+        CountDownLatch bothInGate = new CountDownLatch(2);
+        CountDownLatch releaseGate = new CountDownLatch(1);
+
+        Thread thread1 = new Thread(() ->
+            dispatcher.executeGuarded(
+                HubExecutionConcurrencyMode.PARALLEL_SAFE,
+                Long.MAX_VALUE,
+                () -> {
+                bothInGate.countDown();
+                releaseGate.await(5, TimeUnit.SECONDS);
+                return null;
+            }));
+
+        Thread thread2 = new Thread(() ->
+            dispatcher.executeGuarded(
+                HubExecutionConcurrencyMode.PARALLEL_SAFE,
+                Long.MAX_VALUE,
+                () -> {
+                bothInGate.countDown();
+                releaseGate.await(5, TimeUnit.SECONDS);
+                return null;
+            }));
+
+        thread1.start();
+        thread2.start();
+        try {
+            assertThat(bothInGate.await(2, TimeUnit.SECONDS))
+                .as("Both PARALLEL_SAFE readers hold the gate concurrently")
+                .isTrue();
+        } finally {
+            releaseGate.countDown();
+            thread1.join(2000);
+            thread2.join(2000);
+            dispatcher.shutdownNow();
+        }
+    }
+
+    /**
+     * EXCLUSIVE write lock must not overlap with any read lock or write lock.
+     */
+    @Test
+    void shouldPreventExclusiveExecutionFromOverlappingWithParallelSafeExecution() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("gate-exclusive", 2, 0);
+
+        AtomicBoolean readerActive = new AtomicBoolean(false);
+        AtomicBoolean writerOverlappedWithReader = new AtomicBoolean(false);
+        CountDownLatch readerStarted = new CountDownLatch(1);
+        CountDownLatch releaseReader = new CountDownLatch(1);
+
+        Thread readerThread = new Thread(() ->
+            dispatcher.executeGuarded(
+                HubExecutionConcurrencyMode.PARALLEL_SAFE,
+                Long.MAX_VALUE,
+                () -> {
+                readerActive.set(true);
+                try {
+                    readerStarted.countDown();
+                    releaseReader.await(5, TimeUnit.SECONDS);
+                    return null;
+                } finally {
+                    readerActive.set(false);
+                }
+            }));
+
+        readerThread.start();
+        assertThat(readerStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+        Thread writerThread = new Thread(() ->
+            dispatcher.executeGuarded(
+                HubExecutionConcurrencyMode.EXCLUSIVE,
+                Long.MAX_VALUE,
+                () -> {
+                if (readerActive.get()) {
+                    writerOverlappedWithReader.set(true);
+                }
+                return null;
+            }));
+
+        writerThread.start();
+        Thread.sleep(100);
+        assertThat(writerThread.isAlive()).as("Writer must wait for reader to release").isTrue();
+
+        releaseReader.countDown();
+        readerThread.join(2000);
+        writerThread.join(2000);
+
+        assertThat(writerOverlappedWithReader.get()).isFalse();
+        dispatcher.shutdownNow();
+    }
+
+    /**
+     * Fair ReadWriteLock ensures that a waiting EXCLUSIVE writer is not starved by subsequent readers.
+     */
+    @Test
+    void shouldPreventReaderBargingWhenFairWriterIsWaiting() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("fairness", 3, 0);
+
+        List<String> executionOrder = Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch reader1Holding = new CountDownLatch(1);
+        CountDownLatch releaseReader1 = new CountDownLatch(1);
+        CountDownLatch writerQueued = new CountDownLatch(1);
+
+        Thread r1 = new Thread(() ->
+            dispatcher.executeGuarded(
+                HubExecutionConcurrencyMode.PARALLEL_SAFE,
+                Long.MAX_VALUE,
+                () -> {
+                reader1Holding.countDown();
+                releaseReader1.await(5, TimeUnit.SECONDS);
+                executionOrder.add("reader1");
+                return null;
+            }));
+
+        Thread w = new Thread(() -> {
+            try {
+                reader1Holding.await(5, TimeUnit.SECONDS);
+                writerQueued.countDown();
+                dispatcher.executeGuarded(
+                    HubExecutionConcurrencyMode.EXCLUSIVE,
+                    Long.MAX_VALUE,
+                    () -> {
+                    executionOrder.add("writer");
+                    return null;
+                });
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        Thread r2 = new Thread(() -> {
+            try {
+                writerQueued.await(5, TimeUnit.SECONDS);
+                Thread.sleep(50); // Ensure writer is already waiting on writeLock
+                dispatcher.executeGuarded(
+                    HubExecutionConcurrencyMode.PARALLEL_SAFE,
+                    Long.MAX_VALUE,
+                    () -> {
+                    executionOrder.add("reader2");
+                    return null;
+                });
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        r1.start();
+        w.start();
+        r2.start();
+
+        assertThat(writerQueued.await(2, TimeUnit.SECONDS)).isTrue();
+        Thread.sleep(100);
+
+        releaseReader1.countDown();
+        r1.join(2000);
+        w.join(2000);
+        r2.join(2000);
+
+        assertThat(executionOrder)
+            .as("Fair lock ensures writer executes before reader2")
+            .containsExactly("reader1", "writer", "reader2");
+
+        dispatcher.shutdownNow();
+    }
+
+    /**
+     * A task that cannot acquire the gate before its deadline fails without running its body.
+     */
+    @Test
+    void shouldTimeoutWhenGateCannotBeAcquiredWithinDeadline() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("gate-timeout", 2, 0);
+
+        CountDownLatch writer1Holding = new CountDownLatch(1);
+        CountDownLatch releaseWriter1 = new CountDownLatch(1);
+        AtomicBoolean bodyRan = new AtomicBoolean();
+
+        Thread writer1 = new Thread(() ->
+            dispatcher.executeGuarded(
+                HubExecutionConcurrencyMode.EXCLUSIVE,
+                Long.MAX_VALUE,
+                () -> {
+                writer1Holding.countDown();
+                releaseWriter1.await(5, TimeUnit.SECONDS);
+                return null;
+            }));
+        writer1.start();
+
+        assertThat(writer1Holding.await(2, TimeUnit.SECONDS)).isTrue();
+
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(50);
+        assertThatThrownBy(() -> dispatcher.executeGuarded(
+            HubExecutionConcurrencyMode.EXCLUSIVE,
+            deadline,
+            () -> {
+                bodyRan.set(true);
+                return null;
+            }))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(ex -> assertThat(((ThrowableConventionErrorCode) ex).getCode())
+                .isEqualTo(HubErrorCodes.QUEUE_WAIT_TIMEOUT.getCode()));
+        assertThat(bodyRan).isFalse();
+
+        releaseWriter1.countDown();
+        writer1.join(2000);
+        dispatcher.shutdownNow();
+    }
+
+    /** Gate interruption is a failure, not a false deadline timeout, and preserves the flag. */
+    @Test
+    void shouldPreserveInterruptWhileWaitingForConcurrencyGate() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("gate-interrupt", 2, 0);
+        CountDownLatch holderStarted = new CountDownLatch(1);
+        CountDownLatch releaseHolder = new CountDownLatch(1);
+        CountDownLatch waiterStarted = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicBoolean interrupted = new AtomicBoolean();
+
+        Thread holder = new Thread(() ->
+            dispatcher.executeGuarded(
+                HubExecutionConcurrencyMode.EXCLUSIVE,
+                Long.MAX_VALUE,
+                () -> {
+                    holderStarted.countDown();
+                    releaseHolder.await(5, TimeUnit.SECONDS);
+                    return null;
+                }));
+        Thread waiter = new Thread(() -> {
+            waiterStarted.countDown();
+            try {
+                dispatcher.executeGuarded(
+                    HubExecutionConcurrencyMode.EXCLUSIVE,
+                    Long.MAX_VALUE,
+                    () -> null);
+            } catch (Throwable ex) {
+                failure.set(ex);
+                interrupted.set(Thread.currentThread().isInterrupted());
+            }
+        });
+
+        holder.start();
+        assertThat(holderStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        waiter.start();
+        assertThat(waiterStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        waiter.interrupt();
+        waiter.join(2000);
+        releaseHolder.countDown();
+        holder.join(2000);
+
+        assertThat(failure.get())
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .satisfies(ex -> assertThat(((ThrowableConventionErrorCode) ex).getCode())
+                .isEqualTo(HubErrorCodes.OPENCLI_EXECUTION_FAILED.getCode()));
+        assertThat(interrupted).isTrue();
+        dispatcher.shutdownNow();
+    }
+
+    /**
+     * Dynamic concurrency updates: scaling up increases active worker capacity immediately;
+     * scaling down allows running workers to finish and natural shrink.
+     */
+    @Test
+    void shouldDynamicallyScaleUpAndScaleDownConcurrency() throws Exception {
+        HubInstanceDispatcher dispatcher = new HubInstanceDispatcher("dyn-concurrency", 1, 5);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        try {
+            assertThat(dispatcher.getMaxConcurrency()).isEqualTo(1);
+
+            // Scale up to 3
+            dispatcher.updateMaxConcurrency(3);
+            assertThat(dispatcher.getMaxConcurrency()).isEqualTo(3);
+
+            CountDownLatch threeRunning = new CountDownLatch(3);
+            CountDownLatch release = new CountDownLatch(1);
+
+            Future<String> f1 = dispatcher.submit(() -> { threeRunning.countDown(); release.await(5, TimeUnit.SECONDS); return "1"; }, deadline);
+            Future<String> f2 = dispatcher.submit(() -> { threeRunning.countDown(); release.await(5, TimeUnit.SECONDS); return "2"; }, deadline);
+            Future<String> f3 = dispatcher.submit(() -> { threeRunning.countDown(); release.await(5, TimeUnit.SECONDS); return "3"; }, deadline);
+
+            assertThat(threeRunning.await(2, TimeUnit.SECONDS)).as("Scaled-up workers run concurrently").isTrue();
+            assertThat(dispatcher.activeCount()).isEqualTo(3);
+
+            // Scale down to 1 while 3 are active
+            dispatcher.updateMaxConcurrency(1);
+            assertThat(dispatcher.getMaxConcurrency()).isEqualTo(1);
+
+            release.countDown();
+            assertThat(f1.get(2, TimeUnit.SECONDS)).isEqualTo("1");
+            assertThat(f2.get(2, TimeUnit.SECONDS)).isEqualTo("2");
+            assertThat(f3.get(2, TimeUnit.SECONDS)).isEqualTo("3");
+
+            assertThat(awaitIdle(dispatcher, 2000L)).isTrue();
+        } finally {
+            dispatcher.shutdownNow();
+        }
+    }
 }
