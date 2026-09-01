@@ -294,6 +294,10 @@ scripts/docker/test-install-opencli.sh
   - Compose 可通过 `OPENCLI_HUB_DEFAULT_MAX_CONCURRENCY` 覆盖创建请求未提供 `maxConcurrency` 时的默认值；建议生产保持 `1`，仅对明确选定的 Instance 在管理页单独灰度调高。
 - **maxPending=0 语义**：`maxPending = 0` 表示该 Instance 不启用排队缓冲。当该 Instance 正在执行的任务数达到 `maxConcurrency` 时，新提交的请求将无法排队，立即被拒绝并返回 HTTP 429 (`INSTANCE_QUEUE_FULL`)。
 - **总承载容量**：每个 Instance 的最大承载任务数为 `maxConcurrency + maxPending`。
+- **自动负载分配**：Hub 以每个 Instance 已接受但尚未终态的任务总数
+  `acceptedNotTerminalCount` 作为路由负载，覆盖执行中、排队中以及 Dispatcher
+  接收到线程池指标可见前的交接窗口；优先选择该总数最小的 Instance，不按
+  `maxConcurrency` 归一化。负载相同时再比较 `priority`，最后按 Instance ID 稳定打破平局。
 - **并发调度与独占规则**：
   - 只有**同时**满足浏览器命令（`browser=true`）、`siteSession=EPHEMERAL`、`access=READ`、`defaultWindowMode=null` 或精确为 `background`，且**无受管输出规则**（`HubCommandOutputRule`）的命令才允许并行执行（最多并行 `maxConcurrency` 个）；
   - 所有不满足上述条件的命令（包括 `siteSession` / `access` 元数据缺失、空字符串或大小写不匹配的窗口模式、写操作、持久会话、前台窗口交互或受管输出）均作为**独占任务**执行，与同 Instance 的其他任务互斥。

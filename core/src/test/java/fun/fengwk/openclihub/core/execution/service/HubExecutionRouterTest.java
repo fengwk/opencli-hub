@@ -156,8 +156,6 @@ class HubExecutionRouterTest {
             true, null, null, 0, 0);
         when(routingRegistry.getSnapshot(accepted.getId())).thenReturn(emptyMetrics);
         when(routingRegistry.getSnapshot(idle.getId())).thenReturn(emptyMetrics);
-        when(routingRegistry.getMaxConcurrency(accepted.getId())).thenReturn(1);
-        when(routingRegistry.getMaxConcurrency(idle.getId())).thenReturn(1);
         when(routingRegistry.getTotalCapacity(accepted.getId())).thenReturn(6);
         when(routingRegistry.getTotalCapacity(idle.getId())).thenReturn(6);
         when(routingRegistry.getRoutingLoad(accepted.getId())).thenReturn(1);
@@ -270,21 +268,62 @@ class HubExecutionRouterTest {
         }
     }
 
-    /** Routing uses hot-updated dispatcher concurrency rather than a stale persisted snapshot. */
+    /**
+     * Equal accepted load is a routing tie even when instances have different concurrency limits.
+     * Priority must therefore decide the winner instead of maxConcurrency weighting the load.
+     */
     @Test
-    void shouldRouteByNormalizedConcurrencyRatio() throws Exception {
-        HubInstance a = persist("a", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-a");
-        HubInstance b = persist("b", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-b");
+    void shouldTreatEqualAdmissionLoadAsTieRegardlessOfMaxConcurrency() throws Exception {
+        HubInstance a = persist(
+            "a", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-a", 2, 5, 10);
+        HubInstance b = persist(
+            "b", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-b", 4, 5, 0);
         registerRuntime(a, "ctx-a");
         registerRuntime(b, "ctx-b");
-        dispatchRegistry.updateLimits(a.getId(), 2, 5);
-        dispatchRegistry.updateLimits(b.getId(), 4, 5);
 
         busy(a, 1);
         busy(b, 1);
 
         HubInstance chosen = router.chooseInstance("bilibili", null);
-        assertThat(chosen.getId()).as("B has lower normalized load (1/4 vs 1/2)").isEqualTo(b.getId());
+        assertThat(chosen.getId())
+            .as("equal accepted load must fall through to priority regardless of maxConcurrency")
+            .isEqualTo(a.getId());
+    }
+
+    /**
+     * Raw accepted load remains the primary routing key even when normalization by
+     * maxConcurrency would have preferred the more heavily loaded instance.
+     */
+    @Test
+    void shouldPreferLowerAdmissionLoadRegardlessOfMaxConcurrency() throws Exception {
+        HubInstance highConcurrency = persist(
+            "high-concurrency", List.of("bilibili"), HubInstanceState.RUNNING,
+            "ctx-high-concurrency", 4, 5, 0);
+        HubInstance lowConcurrency = persist(
+            "low-concurrency", List.of("bilibili"), HubInstanceState.RUNNING,
+            "ctx-low-concurrency", 1, 5, 0);
+        registerRuntime(highConcurrency, "ctx-high-concurrency");
+        registerRuntime(lowConcurrency, "ctx-low-concurrency");
+
+        HubDispatchRegistry routingRegistry = mock(HubDispatchRegistry.class);
+        HubInstanceRuntimeSnapshot registered = new HubInstanceRuntimeSnapshot(
+            true, null, null, 0, 0);
+        when(routingRegistry.getSnapshot(highConcurrency.getId())).thenReturn(registered);
+        when(routingRegistry.getSnapshot(lowConcurrency.getId())).thenReturn(registered);
+        when(routingRegistry.getTotalCapacity(highConcurrency.getId())).thenReturn(9);
+        when(routingRegistry.getTotalCapacity(lowConcurrency.getId())).thenReturn(6);
+        when(routingRegistry.getRoutingLoad(highConcurrency.getId())).thenReturn(2);
+        when(routingRegistry.getRoutingLoad(lowConcurrency.getId())).thenReturn(1);
+        // The removed normalized comparator would prefer 2/4 over 1/1.
+        when(routingRegistry.getMaxConcurrency(highConcurrency.getId())).thenReturn(4);
+        when(routingRegistry.getMaxConcurrency(lowConcurrency.getId())).thenReturn(1);
+        HubExecutionRouter routingRouter = new HubExecutionRouter(
+            instanceService, runtimeRegistry, routingRegistry);
+
+        HubInstance chosen = routingRouter.chooseInstance("bilibili", null);
+        assertThat(chosen.getId())
+            .as("one accepted task is less busy than two, regardless of maxConcurrency")
+            .isEqualTo(lowConcurrency.getId());
     }
 
     /** Full checks use the live dispatcher capacity after a hot limit update. */

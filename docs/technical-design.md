@@ -1343,11 +1343,11 @@ routingLoad = acceptedNotTerminalCount
 ```
 
 `routingLoad` 是已被 Dispatcher 接受但尚未达到 terminal 的任务数，包含任务从
-`submit` 到 worker 暴露为 active/pending 的过渡窗口。自动路由比较归一化负载
-`routingLoad / maxConcurrency`；实现使用交叉相乘避免浮点误差。归一化负载相同时选
-`priority` 更大者（默认 0，越大越优先）；仍相同时按不透明字符串 ID 的字典序排序，
-仅用于稳定打破平局，不表达创建时间。运行时 API 展示的 `activeCount` 和
-`pendingCount` 仍保持 executor 指标定义。
+`submit` 到 worker 暴露为 active/pending 的过渡窗口。自动路由直接比较
+`routingLoad` 原始总量，选择已接受未终态任务数最少的 Instance，不按
+`maxConcurrency` 归一化；负载相同时选 `priority` 更大者（默认 0，越大越优先）；
+仍相同时按不透明字符串 ID 的字典序排序，仅用于稳定打破平局，不表达创建时间。
+运行时 API 展示的 `activeCount` 和 `pendingCount` 仍保持 executor 指标定义。
 
 同一 Hub 进程内，所有 Execution 提交的 `choose instance -> insert PENDING ->
 Dispatcher accept` 由短临界区 admission lock 串行化，避免并发请求在前一任务尚未

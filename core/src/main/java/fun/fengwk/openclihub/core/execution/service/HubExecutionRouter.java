@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
  * <p>Routing semantics:
  * <ul>
  *   <li><b>Explicit instanceId</b> — strict, no failover.</li>
- *   <li><b>Automatic</b> — normalized load (routingLoad / maxConcurrency via cross multiplication);
+ *   <li><b>Automatic</b> — lowest accepted non-terminal task count;
  *       ties broken by higher priority, then ascending id.</li>
  *   <li><b>Queue full handling</b> — when otherwise-eligible candidates exist but all are full,
  *       automatic routing returns {@code INSTANCE_QUEUE_FULL} instead of {@code NO_INSTANCE_AVAILABLE}.</li>
@@ -119,12 +119,8 @@ public class HubExecutionRouter {
         if (chosen == null) {
             return true;
         }
-        int capCandidate = maxConcurrencyOf(candidate);
-        int capChosen = maxConcurrencyOf(chosen);
-        long ratioCandidate = (long) candidateLoad * capChosen;
-        long ratioChosen = (long) chosenLoad * capCandidate;
-        if (ratioCandidate != ratioChosen) {
-            return ratioCandidate < ratioChosen;
+        if (candidateLoad != chosenLoad) {
+            return candidateLoad < chosenLoad;
         }
         if (candidate.getPriority() != chosen.getPriority()) {
             return candidate.getPriority() > chosen.getPriority();
@@ -181,10 +177,6 @@ public class HubExecutionRouter {
      */
     private int loadOf(HubInstance instance) {
         return dispatchRegistry.getRoutingLoad(instance.getId());
-    }
-
-    private int maxConcurrencyOf(HubInstance instance) {
-        return Math.max(1, dispatchRegistry.getMaxConcurrency(instance.getId()));
     }
 
     private enum CandidateCheck {
