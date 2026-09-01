@@ -37,7 +37,23 @@ public class HubDispatchRegistry {
             throw new IllegalArgumentException("instance must not be null");
         }
         dispatchers.computeIfAbsent(instance.getId(),
-            ignored -> new HubInstanceDispatcher(instance.getCode(), instance.getMaxPending()));
+            ignored -> new HubInstanceDispatcher(
+                instance.getCode(),
+                instance.getMaxConcurrency(),
+                instance.getMaxPending()));
+    }
+
+    public <T> T executeGuarded(
+        String instanceId,
+        HubExecutionConcurrencyMode mode,
+        long deadlineNanos,
+        Callable<T> task) {
+        HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
+        if (dispatcher == null) {
+            throw HubErrorCodes.INSTANCE_RUNTIME_NOT_FOUND
+                .asThrowable("Instance dispatcher is not registered: " + instanceId);
+        }
+        return dispatcher.executeGuarded(mode, deadlineNanos, task);
     }
 
     public <T> T dispatch(HubInstance instance, Callable<T> task, long deadlineNanos) {
@@ -117,12 +133,27 @@ public class HubDispatchRegistry {
         return dispatcher == null ? 0 : dispatcher.acceptedNotTerminalCount();
     }
 
+    public int getMaxConcurrency(String instanceId) {
+        HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
+        return dispatcher == null ? 1 : dispatcher.getMaxConcurrency();
+    }
+
     public int getMaxPending(String instanceId) {
         HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
         return dispatcher == null ? 0 : dispatcher.getMaxPending();
     }
 
-    /** Applies an editable maxPending change to an already-running instance, if present. */
+    public int getTotalCapacity(String instanceId) {
+        HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
+        return dispatcher == null ? 0 : dispatcher.totalCapacity();
+    }
+
+    public void updateLimits(String instanceId, int maxConcurrency, int maxPending) {
+        HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
+        if (dispatcher != null) {
+            dispatcher.updateLimits(maxConcurrency, maxPending);
+        }
+    }
 
     /**
      * Cancel all pending (not running) tasks for an instance. Returns 0 when no
@@ -148,13 +179,6 @@ public class HubDispatchRegistry {
             return false;
         }
         return dispatcher.cancelPending(executionId);
-    }
-
-    public void updateMaxPending(String instanceId, int maxPending) {
-        HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
-        if (dispatcher != null) {
-            dispatcher.updateMaxPending(maxPending);
-        }
     }
 
     /**

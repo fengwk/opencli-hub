@@ -20,6 +20,7 @@ public class HubInstanceDTO {
     private HubInstanceState state;
     private List<String> websites;
     private int maxPending;
+    private int maxConcurrency = 1;
     private int priority;
     private HubProxyMode proxyMode;
     private String proxyServer;

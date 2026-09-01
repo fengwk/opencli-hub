@@ -23,6 +23,7 @@ public class HubInstance {
     private HubInstanceState state;
     private List<String> websites = List.of();
     private int maxPending;
+    private int maxConcurrency = 1;
     private int priority;
     private HubProxyMode proxyMode = HubProxyMode.INHERIT;
     private String proxyServer;

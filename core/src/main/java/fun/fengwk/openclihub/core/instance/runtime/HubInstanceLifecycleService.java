@@ -108,6 +108,9 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         preset.setMaxPending(dto.getMaxPending() == null
             ? properties.getExecution().getDefaultMaxPending()
             : dto.getMaxPending());
+        preset.setMaxConcurrency(dto.getMaxConcurrency() == null
+            ? properties.getExecution().getDefaultMaxConcurrency()
+            : dto.getMaxConcurrency());
         preset.setPriority(dto.getPriority() == null ? 0 : dto.getPriority());
         preset.setState(HubInstanceState.STARTING);
         preset.setStateChangedAt(LocalDateTime.now(clock));
@@ -122,14 +125,15 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
 
     /**
      * Updates editable properties under the same per-instance lock as every lifecycle
-     * transition, then propagates the queue limit to an already-running dispatcher.
+     * transition, then propagates the concurrency and queue limits to an already-running dispatcher.
      */
     public HubInstance update(String instanceId, HubInstanceUpdateDTO dto) {
         ReentrantLock lock = lockExistingInstance(instanceId);
         try {
             loadInstance(instanceId);
             HubInstance updated = instanceService.update(instanceId, dto);
-            dispatchRegistry.updateMaxPending(instanceId, updated.getMaxPending());
+            dispatchRegistry.updateLimits(
+                instanceId, updated.getMaxConcurrency(), updated.getMaxPending());
             return updated;
         } finally {
             lock.unlock();

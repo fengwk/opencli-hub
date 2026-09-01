@@ -28,6 +28,7 @@ import fun.fengwk.openclihub.core.command.validator.OpenCliArgvValidator;
 import fun.fengwk.openclihub.core.execution.FakeOpenCliExecutor;
 import fun.fengwk.openclihub.core.execution.repo.HubExecutionRepository;
 import fun.fengwk.openclihub.core.execution.runtime.HubDispatchRegistry;
+import fun.fengwk.openclihub.core.execution.runtime.HubExecutionConcurrencyMode;
 import fun.fengwk.openclihub.core.execution.service.converter.HubExecutionConverter;
 import fun.fengwk.openclihub.core.execution.service.model.HubExecution;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
@@ -36,6 +37,7 @@ import fun.fengwk.openclihub.core.resource.model.HubExecutionResourceGroup;
 import fun.fengwk.openclihub.core.resource.service.HubResourceLease;
 import fun.fengwk.openclihub.core.resource.service.HubResourceLeaseManager;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
+import fun.fengwk.openclihub.share.model.command.HubCommandAccess;
 import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionDTO;
 import fun.fengwk.openclihub.share.model.execution.HubExecutionRequestDTO;
@@ -60,6 +62,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -819,6 +822,9 @@ class HubExecutionServiceTest {
         OpenCliCommand command = new OpenCliCommand();
         command.setSite("xiaohongshu");
         command.setName("download");
+        command.setBrowser(true);
+        command.setAccess(HubCommandAccess.READ);
+        command.setDefaultWindowMode("background");
         command.setSiteSession(SiteSessionMode.EPHEMERAL);
         command.setArgs(List.of(output));
         command.setCommandKey("xiaohongshu/download");
@@ -848,6 +854,139 @@ class HubExecutionServiceTest {
                 && rule.getTargetType() == HubCommandOutputTargetType.DIRECTORY));
     }
 
+    /**
+     * Gate timeout: when the concurrency gate cannot be acquired before the deadline elapses,
+     * the execution is marked as TIMED_OUT and the process executor is never invoked.
+     */
+    @Test
+    void shouldPersistTimedOutAndNeverInvokeExecutorWhenGateWaitTimesOut() throws Exception {
+        CountDownLatch gateHeld = new CountDownLatch(1);
+        CountDownLatch releaseGate = new CountDownLatch(1);
+
+        Thread holder = new Thread(() ->
+            dispatchRegistry.executeGuarded(
+                instance.getId(),
+                HubExecutionConcurrencyMode.EXCLUSIVE,
+                Long.MAX_VALUE,
+                () -> {
+                gateHeld.countDown();
+                releaseGate.await(5, TimeUnit.SECONDS);
+                return null;
+            }));
+        holder.start();
+        assertThat(gateHeld.await(2, TimeUnit.SECONDS)).isTrue();
+
+        try {
+            executor.setBehavior(() -> FakeOpenCliExecutor.Behaviour.successJson("[{\"ok\":true}]"));
+
+            HubExecutionRequestDTO request = new HubExecutionRequestDTO();
+            request.setInstanceId(instance.getId());
+            request.setArgv(List.of("bilibili", "hot"));
+            request.setTimeoutMillis(80L); // Short deadline
+
+            HubExecutionDTO submitted = service.submit(request);
+            assertThat(submitted.getStatus()).isEqualTo(HubExecutionStatus.PENDING);
+
+            // Wait for worker to attempt gate acquisition and time out
+            HubExecutionDTO terminal = service.getById(submitted.getId(), 3);
+
+            assertThat(terminal).isNotNull();
+            assertThat(terminal.getStatus()).isEqualTo(HubExecutionStatus.TIMED_OUT);
+            assertThat(terminal.getExitCode()).isEqualTo(124);
+            assertThat(terminal.getErrorMessage()).contains("concurrency gate");
+            assertThat(executor.invocationCount()).as("OpenCLI executor must never be invoked on gate timeout").isZero();
+            verify(resources, never()).prepare(anyString(), any(), any());
+        } finally {
+            releaseGate.countDown();
+            holder.join(2000);
+        }
+    }
+
+    /**
+     * Parallel safe commands can execute concurrently on the same instance when maxConcurrency allows.
+     */
+    @Test
+    void shouldExecuteParallelSafeCommandsConcurrentlyOnServiceLayer() throws Exception {
+        dispatchRegistry.unregister(instance.getId());
+        instance.setMaxConcurrency(2);
+        instance.setMaxPending(2);
+        dispatchRegistry.register(instance);
+
+        CountDownLatch twoInExecutor = new CountDownLatch(2);
+        CountDownLatch releaseExecutor = new CountDownLatch(1);
+
+        executor.setBehavior(() -> {
+            twoInExecutor.countDown();
+            try {
+                releaseExecutor.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return FakeOpenCliExecutor.Behaviour.successJson("[{\"parallel\":true}]");
+        });
+
+        HubExecutionRequestDTO req1 = request(instance.getId(), 5000L);
+        HubExecutionRequestDTO req2 = request(instance.getId(), 5000L);
+
+        HubExecutionDTO exec1 = service.submit(req1);
+        HubExecutionDTO exec2 = service.submit(req2);
+
+        assertThat(twoInExecutor.await(2, TimeUnit.SECONDS))
+            .as("Both parallel-safe executions run concurrently inside executor")
+            .isTrue();
+
+        releaseExecutor.countDown();
+
+        HubExecutionDTO res1 = service.getById(exec1.getId(), 2);
+        HubExecutionDTO res2 = service.getById(exec2.getId(), 2);
+
+        assertThat(res1.getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
+        assertThat(res2.getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
+    }
+
+    /** Persistent-session commands remain serialized even when the instance has two workers. */
+    @Test
+    void shouldSerializeExclusiveCommandsOnServiceLayer() throws Exception {
+        dispatchRegistry.unregister(instance.getId());
+        instance.setMaxConcurrency(2);
+        instance.setMaxPending(2);
+        dispatchRegistry.register(instance);
+        normalized.getCommand().setSiteSession(SiteSessionMode.PERSISTENT);
+
+        AtomicInteger active = new AtomicInteger();
+        AtomicInteger maxActive = new AtomicInteger();
+        CountDownLatch firstEntered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        executor.setBehavior(() -> {
+            int current = active.incrementAndGet();
+            maxActive.updateAndGet(previous -> Math.max(previous, current));
+            firstEntered.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            } finally {
+                active.decrementAndGet();
+            }
+            return FakeOpenCliExecutor.Behaviour.successJson("[{\"exclusive\":true}]");
+        });
+
+        HubExecutionDTO first = service.submit(request(instance.getId(), 5_000L));
+        HubExecutionDTO second = service.submit(request(instance.getId(), 5_000L));
+        assertThat(firstEntered.await(2, TimeUnit.SECONDS)).isTrue();
+        Thread.sleep(100L);
+        assertThat(executor.invocationCount())
+            .as("the second exclusive command must wait outside OpenCLI")
+            .isOne();
+
+        release.countDown();
+        assertThat(service.getById(first.getId(), 2).getStatus())
+            .isEqualTo(HubExecutionStatus.SUCCEEDED);
+        assertThat(service.getById(second.getId(), 2).getStatus())
+            .isEqualTo(HubExecutionStatus.SUCCEEDED);
+        assertThat(maxActive).hasValue(1);
+    }
+
     private HubExecutionRequestDTO request(String instanceId, long timeoutMillis) {
         HubExecutionRequestDTO request = new HubExecutionRequestDTO();
         request.setInstanceId(instanceId);
@@ -860,6 +999,9 @@ class HubExecutionServiceTest {
         OpenCliCommand command = new OpenCliCommand();
         command.setSite("bilibili");
         command.setName("hot");
+        command.setBrowser(true);
+        command.setAccess(HubCommandAccess.READ);
+        command.setDefaultWindowMode("background");
         command.setSiteSession(mode);
         return new NormalizedOpenCliArgv(
             command,

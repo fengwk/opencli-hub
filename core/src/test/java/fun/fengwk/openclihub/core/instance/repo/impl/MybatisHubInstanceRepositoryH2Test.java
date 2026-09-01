@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.openclihub.core.instance.repo.HubInstanceRepository;
+import fun.fengwk.openclihub.core.instance.repo.impl.model.HubInstanceDO;
 import fun.fengwk.openclihub.core.instance.service.impl.HubInstanceServiceImpl;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.core.instance.service.validation.CatalogWebsiteLookup;
@@ -64,6 +65,7 @@ class MybatisHubInstanceRepositoryH2Test {
         instance.setState(HubInstanceState.RUNNING);
         instance.setWebsites(List.of("bilibili", "chatgpt"));
         instance.setMaxPending(5);
+        instance.setMaxConcurrency(3);
         instance.setPriority(7);
         instance.setProxyMode(HubProxyMode.CUSTOM);
         instance.setProxyServer("http://proxy.example:8080");
@@ -82,6 +84,7 @@ class MybatisHubInstanceRepositoryH2Test {
         assertThat(loaded.getState()).isEqualTo(HubInstanceState.RUNNING);
         assertThat(loaded.getWebsites()).containsExactly("bilibili", "chatgpt");
         assertThat(loaded.getMaxPending()).isEqualTo(5);
+        assertThat(loaded.getMaxConcurrency()).isEqualTo(3);
         assertThat(loaded.getPriority()).isEqualTo(7);
         assertThat(loaded.getProxyMode()).isEqualTo(HubProxyMode.CUSTOM);
         assertThat(loaded.getProxyServer()).isEqualTo("http://proxy.example:8080");
@@ -214,6 +217,46 @@ class MybatisHubInstanceRepositoryH2Test {
         assertThat(loaded.getContextId()).isEqualTo("ctx-" + instance.getCode());
         assertThat(loaded.getUpdateTime()).isEqualTo(FIXED_NOW);
         assertThat(loaded.getCreateTime()).isEqualTo(originalCreateTime);
+    }
+
+    @Test
+    void shouldDefaultMaxConcurrencyToOneWhenMissingInStorage() {
+        // Simulates a legacy row where max_concurrency was not set at insert time.
+        String id = repository.generateId();
+        String code = uniqueCode("legacy-concurrency");
+        LocalDateTime now = LocalDateTime.now();
+        jdbcTemplate.update("""
+            insert into hub_instance (
+                id, code, display_name, context_id, state, websites_json,
+                max_pending, priority, proxy_mode, proxy_server,
+                last_error_message, state_changed_at, gmt_create, gmt_modified, version
+            ) values (?, ?, ?, ?, ?, ?, ?, 0, 'INHERIT', null, null, ?, ?, ?, 0)
+            """,
+            id, code, "Legacy", null, HubInstanceState.STOPPED.name(), "[]",
+            5, now, now, now);
+
+        HubInstance loaded = repository.findById(id);
+        assertThat(loaded).isNotNull();
+        assertThat(loaded.getMaxConcurrency()).isEqualTo(1);
+    }
+
+    @Test
+    void shouldFallbackToMaxConcurrencyOneWhenDoHasNull() throws Exception {
+        // Verify fromDO handles null maxConcurrency in HubInstanceDO safely.
+        HubInstanceDO source = new HubInstanceDO();
+        source.setId("test-null-mc");
+        source.setCode("test-null-mc");
+        source.setDisplayName("Test");
+        source.setState("STOPPED");
+        source.setMaxPending(5);
+        source.setMaxConcurrency(null);
+
+        java.lang.reflect.Method fromDoMethod = MybatisHubInstanceRepository.class
+            .getDeclaredMethod("fromDO", HubInstanceDO.class);
+        fromDoMethod.setAccessible(true);
+        HubInstance instance = (HubInstance) fromDoMethod.invoke(repository, source);
+
+        assertThat(instance.getMaxConcurrency()).isEqualTo(1);
     }
 
     private HubInstance build(String id, String code, HubInstanceState state) {

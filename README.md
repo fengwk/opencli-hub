@@ -35,10 +35,10 @@
 
 - 每个 Instance 独占 Chrome Profile、Xvfb、openbox、x11vnc 和 Browser Bridge `contextId`。
 - Hub 共享一个 OpenCLI daemon，并按受控 Command Catalog 校验参数和重建 argv；不接受任意 shell/CLI 透传。
-- 单个 Instance 串行执行且有界排队；支持显式 `instanceId` 粘性路由；不自动 failover，也不自动重试写命令。
+- 单个 Instance 支持配置并发度（`maxConcurrency` 1..4，默认 1）与排队容量（`maxPending` 0..50，默认 5，0 表示不排队）；仅 `browser=true`、`siteSession=EPHEMERAL`、`access=READ`、`defaultWindowMode=null` 或精确为 `background`、无受管输出的任务允许并发，其余任务保持独占串行；支持显式 `instanceId` 粘性路由；不自动 failover，也不自动重试写命令。
 - 提供 Instance 生命周期、VNC WebSocket、执行历史、资源、日志、命令黑名单/输出规则和浏览器代理设置。
 - 支持通过管理端配置 OpenCLI 插件源，并调用官方 `opencli plugin install/update/list` 同步；详见 [插件维护](docs/plugins.md)。
-- 支持三种编译期数据库变体：PostgreSQL 16（默认）、MySQL 8.4 LTS、SQLite。变体通过 Spring SQL initialization 幂等应用当前 schema（schema-only，system settings 由应用懒初始化）；旧 MySQL schema 的结构升级仍须显式迁移。
+- 支持三种编译期数据库变体：PostgreSQL 16（默认）、MySQL 8.4 LTS、SQLite。变体通过 Spring SQL initialization 幂等应用当前 schema（schema-only，system settings 由应用懒初始化）；既有旧库提供 PostgreSQL、MySQL、SQLite 对应的结构升级迁移脚本。
 - 后端 ID 是不透明字符串：新记录使用 UUID，旧正 BIGINT ID 保留为十进制字符串。集成方不得将 ID 转为 JavaScript `Number`。
 
 ## 架构
@@ -308,6 +308,7 @@ curl --fail --show-error --request POST "$HUB_URL/api/instances" \
     "code":"bilibili-primary",
     "displayName":"Bilibili primary",
     "websites":["bilibili"],
+    "maxConcurrency":1,
     "maxPending":5,
     "proxyMode":"INHERIT"
   }'
@@ -454,7 +455,7 @@ share/      REST DTO、枚举、错误码与 ID 工具
 core/       领域服务、持久化、Runtime、OpenCLI 与资源逻辑
 web/        Spring Boot、REST Controller、SPA 与 VNC WebSocket
 frontend/   React/Vite 管理端
-scripts/    MySQL 手工迁移与 Docker 构建/Smoke 工具
+scripts/    PostgreSQL/MySQL/SQLite 数据库迁移与 Docker 构建/Smoke 工具
 docs/       设计、迁移、安全与运维文档
 ```
 

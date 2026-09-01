@@ -13,19 +13,16 @@ import java.util.List;
 import org.springframework.stereotype.Component;
 
 /**
- * Picks the {@link HubInstance} that will run an asynchronous execution task. Mirrors the
- * contract from {@code docs/technical-design.md §20}:
+ * Picks the {@link HubInstance} that will run an asynchronous execution task.
+ *
+ * <p>Routing semantics:
  * <ul>
  *   <li><b>Explicit instanceId</b> — strict, no failover.</li>
- *   <li><b>Automatic</b> — least-busy among candidates; ties broken by higher priority, then ascending id.</li>
+ *   <li><b>Automatic</b> — lowest accepted non-terminal task count;
+ *       ties broken by higher priority, then ascending id.</li>
+ *   <li><b>Queue full handling</b> — when otherwise-eligible candidates exist but all are full,
+ *       automatic routing returns {@code INSTANCE_QUEUE_FULL} instead of {@code NO_INSTANCE_AVAILABLE}.</li>
  * </ul>
- *
- * <p>Candidate criteria mirror the design §20.1 list and are evaluated against BOTH the
- * persisted {@link HubInstance} (state, websites, persisted contextId) AND the live
- * {@link HubInstanceRuntime} (live contextId, dispatcher registered, queue capacity). The
- * live runtime's {@code contextId} must be non-null AND match the persisted one — a stale
- * snapshot of an instance whose extension has rebounded since the last persist will be
- * rejected.
  *
  * @author fengwk
  */
@@ -69,17 +66,12 @@ public class HubExecutionRouter {
 
     private HubInstance chooseExplicit(String explicitInstanceId, String site) {
         HubInstance instance = instanceService.get(explicitInstanceId);
-        if (instance.getState() != HubInstanceState.RUNNING) {
-            throw HubErrorCodes.INSTANCE_NOT_RUNNING.asThrowable(
-                "Specified instance is not RUNNING: " + explicitInstanceId);
-        }
-        if (!instance.supportsWebsite(site)) {
-            throw HubErrorCodes.INSTANCE_WEBSITE_NOT_ENABLED.asThrowable(
-                "Specified instance does not support site: " + site);
-        }
-        CandidateCheck check = checkCandidate(instance, site);
+        CandidateCheck check = checkCandidateEligibility(instance, site);
         if (check != null) {
             throw check.toThrowable();
+        }
+        if (isInstanceFull(instance)) {
+            throw CandidateCheck.queueFull.toThrowable();
         }
         return instance;
     }
@@ -94,36 +86,61 @@ public class HubExecutionRouter {
         }
         HubInstance chosen = null;
         int chosenLoad = Integer.MAX_VALUE;
-        int chosenPriority = Integer.MIN_VALUE;
+        boolean hasFullCandidate = false;
+
         for (HubInstance instance : all) {
-            if (checkCandidate(instance, site) != null) {
+            if (checkCandidateEligibility(instance, site) != null) {
                 continue;
             }
             int load = loadOf(instance);
-            int priority = instance.getPriority();
-            if (chosen == null
-                || load < chosenLoad
-                || (load == chosenLoad && priority > chosenPriority)
-                || (load == chosenLoad && priority == chosenPriority
-                    && instance.getId().compareTo(chosen.getId()) < 0)) {
+            if (isInstanceFull(instance, load)) {
+                hasFullCandidate = true;
+                continue;
+            }
+            if (isBetterCandidate(instance, load, chosen, chosenLoad)) {
                 chosen = instance;
                 chosenLoad = load;
-                chosenPriority = priority;
             }
         }
         if (chosen == null) {
+            if (hasFullCandidate) {
+                throw HubErrorCodes.INSTANCE_QUEUE_FULL.asThrowable(
+                    "All candidate instances for site " + site + " are full");
+            }
             throw HubErrorCodes.NO_INSTANCE_AVAILABLE.asThrowable(
                 "No instance available for site: " + site);
         }
         return chosen;
     }
 
+    private boolean isBetterCandidate(
+        HubInstance candidate, int candidateLoad,
+        HubInstance chosen, int chosenLoad) {
+        if (chosen == null) {
+            return true;
+        }
+        if (candidateLoad != chosenLoad) {
+            return candidateLoad < chosenLoad;
+        }
+        if (candidate.getPriority() != chosen.getPriority()) {
+            return candidate.getPriority() > chosen.getPriority();
+        }
+        return candidate.getId().compareTo(chosen.getId()) < 0;
+    }
+
+    private boolean isInstanceFull(HubInstance instance) {
+        return isInstanceFull(instance, loadOf(instance));
+    }
+
+    private boolean isInstanceFull(HubInstance instance, int load) {
+        return load >= dispatchRegistry.getTotalCapacity(instance.getId());
+    }
+
     /**
-     * @return {@code null} when {@code instance} satisfies every candidate criterion; a
-     *         non-null {@link CandidateCheck} carries the precise failure reason so the
-     *         caller can rethrow the matching domain error.
+     * @return {@code null} when {@code instance} satisfies every candidate eligibility criterion;
+     *         a non-null {@link CandidateCheck} carries the precise failure reason.
      */
-    private CandidateCheck checkCandidate(HubInstance instance, String site) {
+    private CandidateCheck checkCandidateEligibility(HubInstance instance, String site) {
         if (instance.getState() != HubInstanceState.RUNNING) {
             return CandidateCheck.notRunning;
         }
@@ -149,9 +166,6 @@ public class HubExecutionRouter {
         HubInstanceRuntimeSnapshot dispatch = dispatchRegistry.getSnapshot(instance.getId());
         if (!dispatch.isRegistered()) {
             return CandidateCheck.dispatcherAbsent;
-        }
-        if (dispatch.getPendingCount() >= dispatchRegistry.getMaxPending(instance.getId())) {
-            return CandidateCheck.queueFull;
         }
         return null;
     }
@@ -204,7 +218,7 @@ public class HubExecutionRouter {
         queueFull {
             @Override ThrowableConventionErrorCode toThrowable() {
                 return HubErrorCodes.INSTANCE_QUEUE_FULL.asThrowable(
-                    "instance pending queue is full");
+                    "instance queue is full");
             }
         };
 

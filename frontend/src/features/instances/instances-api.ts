@@ -4,7 +4,8 @@ import type { HubInstance, HubInstanceVncStatus, InstanceEditableProperties, Ins
 
 const instancesPath = '/instances'
 
-type HubInstanceResponse = Omit<HubInstance, 'proxyMode' | 'proxyServer'> & Partial<Pick<HubInstance, 'proxyMode' | 'proxyServer'>>
+type HubInstanceResponse = Omit<HubInstance, 'proxyMode' | 'proxyServer' | 'maxConcurrency' | 'maxPending'> &
+  Partial<Pick<HubInstance, 'proxyMode' | 'proxyServer' | 'maxConcurrency' | 'maxPending'>>
 
 function instancePath(id: BackendId): string {
   return `${instancesPath}/${encodeURIComponent(id)}`
@@ -16,8 +17,24 @@ function isInstanceProxyMode(value: unknown): value is InstanceProxyMode {
 
 function normalizeInstance(instance: HubInstanceResponse): HubInstance {
   const proxyMode = isInstanceProxyMode(instance.proxyMode) ? instance.proxyMode : 'INHERIT'
+  const maxConcurrency =
+    typeof instance.maxConcurrency === 'number' &&
+    Number.isInteger(instance.maxConcurrency) &&
+    instance.maxConcurrency >= 1 &&
+    instance.maxConcurrency <= 4
+      ? instance.maxConcurrency
+      : 1
+  const maxPending =
+    typeof instance.maxPending === 'number' &&
+    Number.isInteger(instance.maxPending) &&
+    instance.maxPending >= 0 &&
+    instance.maxPending <= 50
+      ? instance.maxPending
+      : 5
   return {
     ...instance,
+    maxConcurrency,
+    maxPending,
     proxyMode,
     proxyServer: proxyMode === 'CUSTOM' && typeof instance.proxyServer === 'string' ? instance.proxyServer : null,
   }

@@ -238,6 +238,48 @@ class HubInstanceServiceImplTest {
     }
 
     @Test
+    void shouldRetainExistingMaxConcurrencyWhenUpdatePayloadOmitsIt() {
+        // Legacy update requests omitting maxConcurrency must preserve existing DB values.
+        HubInstance existing = newInstance("1", "kept-code");
+        existing.setMaxConcurrency(3);
+        doReturn(existing).when(repository).findById("1");
+        doReturn(existing).when(repository).findByCode("kept-code");
+        doReturn(true).when(repository).update(any());
+
+        HubInstanceUpdateDTO dto = new HubInstanceUpdateDTO();
+        dto.setCode("kept-code");
+        dto.setDisplayName("Renamed");
+        dto.setWebsites(List.of("bilibili"));
+        dto.setMaxPending(5);
+        dto.setMaxConcurrency(null);
+
+        HubInstance updated = service.update("1", dto);
+
+        assertThat(updated.getMaxConcurrency()).isEqualTo(3);
+    }
+
+    @Test
+    void shouldUpdateMaxConcurrencyWhenProvided() {
+        // Modern clients providing maxConcurrency in range 1..4 must have it applied.
+        HubInstance existing = newInstance("1", "kept-code");
+        existing.setMaxConcurrency(1);
+        doReturn(existing).when(repository).findById("1");
+        doReturn(existing).when(repository).findByCode("kept-code");
+        doReturn(true).when(repository).update(any());
+
+        HubInstanceUpdateDTO dto = new HubInstanceUpdateDTO();
+        dto.setCode("kept-code");
+        dto.setDisplayName("Renamed");
+        dto.setWebsites(List.of("bilibili"));
+        dto.setMaxPending(5);
+        dto.setMaxConcurrency(4);
+
+        HubInstance updated = service.update("1", dto);
+
+        assertThat(updated.getMaxConcurrency()).isEqualTo(4);
+    }
+
+    @Test
     void shouldMaintainStateAndClearErrorOnNormalTransition() {
         // Transitioning out of an error state must clear lastErrorMessage.
         HubInstance existing = newInstance("1", "code");
@@ -392,6 +434,24 @@ class HubInstanceServiceImplTest {
         instance.setState(HubInstanceState.RUNNING);
         instance.setWebsites(List.of("bilibili"));
         instance.setMaxPending(51);
+
+        assertThatThrownBy(() -> service.create(instance))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_ARGUMENT_INVALID));
+
+        verify(repository, never()).add(any());
+    }
+
+    @Test
+    void shouldRejectCreateWhenMaxConcurrencyInvalid() {
+        // create must enforce the 1..4 range.
+        HubInstance instance = new HubInstance();
+        instance.setCode("bilibili-c");
+        instance.setDisplayName("C");
+        instance.setState(HubInstanceState.RUNNING);
+        instance.setWebsites(List.of("bilibili"));
+        instance.setMaxPending(5);
+        instance.setMaxConcurrency(5);
 
         assertThatThrownBy(() -> service.create(instance))
             .isInstanceOf(ThrowableConventionErrorCode.class)

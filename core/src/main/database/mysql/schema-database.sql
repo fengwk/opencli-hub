@@ -16,6 +16,7 @@ create table if not exists hub_instance (
     state varchar(32) not null,
     websites_json text not null,
     max_pending int not null,
+    max_concurrency int not null default 1,
     priority int not null default 0,
     proxy_mode varchar(16) not null default 'INHERIT',
     proxy_server varchar(512) null,

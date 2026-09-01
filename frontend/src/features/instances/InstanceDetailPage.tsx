@@ -146,6 +146,7 @@ export function InstanceDetailPage() {
     code: instance.code,
     displayName: instance.displayName,
     websites: instance.websites ?? [],
+    maxConcurrency: instance.maxConcurrency,
     maxPending: instance.maxPending,
     priority: instance.priority ?? 0,
     proxyMode: instance.proxyMode,
@@ -203,7 +204,7 @@ export function InstanceDetailPage() {
               <div><dt>网站</dt><dd>{instance.websites?.join(', ') || '未配置'}</dd></div>
               <div><dt>Context ID</dt><dd className="mono-value" title={instance.contextId ?? undefined}>{instance.contextId || '未分配'}</dd></div>
               <div><dt>显示器</dt><dd>{runtime?.registered ? `:${runtime.displayNumber ?? '—'}` : '运行时未注册'}</dd></div>
-              <div><dt>执行队列</dt><dd>活跃 {runtime?.activeCount ?? 0} / 待处理 {runtime?.pendingCount ?? 0}（上限 {instance.maxPending}）</dd></div>
+              <div><dt>执行队列</dt><dd>活跃 {runtime?.activeCount ?? 0}/{instance.maxConcurrency} · 待处理 {runtime?.pendingCount ?? 0}/{instance.maxPending}</dd></div>
               <div><dt>优先级</dt><dd>{instance.priority ?? 0}</dd></div>
               <div><dt>代理</dt><dd title={instance.proxyServer ?? undefined}>{proxySummary(instance.proxyMode, instance.proxyServer)}</dd></div>
             </dl>

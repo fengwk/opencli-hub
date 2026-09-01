@@ -31,7 +31,8 @@ public class FakeOpenCliExecutor implements OpenCliExecutor {
     private Supplier<Behaviour> behaviour = () -> Behaviour.successJson("{}");
     /** Optional factory returning a Process so selected tests can drive the real path. */
     private java.util.function.Function<List<String>, Process> spawnProcessFactory;
-    private final java.util.List<Invocation> invocations = new java.util.ArrayList<>();
+    private final java.util.List<Invocation> invocations =
+        new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public void setBehavior(Supplier<Behaviour> behaviour) {
         this.behaviour = behaviour;

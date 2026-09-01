@@ -161,6 +161,7 @@ class HubInstanceLifecycleServiceTest {
         assertThat(created.getCode()).isEqualTo("bilibili-a");
         assertThat(created.getState()).isEqualTo(HubInstanceState.RUNNING);
         assertThat(created.getContextId()).isEqualTo("ctx-success");
+        assertThat(created.getMaxConcurrency()).isEqualTo(1);
         assertThat(created.getStateChangedAt()).isNotNull();
 
         // Runtime registered.
@@ -191,6 +192,17 @@ class HubInstanceLifecycleServiceTest {
         String chromeCommand = lastChromeCommand();
         assertThat(chromeCommand).contains("--disable-gpu", "--no-proxy-server");
         assertThat(chromeCommand).doesNotContain("--disable-software-rasterizer");
+    }
+
+    @Test
+    void shouldApplyExplicitMaxConcurrencyOnCreate() {
+        daemon.addConnectedContextAfterFetch("ctx-explicit-concurrency", 2);
+
+        HubInstanceCreateDTO dto = createDto("bilibili-exp-c");
+        dto.setMaxConcurrency(3);
+        HubInstance created = lifecycle.create(dto);
+
+        assertThat(created.getMaxConcurrency()).isEqualTo(3);
     }
 
     /** A newly visible RUNNING row must already have runtime and dispatcher registrations. */
@@ -720,6 +732,28 @@ class HubInstanceLifecycleServiceTest {
         assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
             .isEqualTo(chromeLaunches);
         assertThat(lastChromeCommand()).contains("--no-proxy-server");
+    }
+
+    /**
+     * Updating maxConcurrency on a RUNNING instance propagates dynamically to the registered dispatcher.
+     */
+    @Test
+    void shouldPropagateRunningMaxConcurrencyWithoutRestartingChrome() {
+        String id = seedPersistedInstance("bilibili-update-concurrency", "ctx-update-concurrency");
+        daemon.addConnectedContextAfterFetch("ctx-update-concurrency", 2);
+        lifecycle.start(id);
+        assertThat(dispatchRegistry.getMaxConcurrency(id)).isEqualTo(1);
+
+        HubInstanceUpdateDTO update = updateDto(instanceService.get(id), 0);
+        update.setMaxConcurrency(3);
+        HubInstance updated = lifecycle.update(id, update);
+
+        assertThat(updated.getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(updated.getMaxConcurrency()).isEqualTo(3);
+        assertThat(updated.getMaxPending()).isZero();
+        assertThat(dispatchRegistry.getMaxConcurrency(id)).isEqualTo(3);
+        assertThat(dispatchRegistry.getMaxPending(id)).isZero();
+        assertThat(dispatchRegistry.getTotalCapacity(id)).isEqualTo(3);
     }
 
     @Test

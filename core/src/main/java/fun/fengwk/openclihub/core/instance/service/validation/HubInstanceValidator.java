@@ -22,7 +22,8 @@ import org.springframework.stereotype.Component;
  *   <li>{@code displayName} must be non-blank and within 128 chars after trim.</li>
  *   <li>{@code websites} must be non-empty, trimmed, deduplicated and each item must belong
  *       to the catalog website set.</li>
- *   <li>{@code maxPending} must be positive and within a reasonable upper bound.</li>
+ *   <li>{@code maxPending} must be non-negative (0..50) and within a reasonable upper bound.</li>
+ *   <li>{@code maxConcurrency} (when provided) must be within 1..4.</li>
  *   <li>Proxy fields must form a supported Instance policy and safe browser proxy URI.</li>
  * </ul>
  *
@@ -46,8 +47,10 @@ public class HubInstanceValidator {
 
     public static final int CODE_MAX_LENGTH = 64;
     public static final int DISPLAY_NAME_MAX_LENGTH = 128;
-    public static final int MAX_PENDING_MIN = 1;
+    public static final int MAX_PENDING_MIN = 0;
     public static final int MAX_PENDING_MAX = 50;
+    public static final int MAX_CONCURRENCY_MIN = 1;
+    public static final int MAX_CONCURRENCY_MAX = 4;
     public static final int CONTEXT_ID_MAX_LENGTH = 128;
 
     private final CatalogWebsiteLookup websiteSource;
@@ -58,8 +61,9 @@ public class HubInstanceValidator {
 
     /**
      * Validates the editable properties and returns the normalized website list (trimmed,
-     * deduplicated, order-preserving). Side effect: writes the normalized code, displayName
-     * and maxPending back to {@code dto} so the caller persists the canonical form.
+     * deduplicated, order-preserving). Side effect: writes the normalized code, displayName,
+     * maxPending and maxConcurrency (when provided) back to {@code dto} so the caller
+     * persists the canonical form.
      *
      * @param dto input properties, may be {@code null}
      * @return normalized websites
@@ -72,6 +76,9 @@ public class HubInstanceValidator {
         dto.setCode(validateCode(dto.getCode()));
         dto.setDisplayName(validateDisplayName(dto.getDisplayName()));
         dto.setMaxPending(validateMaxPending(dto.getMaxPending()));
+        if (dto.getMaxConcurrency() != null) {
+            dto.setMaxConcurrency(validateMaxConcurrency(dto.getMaxConcurrency()));
+        }
         dto.setPriority(validatePriority(dto.getPriority()));
         ProxyConfiguration proxy = HubProxyValidator.normalizeInstance(
             dto.getProxyMode(), dto.getProxyServer());
@@ -148,6 +155,26 @@ public class HubInstanceValidator {
                 "maxPending must be at most " + MAX_PENDING_MAX);
         }
         return maxPending;
+    }
+
+    /**
+     * Validates maxConcurrency range.
+     *
+     * @return the validated value as primitive int
+     */
+    public int validateMaxConcurrency(Integer maxConcurrency) {
+        if (maxConcurrency == null) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("maxConcurrency is required");
+        }
+        if (maxConcurrency < MAX_CONCURRENCY_MIN) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable(
+                "maxConcurrency must be at least " + MAX_CONCURRENCY_MIN);
+        }
+        if (maxConcurrency > MAX_CONCURRENCY_MAX) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable(
+                "maxConcurrency must be at most " + MAX_CONCURRENCY_MAX);
+        }
+        return maxConcurrency;
     }
 
     /**

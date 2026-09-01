@@ -274,9 +274,54 @@ scripts/docker/validate-opencli-artifact-lock.sh
 scripts/docker/test-install-opencli.sh
 ```
 
-### 6.3 既有 MySQL schema
+### 6.3 数据库升级与迁移
 
-对于旧版本数据库，必须在停机窗口按此顺序执行（脚本兼容 MySQL 5.7 与 8.4）：
+#### 6.3.1 三库标准升级顺序
+
+跨版本的数据库结构升级必须在维护停机窗口执行，严格遵循以下顺序：
+
+1. **停服务**：等待或停止正在运行的 Execution，停止所有 Hub 进程/容器，避免迁移期间发生并发读写。
+2. **备份**：按 §5 备份数据库（PostgreSQL/MySQL 逻辑导出，SQLite 数据卷快照）以及 Hub 存储与 Profile 卷。
+3. **执行迁移**：针对当前使用的数据库变体执行对应的迁移脚本（见下方各数据库章节），并检查输出确认迁移成功。
+4. **升级应用**：部署包含新版本的 Hub 镜像或 JAR 包（必须使用相同的 CRX signing key，保留现有 Profile 身份）。
+5. **启动并验证**：启动 Hub，调用 `GET /actuator/health` 与 `GET /api/instances` 确认状态正常，查看实例 `maxConcurrency` 字段，并执行只读命令验证端到端功能。
+
+#### 6.3.2 并发度（maxConcurrency）与排队（maxPending）配置说明
+
+- **配置范围与默认值**：
+  - `maxConcurrency`：合法范围 `1..4`，默认值 `1`。所有数据库升级脚本均将现有历史 Instance 行设置为 `1`，确保升级后保持原有的单并发/串行行为，不产生非预期的并发冲击。
+  - `maxPending`：合法范围现为 `0..50`（新建默认 `5`；旧 Instance 保留既有设定值），现有旧库的 `max_pending` 列无需重建。
+  - Compose 可通过 `OPENCLI_HUB_DEFAULT_MAX_CONCURRENCY` 覆盖创建请求未提供 `maxConcurrency` 时的默认值；建议生产保持 `1`，仅对明确选定的 Instance 在管理页单独灰度调高。
+- **maxPending=0 语义**：`maxPending = 0` 表示该 Instance 不启用排队缓冲。当该 Instance 正在执行的任务数达到 `maxConcurrency` 时，新提交的请求将无法排队，立即被拒绝并返回 HTTP 429 (`INSTANCE_QUEUE_FULL`)。
+- **总承载容量**：每个 Instance 的最大承载任务数为 `maxConcurrency + maxPending`。
+- **自动负载分配**：Hub 以每个 Instance 已接受但尚未终态的任务总数
+  `acceptedNotTerminalCount` 作为路由负载，覆盖执行中、排队中以及 Dispatcher
+  接收到线程池指标可见前的交接窗口；优先选择该总数最小的 Instance，不按
+  `maxConcurrency` 归一化。负载相同时再比较 `priority`，最后按 Instance ID 稳定打破平局。
+- **并发调度与独占规则**：
+  - 只有**同时**满足浏览器命令（`browser=true`）、`siteSession=EPHEMERAL`、`access=READ`、`defaultWindowMode=null` 或精确为 `background`，且**无受管输出规则**（`HubCommandOutputRule`）的命令才允许并行执行（最多并行 `maxConcurrency` 个）；
+  - 所有不满足上述条件的命令（包括 `siteSession` / `access` 元数据缺失、空字符串或大小写不匹配的窗口模式、写操作、持久会话、前台窗口交互或受管输出）均作为**独占任务**执行，与同 Instance 的其他任务互斥。
+- **Canary 灰度与运维建议**：
+  - 在多 Instance 生产环境中，建议采用 Canary 灰度策略：先选取 1 个非核心 Instance 将 `maxConcurrency` 从 `1` 调至 `2`，观察 Chrome 稳定性、内存占用与业务返回质量，确认稳定后再逐步推广。
+- **Chrome / shm / 渲染进程稳定性边界**：
+  - 增加并发 Tab 会提高 Chrome renderer、CPU、内存和 `/dev/shm` 共享内存压力；具体进程数量由 Chrome 的站点隔离与进程复用策略决定；
+  - 容器必须维持 `shm_size: 2gb` 配置；
+  - 运维需持续监控宿主内存、CPU 负载、Chrome renderer 崩溃（Crash）与 context 断开重连事件；若高负载下频繁发生 Tab 崩溃或 context 掉线，应将 `maxConcurrency` 降回较低值（例如 1 或 2）。
+
+#### 6.3.3 PostgreSQL 迁移
+
+PostgreSQL 变体在停机备份后执行：
+
+```bash
+psql -h "$OPENCLI_HUB_POSTGRESQL_HOST" -U "$OPENCLI_HUB_POSTGRESQL_USERNAME" -d opencli_hub \
+  -f scripts/migrate-postgresql-instance-concurrency.sql
+```
+
+该脚本在事务块中幂等执行 `ALTER TABLE hub_instance ADD COLUMN IF NOT EXISTS max_concurrency int NOT NULL DEFAULT 1;`，附带 `information_schema` 校验输出，可安全重复执行。
+
+#### 6.3.4 MySQL 既有 schema 迁移
+
+对于旧版本 MySQL 数据库，必须在停机窗口按此顺序执行（脚本兼容 MySQL 5.7 与 8.4）：
 
 1. `scripts/migrate-mysql-uuid-ids.sql`
 2. `scripts/migrate-mysql-browser-proxy-settings.sql`
@@ -284,6 +329,7 @@ scripts/docker/test-install-opencli.sh
 4. `scripts/migrate-mysql-instance-priority.sql`
 5. `scripts/migrate-mysql-execution-queued-at-immutable.sql`
 6. `scripts/migrate-mysql-instance-state-changed-at-immutable.sql`
+7. `scripts/migrate-mysql-instance-concurrency.sql`
 
 每个脚本都有 `information_schema` 校验输出。完整字段、索引和回滚说明在各自的迁移文档中；不要跳过备份，也不要将 MySQL 8 volume 直接降级挂载到 5.7。
 
@@ -292,6 +338,21 @@ scripts/docker/test-install-opencli.sh
 `migrate-mysql-execution-queued-at-immutable.sql` 去掉 `hub_execution.queued_at` 的 `ON UPDATE CURRENT_TIMESTAMP`，并使用稳定的 `gmt_create` 回填已被状态更新改写的历史入队时间。脚本结束时 `queued_at_rows_still_drifted` 应为 `0`。
 
 `migrate-mysql-instance-state-changed-at-immutable.sql` 去掉 `hub_instance.state_changed_at` 的 `ON UPDATE CURRENT_TIMESTAMP`（`modify column state_changed_at timestamp(3) not null default current_timestamp(3)`）。与 `queued_at` 不同：`state_changed_at` 没有幸存列能还原被 `ON UPDATE` 覆盖的历史状态变更时间（`gmt_create` 是插入时间，`gmt_modified` 是最近一次任意更新），因此脚本**不伪造历史时间、不做回填**——既有已漂移值不可恢复，只保证此后的状态变更写入正确。脚本结束时信息 schema 中该列 `extra` 不应再包含 `on update CURRENT_TIMESTAMP`。
+
+`migrate-mysql-instance-concurrency.sql` 为既有 `hub_instance` 增加 `max_concurrency int not null default 1`（合法范围 1..4，默认 1）。历史行保持 `1`，原有单并发串行行为不受影响。
+
+#### 6.3.5 SQLite 迁移
+
+SQLite 变体在停止 Hub 进程并备份数据卷后执行 shell 脚本：
+
+```bash
+# 传入 SQLite 数据库文件路径（支持含空格路径）
+scripts/migrate-sqlite-instance-concurrency.sh /path/to/opencli-hub.db
+# 或通过环境变量指定
+OPENCLI_HUB_SQLITE_PATH=/path/to/opencli-hub.db scripts/migrate-sqlite-instance-concurrency.sh
+```
+
+该脚本安全检测 `hub_instance` 表中是否存在 `max_concurrency`，执行 `ALTER TABLE hub_instance ADD COLUMN max_concurrency int NOT NULL DEFAULT 1;`，失败即退出，且可安全重复执行（幂等）。
 
 ## 7. 日常检查
 
@@ -304,7 +365,7 @@ curl --fail --show-error 'http://127.0.0.1:8080/api/logs/system?lines=200'
 检查以下状态：
 
 - `health` 为 `UP`；
-- Instance `state`、`lastErrorMessage`、`runtime.activeCount`、`runtime.pendingCount` 合理；
+- Instance `state`、`lastErrorMessage`、`maxConcurrency`、`maxPending`、`runtime.activeCount`、`runtime.pendingCount` 合理；
 - `GET /api/instances/{id}/vnc/status` 的 `vncAvailable` 与实际状态一致；
 - CRX loopback server 仅容器内部可用；
 - 日志、资源、Profile 和数据库备份按保留策略执行。

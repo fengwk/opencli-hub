@@ -155,11 +155,27 @@ class HubInstanceValidatorTest {
     }
 
     @Test
-    void shouldRejectMaxPendingBelowOne() {
-        // maxPending == 0 would create a zero-capacity dispatcher; reject below 1.
+    void shouldAcceptMaxPendingWithinRange() {
         HubInstanceEditablePropertiesDTO dto = baseDto();
         dto.setMaxPending(0);
+        validator.validateEditableProperties(dto);
+        assertThat(dto.getMaxPending()).isZero();
+
+        dto.setMaxPending(50);
+        validator.validateEditableProperties(dto);
+        assertThat(dto.getMaxPending()).isEqualTo(50);
+
+        assertThat(validator.validateMaxPending(0)).isZero();
+        assertThat(validator.validateMaxPending(50)).isEqualTo(50);
+    }
+
+    @Test
+    void shouldRejectMaxPendingBelowZero() {
+        HubInstanceEditablePropertiesDTO dto = baseDto();
+        dto.setMaxPending(-1);
         assertThatThrownBy(() -> validator.validateEditableProperties(dto))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        assertThatThrownBy(() -> validator.validateMaxPending(-1))
             .isInstanceOf(ThrowableConventionErrorCode.class);
     }
 
@@ -167,7 +183,54 @@ class HubInstanceValidatorTest {
     void shouldRejectMaxPendingAboveUpperBound() {
         // Cap protects against unbounded queue depth and matches execution pool sizing.
         HubInstanceEditablePropertiesDTO dto = baseDto();
-        dto.setMaxPending(999);
+        dto.setMaxPending(51);
+        assertThatThrownBy(() -> validator.validateEditableProperties(dto))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        assertThatThrownBy(() -> validator.validateMaxPending(51))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+    }
+
+    @Test
+    void shouldRejectNullMaxPending() {
+        assertThatThrownBy(() -> validator.validateMaxPending(null))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+    }
+
+    @Test
+    void shouldAcceptMaxConcurrencyWithinRange() {
+        assertThat(validator.validateMaxConcurrency(1)).isEqualTo(1);
+        assertThat(validator.validateMaxConcurrency(4)).isEqualTo(4);
+
+        HubInstanceEditablePropertiesDTO dto = baseDto();
+        dto.setMaxConcurrency(2);
+        validator.validateEditableProperties(dto);
+        assertThat(dto.getMaxConcurrency()).isEqualTo(2);
+    }
+
+    @Test
+    void shouldAllowNullMaxConcurrencyInEditableProperties() {
+        // Update requests missing maxConcurrency must preserve existing DB values rather than fail validation.
+        HubInstanceEditablePropertiesDTO dto = baseDto();
+        dto.setMaxConcurrency(null);
+        validator.validateEditableProperties(dto);
+        assertThat(dto.getMaxConcurrency()).isNull();
+    }
+
+    @Test
+    void shouldRejectInvalidMaxConcurrency() {
+        assertThatThrownBy(() -> validator.validateMaxConcurrency(null))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        assertThatThrownBy(() -> validator.validateMaxConcurrency(0))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+        assertThatThrownBy(() -> validator.validateMaxConcurrency(5))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+
+        HubInstanceEditablePropertiesDTO dto = baseDto();
+        dto.setMaxConcurrency(0);
+        assertThatThrownBy(() -> validator.validateEditableProperties(dto))
+            .isInstanceOf(ThrowableConventionErrorCode.class);
+
+        dto.setMaxConcurrency(5);
         assertThatThrownBy(() -> validator.validateEditableProperties(dto))
             .isInstanceOf(ThrowableConventionErrorCode.class);
     }

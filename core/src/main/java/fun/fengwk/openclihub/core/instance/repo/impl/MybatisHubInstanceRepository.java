@@ -78,6 +78,7 @@ public class MybatisHubInstanceRepository implements HubInstanceRepository {
         target.setState(instance.getState() == null ? null : instance.getState().name());
         target.setWebsitesJson(writeJson(instance.getWebsites()));
         target.setMaxPending(instance.getMaxPending());
+        target.setMaxConcurrency(instance.getMaxConcurrency());
         target.setPriority(instance.getPriority());
         target.setProxyMode(instance.getProxyMode() == null ? null : instance.getProxyMode().name());
         target.setProxyServer(instance.getProxyServer());
@@ -101,6 +102,7 @@ public class MybatisHubInstanceRepository implements HubInstanceRepository {
         target.setState(source.getState() == null ? null : HubInstanceState.valueOf(source.getState()));
         target.setWebsites(readStringList(source.getWebsitesJson()));
         target.setMaxPending(source.getMaxPending() == null ? 0 : source.getMaxPending());
+        target.setMaxConcurrency(source.getMaxConcurrency() == null ? 1 : source.getMaxConcurrency());
         target.setPriority(source.getPriority() == null ? 0 : source.getPriority());
         target.setProxyMode(source.getProxyMode() == null
             ? HubProxyMode.INHERIT : HubProxyMode.valueOf(source.getProxyMode()));

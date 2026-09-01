@@ -78,7 +78,11 @@ class ProcessBuilderOpenCliExecutorTest {
 
         assertThat(result.getExitCode()).isZero();
         JsonNode json = objectMapper.readTree(result.getStdout());
-        assertThat(json.get("pwd").asText()).isEqualTo(Path.of(properties.getOpencli().getWorkdir()).toString());
+        // macOS reports /private/var for a configured /var path; verify filesystem identity
+        // rather than requiring the shell's canonical PWD spelling to match the input string.
+        assertThat(Files.isSameFile(
+            Path.of(json.get("pwd").asText()),
+            Path.of(properties.getOpencli().getWorkdir()))).isTrue();
         assertThat(json.get("id").asText()).isEqualTo("9");
         assertThat(json.get("code").asText()).isEqualTo("executor-test");
         assertThat(json.get("owner").asText()).isEqualTo(OpenCliRunOwner.of("9", EXECUTION_ID));

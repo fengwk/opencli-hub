@@ -19,6 +19,7 @@ export interface HubInstance {
   state: HubInstanceState
   websites: string[] | null
   maxPending: number
+  maxConcurrency: number
   priority: number
   proxyMode: InstanceProxyMode
   proxyServer: string | null
@@ -34,6 +35,7 @@ export interface InstanceEditableProperties {
   displayName: string
   websites: string[]
   maxPending: number
+  maxConcurrency: number
   priority: number
   proxyMode: InstanceProxyMode
   proxyServer: string | null

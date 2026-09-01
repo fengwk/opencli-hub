@@ -16,6 +16,7 @@ public class HubInstanceEditablePropertiesDTO {
     private String displayName;
     private List<String> websites;
     private Integer maxPending;
+    private Integer maxConcurrency;
     /** Larger value is preferred when load is equal; default 0. */
     private Integer priority;
     private HubProxyMode proxyMode;

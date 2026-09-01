@@ -104,7 +104,7 @@ Java Hub 负责：
 - Instance 配置和生命周期；
 - 进程管理；
 - Command Catalog 和调用校验；
-- 路由和单 Instance 串行队列；
+- 路由和 Instance 并发/排队调度；
 - Execution 记录；
 - 资源和日志文件；
 - REST API、WebSocket VNC 和管理前端。
@@ -345,6 +345,7 @@ opencli:
       process-stop-grace-millis: 3000
       max-capture-chars: ${OPENCLI_HUB_MAX_CAPTURE_CHARS:1048576}
       default-max-pending: 5
+      default-max-concurrency: ${OPENCLI_HUB_DEFAULT_MAX_CONCURRENCY:1}
 
     resource:
       root-dir: ${OPENCLI_HUB_RESOURCE_DIR:${opencli.hub.data-dir}/resources}
@@ -374,6 +375,7 @@ public class HubInstance {
     private HubInstanceState state;
     private List<String> websites;
     private int maxPending;
+    private int maxConcurrency = 1;
     private HubProxyMode proxyMode;
     private String proxyServer;
     private String lastErrorMessage;
@@ -504,6 +506,7 @@ create table hub_instance (
     state varchar(32) not null,
     websites_json text not null,
     max_pending int not null,
+    max_concurrency int not null default 1,
     priority int not null default 0,
     proxy_mode varchar(16) not null default 'INHERIT',
     proxy_server varchar(512) null,
@@ -1098,6 +1101,7 @@ contextId
 state = RUNNING
 websites
 maxPending
+maxConcurrency
 ```
 
 ### 16.6 失败清理
@@ -1329,7 +1333,7 @@ state == RUNNING
 && runtime exists
 && contextId connected
 && websites contains command.site
-&& pending < maxPending
+&& acceptedNotTerminalCount < maxConcurrency + maxPending
 ```
 
 ### 20.2 选择策略
@@ -1339,10 +1343,11 @@ routingLoad = acceptedNotTerminalCount
 ```
 
 `routingLoad` 是已被 Dispatcher 接受但尚未达到 terminal 的任务数，包含任务从
-`submit` 到 worker 暴露为 active/pending 的过渡窗口。选择 `routingLoad` 最小者；
-负载相同时选 `priority` 更大者（默认 0，越大越优先）；仍相同时按不透明字符串 ID
-的字典序排序，仅用于稳定打破平局，不表达创建时间。运行时 API 展示的
-`activeCount`、`pendingCount` 和 `load` 仍保持原有的 executor 指标定义。
+`submit` 到 worker 暴露为 active/pending 的过渡窗口。自动路由直接比较
+`routingLoad` 原始总量，选择已接受未终态任务数最少的 Instance，不按
+`maxConcurrency` 归一化；负载相同时选 `priority` 更大者（默认 0，越大越优先）；
+仍相同时按不透明字符串 ID 的字典序排序，仅用于稳定打破平局，不表达创建时间。
+运行时 API 展示的 `activeCount` 和 `pendingCount` 仍保持 executor 指标定义。
 
 同一 Hub 进程内，所有 Execution 提交的 `choose instance -> insert PENDING ->
 Dispatcher accept` 由短临界区 admission lock 串行化，避免并发请求在前一任务尚未
@@ -1361,18 +1366,38 @@ Dispatcher accept` 由短临界区 admission lock 串行化，避免并发请求
 
 任何失败直接返回，不 failover。
 
-### 20.4 单 Instance 串行
+### 20.4 Instance 并发与排队调度
 
-每个 Instance 使用：
+每个 Instance 的并发度与排队容量受 `maxConcurrency` 与 `maxPending` 控制：
 
-```text
-ThreadPoolExecutor(1, 1, ArrayBlockingQueue(maxPending))
-```
+- `maxConcurrency`：合法范围 `1..4`，默认值 `1`。升级后已有旧记录保持 `1`，默认不改变原有单并发行为；
+- `maxPending`：合法范围 `0..50`，新建默认值 `5`，旧 Instance 保留既有设定值。`maxPending = 0` 表示无排队等待缓冲，实例达到最大并发数时立即返回 `429`（`INSTANCE_QUEUE_FULL`）；
+- 总承载容量公式：`总容量 = maxConcurrency + maxPending`。
 
-- active 最大为 1；
-- queue 有界；
-- 满时返回 429；
-- 删除/停止前必须 active=0、pending=0。
+#### 执行并发规则与互斥边界
+
+Hub 根据命令类型、会话模式与资源输出规则区分并发任务与独占任务：
+
+1. **允许并发并行（最多 `maxConcurrency` 个并行执行）**：必须**同时**满足以下五个条件：
+   - 命令是浏览器命令（`browser == true`）；
+   - `siteSession == EPHEMERAL`（必须存在该元数据；命令执行后立即释放 tab lease）；
+   - 命令语义为 `READ`（只读操作，不改变页面或站点状态）；
+   - `defaultWindowMode == null` 或精确为 `background`（不需要前台独占窗口焦点；空字符串、前后空格和大小写变体均不匹配）；
+   - 命令无受管输出规则（未配置 `HubCommandOutputRule`，不向受管本地目录/文件写入输出资源）。
+2. **独占串行执行（互斥独占）**：所有不满足上述五项条件的命令均独占执行，典型情况包括：
+   - 非浏览器命令，或 `siteSession` / `access` 等安全分类元数据缺失；
+   - 写操作（`WRITE` 命令）；
+   - 持久会话（`PERSISTENT` session，固定 `site:{site}` 保持页面）；
+   - 前台交互或非 background 模式；
+   - 配置了受管输出规则（`HubCommandOutputRule`）。
+
+独占任务与并发任务互斥：独占任务开始前必须等待 Instance 上已有的并发任务全部完成；独占任务执行期间不允许任何其他任务（无论并发还是独占）进入执行。
+
+#### 错误码与生命周期约束
+
+- 实例总容量满（`acceptedNotTerminalCount >= maxConcurrency + maxPending`）或 Dispatcher 拒绝时返回 HTTP 429（`INSTANCE_QUEUE_FULL`）；
+- 自动路由无法找到匹配且未满的 Instance 时返回 HTTP 400（`NO_INSTANCE_AVAILABLE`）；
+- 删除、停止或绑定活动标签页前，必须满足 `acceptedNotTerminalCount == 0`；实现同时检查 executor active/queue，覆盖已接受但尚未暴露为 active/pending 的交接窗口。
 
 ## 21. Persistent Session 路由
 
@@ -1862,7 +1887,7 @@ frontend/src/
 - 名称和 code；
 - RUNNING/STARTING/STOPPED/ERROR；
 - website tags；
-- active/pending/maxPending；
+- active/maxConcurrency 与 pending/maxPending；
 - contextId；
 - 错误摘要；
 - 浏览器、编辑、启停、重启、删除操作。
