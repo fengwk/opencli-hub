@@ -60,8 +60,11 @@ describe('InstancesPage', () => {
 
     resolveInstances?.([stoppedInstance])
     expect(await screen.findByRole('heading', { name: 'Alpha browser' })).toBeInTheDocument()
-    expect(screen.getByText('等待注册')).toBeInTheDocument()
-    expect(screen.getByText(/活跃 0\/1 · 待处理 0\/3/)).toBeInTheDocument()
+    const card = screen.getByRole('heading', { name: 'Alpha browser' }).closest('article')!
+    expect(within(card).getByText('等待注册')).toBeInTheDocument()
+    expect(within(card).getByText('最大并发数')).toBeInTheDocument()
+    expect(within(card).getByText('最大并发数').nextElementSibling).toHaveTextContent('1')
+    expect(within(card).getByText(/活跃 0\/1 · 待处理 0\/3/)).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('最近错误：last launch failed')
     expect(screen.getByRole('link', { name: '详情与控制台' })).toHaveAttribute('href', `/instances/${instanceId}`)
   })
@@ -207,7 +210,30 @@ describe('InstancesPage', () => {
 
     renderPage()
     expect(await screen.findByRole('heading', { name: 'Legacy browser' })).toBeInTheDocument()
-    expect(screen.getByText(/活跃 0\/1 · 待处理 0\/5/)).toBeInTheDocument()
+    const card = screen.getByRole('heading', { name: 'Legacy browser' }).closest('article')!
+    expect(within(card).getByText('最大并发数')).toBeInTheDocument()
+    expect(within(card).getByText('最大并发数').nextElementSibling).toHaveTextContent('1')
+    expect(within(card).getByText(/活跃 0\/1 · 待处理 0\/5/)).toBeInTheDocument()
+  })
+
+  it('explicitly renders maxConcurrency on instance cards with configured concurrency limits', async () => {
+    // Proves instance cards explicitly render custom maxConcurrency values while keeping queue metrics intact.
+    const concurrentInstance: HubInstance = {
+      ...stoppedInstance,
+      id: 'concurrent-id',
+      displayName: 'Concurrent browser',
+      maxConcurrency: 3,
+      maxPending: 8,
+      runtime: { registered: true, displayNumber: 2, vncPort: 5902, activeCount: 2, pendingCount: 4 },
+    }
+    mockCatalogAndInstances([concurrentInstance])
+
+    renderPage()
+    expect(await screen.findByRole('heading', { name: 'Concurrent browser' })).toBeInTheDocument()
+    const card = screen.getByRole('heading', { name: 'Concurrent browser' }).closest('article')!
+    expect(within(card).getByText('最大并发数')).toBeInTheDocument()
+    expect(within(card).getByText('最大并发数').nextElementSibling).toHaveTextContent('3')
+    expect(within(card).getByText(/活跃 2\/3 · 待处理 4\/8/)).toBeInTheDocument()
   })
 
   it('contains keyboard focus in the creation drawer and restores it when Escape closes the drawer', async () => {
