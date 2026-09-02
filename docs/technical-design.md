@@ -56,8 +56,8 @@
 | 数据库 | 编译期三变体：PostgreSQL 16（默认）、MySQL 8.4 LTS、SQLite；H2 仅测试（Maven `test` scope） |
 | SQL | MyBatis Auto Mapper 生成常规 SQL；每个变体通过 Spring SQL initialization 幂等初始化当前 schema（schema-only，无 data SQL，system settings 由应用懒初始化）；旧 MySQL schema 手工迁移 |
 | 浏览器 | 正式 `google-chrome-stable`，非 Chromium/Chrome for Testing |
-| extension | 由 artifact lock 固定，当前 fork 1.0.31；构建期打包固定签名 CRX3，运行时通过 Linux managed policy + loopback update server 强制安装 |
-| OpenCLI | 由 artifact lock 固定，当前 fork 1.8.7-fengwk.10；Hub 通过 `ProcessBuilder` 调用，不在 Hub 内修改 CLI |
+| extension | 由 artifact lock 固定，当前 fork 1.0.32；构建期打包固定签名 CRX3，运行时通过 Linux managed policy + loopback update server 强制安装 |
+| OpenCLI | 由 artifact lock 固定，当前 fork 1.8.7-fengwk.11；Hub 通过 `ProcessBuilder` 调用，不在 Hub 内修改 CLI |
 | daemon | 单容器共享一个 OpenCLI daemon |
 | Instance 创建 | 同步创建，成功后才插入数据库；失败清理全部残留 |
 | Instance 创建完成 | Chrome 保持运行，数据库状态为 `RUNNING` |
@@ -1036,7 +1036,7 @@ sequenceDiagram
 正式 Google Chrome stable 不依赖 unpacked extension 的命令行加载。Release 镜像采用构建期签名和 managed policy：
 
 ```text
-OpenCLI Browser Bridge extension 1.0.31
+OpenCLI Browser Bridge extension 1.0.32
 -> 构建阶段校验固定版本 release asset
 -> BuildKit secret 仅在构建阶段提供受保护的 stable signing key
 -> 使用 google-chrome-stable --pack-extension 生成 CRX3

@@ -16,7 +16,7 @@
 - 客户端行为变化（详见根 README「客户端行为变化」表）：`POST /api/opencli/execute` 返回 HTTP 202 + PENDING DTO，需轮询 `waitSeconds`（最大 120）或取消；本地文件必须上传后仅用 `/resources/...` 虚拟路径（绝对路径、`~`、`file://`、Windows drive path、显式 traversal 及相对 OpenCLI workdir 实际存在的文件/目录拒绝）；Execution 列表按 `queued_at DESC, id DESC`；cancel/clear-queue 丢弃的任务持久化 CANCELLED；时间戳统一 UTC LocalDateTime（`gmt_*` 列名保留兼容）。
 - 生产数据库从 H2/MySQL 5.7 迁移到 PostgreSQL 16（默认）、MySQL 8.4、SQLite 编译期变体；H2 仅保留测试用途。
 - 升级到 `convention4j-parent:1.2.3`，使用其默认管理的 AutoMapper `1.0.1`；Instance 创建时间排序由 `@FieldName` 驱动的生成 SQL 取代手写兼容 SQL。
-- 成对升级 OpenCLI artifact lock 至已发布的 `fork-v1.8.7-fengwk.10`：CLI `1.8.7-fengwk.10` 与 Browser Bridge extension `1.0.31`，并同步锁定对应 URL、SHA256 和 source revision。
+- 成对升级 OpenCLI artifact lock 至已发布的 `fork-v1.8.7-fengwk.11`：CLI `1.8.7-fengwk.11` 与 Browser Bridge extension `1.0.32`，并同步锁定对应 URL、SHA256 和 source revision。
 
 ### 修复
 
