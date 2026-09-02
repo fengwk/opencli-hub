@@ -12,7 +12,7 @@
 
 ### 变更
 
-- Instance 支持配置并发度 `maxConcurrency`（1..4，默认 1，升级后旧行保持 1）与排队容量 `maxPending`（0..50，默认 5，0 表示无排队缓冲，满时立即 429 `INSTANCE_QUEUE_FULL`）；总承载容量为 `maxConcurrency + maxPending`；仅浏览器命令 + `siteSession=EPHEMERAL` + `access=READ` + `defaultWindowMode=null` 或精确为 `background` + 无受管输出（`HubCommandOutputRule`）的任务允许并发，其余任务保持独占串行。
+- Instance 支持配置并发度 `maxConcurrency`（1..4，默认 1，升级后旧行保持 1）与排队容量 `maxPending`（0..50，默认 5，0 表示无排队缓冲，满时立即 429 `INSTANCE_QUEUE_FULL`）；总承载容量为 `maxConcurrency + maxPending`。浏览器命令缺失/空白 `siteSession` 时按 `EPHEMERAL` 处理，可解析为 `EPHEMERAL` 的命令受 `maxConcurrency` 限制并行（业务级冲突由调用者负责），可解析为 `PERSISTENT` 的命令独占串行；非浏览器命令或无法解析的未知 session 元数据 fail-safe 独占。
 - 客户端行为变化（详见根 README「客户端行为变化」表）：`POST /api/opencli/execute` 返回 HTTP 202 + PENDING DTO，需轮询 `waitSeconds`（最大 120）或取消；本地文件必须上传后仅用 `/resources/...` 虚拟路径（绝对路径、`~`、`file://`、Windows drive path、显式 traversal 及相对 OpenCLI workdir 实际存在的文件/目录拒绝）；Execution 列表按 `queued_at DESC, id DESC`；cancel/clear-queue 丢弃的任务持久化 CANCELLED；时间戳统一 UTC LocalDateTime（`gmt_*` 列名保留兼容）。
 - 生产数据库从 H2/MySQL 5.7 迁移到 PostgreSQL 16（默认）、MySQL 8.4、SQLite 编译期变体；H2 仅保留测试用途。
 - 升级到 `convention4j-parent:1.2.3`，使用其默认管理的 AutoMapper `1.0.1`；Instance 创建时间排序由 `@FieldName` 驱动的生成 SQL 取代手写兼容 SQL。

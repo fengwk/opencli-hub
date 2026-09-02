@@ -3,195 +3,90 @@ package fun.fengwk.openclihub.core.execution.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommand;
-import fun.fengwk.openclihub.core.command.service.model.HubCommandOutputRule;
 import fun.fengwk.openclihub.core.execution.runtime.HubExecutionConcurrencyMode;
 import fun.fengwk.openclihub.share.model.command.HubCommandAccess;
-import fun.fengwk.openclihub.share.model.command.HubCommandOutputTargetType;
 import fun.fengwk.openclihub.share.model.execution.SiteSessionMode;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Unit tests for {@link HubExecutionConcurrencyClassifier}.
- * Validates fail-safe command concurrency classification.
+ * Validates the simplified fail-safe classification matrix:
+ * <ul>
+ *   <li>Browser commands with EPHEMERAL session are PARALLEL_SAFE regardless of access or window mode.</li>
+ *   <li>Browser commands with PERSISTENT session are EXCLUSIVE.</li>
+ *   <li>Null command, non-browser command, or null session fails safe to EXCLUSIVE.</li>
+ * </ul>
+ *
+ * @author fengwk
  */
 class HubExecutionConcurrencyClassifierTest {
 
-    /**
-     * Browser read command with ephemeral session, background window and no output rule is PARALLEL_SAFE.
-     */
-    @Test
-    void shouldClassifyEphemeralReadBackgroundCommandAsParallelSafe() {
+    private static OpenCliCommand command(boolean browser,
+                                          HubCommandAccess access,
+                                          SiteSessionMode siteSession,
+                                          String windowMode) {
         OpenCliCommand command = new OpenCliCommand();
-        command.setBrowser(true);
-        command.setAccess(HubCommandAccess.READ);
-        command.setSiteSession(SiteSessionMode.EPHEMERAL);
-        command.setDefaultWindowMode("background");
-
-        HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(command, null);
-
-        assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.PARALLEL_SAFE);
+        command.setBrowser(browser);
+        command.setAccess(access);
+        command.setSiteSession(siteSession);
+        command.setDefaultWindowMode(windowMode);
+        return command;
     }
 
-    /** Missing session metadata must fail safe instead of being inferred as EPHEMERAL. */
-    @Test
-    void shouldClassifyNullSessionAsExclusive() {
-        OpenCliCommand command = new OpenCliCommand();
-        command.setBrowser(true);
-        command.setAccess(HubCommandAccess.READ);
-        command.setSiteSession(null);
-        command.setDefaultWindowMode(null);
-
-        HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(command, null);
-
-        assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
+    @ParameterizedTest
+    @EnumSource(value = HubCommandAccess.class)
+    void shouldClassifyEphemeralBrowserCommandAsParallelSafeRegardlessOfAccess(HubCommandAccess access) {
+        OpenCliCommand cmd = command(true, access, SiteSessionMode.EPHEMERAL, null);
+        assertThat(HubExecutionConcurrencyClassifier.classify(cmd))
+            .isEqualTo(HubExecutionConcurrencyMode.PARALLEL_SAFE);
     }
 
-    /** Null window metadata is explicitly safe when every other condition matches exactly. */
-    @Test
-    void shouldTreatNullWindowModeAsParallelSafeWhenOtherConditionsMet() {
-        OpenCliCommand command = new OpenCliCommand();
-        command.setBrowser(true);
-        command.setAccess(HubCommandAccess.READ);
-        command.setSiteSession(SiteSessionMode.EPHEMERAL);
-        command.setDefaultWindowMode(null);
-
-        HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(command, null);
-
-        assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.PARALLEL_SAFE);
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"background", "foreground", "new-tab", "custom"})
+    void shouldClassifyEphemeralBrowserCommandAsParallelSafeRegardlessOfWindowMode(String windowMode) {
+        OpenCliCommand cmd = command(true, HubCommandAccess.WRITE, SiteSessionMode.EPHEMERAL, windowMode);
+        assertThat(HubExecutionConcurrencyClassifier.classify(cmd))
+            .isEqualTo(HubExecutionConcurrencyMode.PARALLEL_SAFE);
     }
 
-    /**
-     * Null command must fail-safe to EXCLUSIVE.
-     */
+    @Test
+    void shouldClassifyEphemeralBrowserCommandWithNullAccessAsParallelSafe() {
+        OpenCliCommand cmd = command(true, null, SiteSessionMode.EPHEMERAL, null);
+        assertThat(HubExecutionConcurrencyClassifier.classify(cmd))
+            .isEqualTo(HubExecutionConcurrencyMode.PARALLEL_SAFE);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = HubCommandAccess.class)
+    void shouldClassifyPersistentBrowserCommandAsExclusive(HubCommandAccess access) {
+        OpenCliCommand cmd = command(true, access, SiteSessionMode.PERSISTENT, null);
+        assertThat(HubExecutionConcurrencyClassifier.classify(cmd))
+            .isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
+    }
+
     @Test
     void shouldClassifyNullCommandAsExclusive() {
-        HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(null, null);
-
-        assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
+        assertThat(HubExecutionConcurrencyClassifier.classify(null))
+            .isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
     }
 
-    /**
-     * Non-browser command (browser=false) must be EXCLUSIVE.
-     */
     @Test
     void shouldClassifyNonBrowserCommandAsExclusive() {
-        OpenCliCommand command = new OpenCliCommand();
-        command.setBrowser(false);
-        command.setAccess(HubCommandAccess.READ);
-        command.setSiteSession(SiteSessionMode.EPHEMERAL);
-
-        HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(command, null);
-
-        assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
+        OpenCliCommand cmd = command(false, HubCommandAccess.READ, SiteSessionMode.EPHEMERAL, null);
+        assertThat(HubExecutionConcurrencyClassifier.classify(cmd))
+            .isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
     }
 
-    /**
-     * Persistent site session command must be EXCLUSIVE to protect browser session state.
-     */
     @Test
-    void shouldClassifyPersistentSessionAsExclusive() {
-        OpenCliCommand command = new OpenCliCommand();
-        command.setBrowser(true);
-        command.setAccess(HubCommandAccess.READ);
-        command.setSiteSession(SiteSessionMode.PERSISTENT);
-
-        HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(command, null);
-
-        assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
-    }
-
-    /**
-     * Write access command must be EXCLUSIVE.
-     */
-    @Test
-    void shouldClassifyWriteAccessAsExclusive() {
-        OpenCliCommand command = new OpenCliCommand();
-        command.setBrowser(true);
-        command.setAccess(HubCommandAccess.WRITE);
-        command.setSiteSession(SiteSessionMode.EPHEMERAL);
-
-        HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(command, null);
-
-        assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
-    }
-
-    /**
-     * Null access is not READ and must fail-safe to EXCLUSIVE.
-     */
-    @Test
-    void shouldClassifyNullAccessAsExclusive() {
-        OpenCliCommand command = new OpenCliCommand();
-        command.setBrowser(true);
-        command.setAccess(null);
-        command.setSiteSession(SiteSessionMode.EPHEMERAL);
-
-        HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(command, null);
-
-        assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
-    }
-
-    /**
-     * Foreground window mode must be EXCLUSIVE to avoid multi-window focus disruption.
-     */
-    @Test
-    void shouldClassifyForegroundWindowModeAsExclusive() {
-        OpenCliCommand command = new OpenCliCommand();
-        command.setBrowser(true);
-        command.setAccess(HubCommandAccess.READ);
-        command.setSiteSession(SiteSessionMode.EPHEMERAL);
-        command.setDefaultWindowMode("foreground");
-
-        HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(command, null);
-
-        assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
-    }
-
-    /** Blank window mode is not the explicit background mode and therefore fails safe. */
-    @Test
-    void shouldClassifyBlankWindowModeAsExclusive() {
-        OpenCliCommand command = new OpenCliCommand();
-        command.setBrowser(true);
-        command.setAccess(HubCommandAccess.READ);
-        command.setSiteSession(SiteSessionMode.EPHEMERAL);
-        command.setDefaultWindowMode(" ");
-
-        HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(command, null);
-
-        assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
-    }
-
-    /** Non-canonical metadata must not be normalized into a parallel-safe classification. */
-    @Test
-    void shouldClassifyUppercaseWindowModeAsExclusive() {
-        OpenCliCommand command = new OpenCliCommand();
-        command.setBrowser(true);
-        command.setAccess(HubCommandAccess.READ);
-        command.setSiteSession(SiteSessionMode.EPHEMERAL);
-        command.setDefaultWindowMode("BACKGROUND");
-
-        HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(command, null);
-
-        assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
-    }
-
-    /**
-     * Any command with an effective output rule must be EXCLUSIVE to safely capture output files.
-     */
-    @Test
-    void shouldClassifyCommandWithOutputRuleAsExclusive() {
-        OpenCliCommand command = new OpenCliCommand();
-        command.setBrowser(true);
-        command.setAccess(HubCommandAccess.READ);
-        command.setSiteSession(SiteSessionMode.EPHEMERAL);
-        command.setDefaultWindowMode("background");
-
-        HubCommandOutputRule outputRule = new HubCommandOutputRule();
-        outputRule.setArgumentName("output");
-        outputRule.setTargetType(HubCommandOutputTargetType.FILE);
-
-        HubExecutionConcurrencyMode mode = HubExecutionConcurrencyClassifier.classify(command, outputRule);
-
-        assertThat(mode).isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
+    void shouldClassifyNullSessionAsExclusive() {
+        OpenCliCommand cmd = command(true, HubCommandAccess.READ, null, null);
+        assertThat(HubExecutionConcurrencyClassifier.classify(cmd))
+            .isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
     }
 
 }

@@ -258,11 +258,13 @@ public class OpenCliCommandCatalogParser {
 
     private static SiteSessionMode parseSiteSession(String mode) {
         if (mode == null || mode.isBlank()) {
-            return null;
+            // Treat missing/blank metadata as absent; OpenCLI defaults an absent declaration to ephemeral.
+            return SiteSessionMode.EPHEMERAL;
         }
         try {
             return SiteSessionMode.valueOf(mode.trim().toUpperCase());
         } catch (IllegalArgumentException ex) {
+            // Unrecognized non-blank values stay null and fail-safe to EXCLUSIVE downstream
             return null;
         }
     }

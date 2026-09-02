@@ -744,6 +744,8 @@ opencli list -f json
 - `siteSession`；
 - `defaultWindowMode`。
 
+Hub 将缺失/空白 `siteSession` 视为未声明并解析为 `EPHEMERAL`，与 OpenCLI 对未声明值的默认行为一致；合法值沿用 trim / 大小写不敏感解析，未知值保留为 `null` 并由下游分类器 fail-safe 独占。
+
 Catalog 加载失败属于镜像或依赖错误，应用启动失败并输出明确日志。Catalog 不存数据库。
 
 ### 11.2 公开命令范围
@@ -1376,20 +1378,15 @@ Dispatcher accept` 由短临界区 admission lock 串行化，避免并发请求
 
 #### 执行并发规则与互斥边界
 
-Hub 根据命令类型、会话模式与资源输出规则区分并发任务与独占任务：
+Hub 根据命令类型与会话模式区分并发任务与独占任务：
 
-1. **允许并发并行（最多 `maxConcurrency` 个并行执行）**：必须**同时**满足以下五个条件：
-   - 命令是浏览器命令（`browser == true`）；
-   - `siteSession == EPHEMERAL`（必须存在该元数据；命令执行后立即释放 tab lease）；
-   - 命令语义为 `READ`（只读操作，不改变页面或站点状态）；
-   - `defaultWindowMode == null` 或精确为 `background`（不需要前台独占窗口焦点；空字符串、前后空格和大小写变体均不匹配）；
-   - 命令无受管输出规则（未配置 `HubCommandOutputRule`，不向受管本地目录/文件写入输出资源）。
-2. **独占串行执行（互斥独占）**：所有不满足上述五项条件的命令均独占执行，典型情况包括：
-   - 非浏览器命令，或 `siteSession` / `access` 等安全分类元数据缺失；
-   - 写操作（`WRITE` 命令）；
-   - 持久会话（`PERSISTENT` session，固定 `site:{site}` 保持页面）；
-   - 前台交互或非 background 模式；
-   - 配置了受管输出规则（`HubCommandOutputRule`）。
+1. **允许并发并行（最多 `maxConcurrency` 个并行执行）**：
+   - 必须是浏览器命令（`browser == true`）；
+   - `siteSession` 可解析为 `EPHEMERAL`（manifest 缺失/空白时默认为 `EPHEMERAL`）；
+   - 受 Instance `maxConcurrency` 限制；不再依据 access `READ`/`WRITE`、`defaultWindowMode`、受管输出规则（`HubCommandOutputRule`）或命令白名单分类；ephemeral 场景下的业务级冲突由调用方负责。
+2. **独占串行执行（互斥独占）**：
+   - 持久会话浏览器命令（可解析为 `PERSISTENT`），独占整个 Instance profile；
+   - 非浏览器命令（`browser == false`）、命令为空或无法解析的未知 session 元数据（`null`）fail-safe 独占执行。
 
 独占任务与并发任务互斥：独占任务开始前必须等待 Instance 上已有的并发任务全部完成；独占任务执行期间不允许任何其他任务（无论并发还是独占）进入执行。
 
@@ -1403,7 +1400,7 @@ Hub 根据命令类型、会话模式与资源输出规则区分并发任务与�
 
 ### 21.1 OpenCLI 行为
 
-- 默认 `siteSession=ephemeral`；
+- 默认 `siteSession=ephemeral`；manifest 缺省即按 ephemeral 解析；
 - ephemeral 命令完成后释放 tab lease；
 - persistent 使用固定 `site:{site}` session，并保留页面；
 - 同一个 Instance、同一个 site 原则上只有一个 persistent page context。

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommand;
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandArg;
+import fun.fengwk.openclihub.share.model.execution.SiteSessionMode;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
@@ -125,6 +126,39 @@ class OpenCliCommandCatalogParserTest {
             .isInstanceOf(OpenCliCatalogParseException.class);
         assertThatThrownBy(() -> parser.parse("   \n  "))
             .isInstanceOf(OpenCliCatalogParseException.class);
+    }
+
+    @Test
+    void shouldParseSiteSessionWithDefaultsAndFailSafeUnknown() {
+        // Missing and blank default to EPHEMERAL; canonical/trim/case parse; unknown -> null.
+        OpenCliCommandIndex index = parser.parse("""
+            [
+              {"site":"a","name":"missing","browser":true,"args":[]},
+              {"site":"a","name":"blank","browser":true,"args":[],"siteSession":"   "},
+              {"site":"a","name":"empty","browser":true,"args":[],"siteSession":""},
+              {"site":"a","name":"canonical-eph","browser":true,"args":[],"siteSession":"ephemeral"},
+              {"site":"a","name":"case-trim-eph","browser":true,"args":[],"siteSession":"  EPHEMERAL  "},
+              {"site":"a","name":"canonical-pers","browser":true,"args":[],"siteSession":"persistent"},
+              {"site":"a","name":"case-trim-pers","browser":true,"args":[],"siteSession":" Persistent "},
+              {"site":"a","name":"unknown","browser":true,"args":[],"siteSession":"sticky"}
+            ]
+            """);
+        assertThat(index.findByKey("a/missing"))
+            .hasValueSatisfying(c -> assertThat(c.getSiteSession()).isEqualTo(SiteSessionMode.EPHEMERAL));
+        assertThat(index.findByKey("a/blank"))
+            .hasValueSatisfying(c -> assertThat(c.getSiteSession()).isEqualTo(SiteSessionMode.EPHEMERAL));
+        assertThat(index.findByKey("a/empty"))
+            .hasValueSatisfying(c -> assertThat(c.getSiteSession()).isEqualTo(SiteSessionMode.EPHEMERAL));
+        assertThat(index.findByKey("a/canonical-eph"))
+            .hasValueSatisfying(c -> assertThat(c.getSiteSession()).isEqualTo(SiteSessionMode.EPHEMERAL));
+        assertThat(index.findByKey("a/case-trim-eph"))
+            .hasValueSatisfying(c -> assertThat(c.getSiteSession()).isEqualTo(SiteSessionMode.EPHEMERAL));
+        assertThat(index.findByKey("a/canonical-pers"))
+            .hasValueSatisfying(c -> assertThat(c.getSiteSession()).isEqualTo(SiteSessionMode.PERSISTENT));
+        assertThat(index.findByKey("a/case-trim-pers"))
+            .hasValueSatisfying(c -> assertThat(c.getSiteSession()).isEqualTo(SiteSessionMode.PERSISTENT));
+        assertThat(index.findByKey("a/unknown"))
+            .hasValueSatisfying(c -> assertThat(c.getSiteSession()).isNull());
     }
 
 }

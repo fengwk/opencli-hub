@@ -67,13 +67,11 @@ class DefaultOpenCliCommandCatalogTest {
             .get()
             .extracting(fun.fengwk.openclihub.core.command.catalog.OpenCliCommand::getSiteSession)
             .isEqualTo(SiteSessionMode.PERSISTENT);
-        // Commands without an explicit siteSession must resolve to null so routing falls
-        // back to the OpenCLI default (ephemeral). Use Optional.isPresent plus a direct
-        // null check on the unwrapped command because Optional.map() flattens null
-        // mapped values back to Optional.empty().
+        // Commands without an explicit siteSession resolve to EPHEMERAL, matching the
+        // OpenCLI runtime default (`resolveSiteSession: ?? 'ephemeral'`).
         var bilibili = catalog.findPublicCommand("bilibili", "hot");
         assertThat(bilibili).isPresent();
-        assertThat(bilibili.get().getSiteSession()).isNull();
+        assertThat(bilibili.get().getSiteSession()).isEqualTo(SiteSessionMode.EPHEMERAL);
     }
 
     /**

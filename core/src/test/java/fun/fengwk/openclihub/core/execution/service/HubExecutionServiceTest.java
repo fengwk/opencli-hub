@@ -944,6 +944,69 @@ class HubExecutionServiceTest {
         assertThat(res2.getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
     }
 
+    /**
+     * Ephemeral WRITE commands with managed output run concurrently under the instance
+     * capacity limit while their per-execution output directories stay isolated.
+     */
+    @Test
+    void shouldExecuteEphemeralWriteWithManagedOutputConcurrently() throws Exception {
+        dispatchRegistry.unregister(instance.getId());
+        instance.setMaxConcurrency(2);
+        instance.setMaxPending(2);
+        dispatchRegistry.register(instance);
+
+        OpenCliCommandArg op = new OpenCliCommandArg();
+        op.setName("op");
+        op.setType("string");
+        op.setValueRequired(true);
+        op.setHelp("Output directory");
+        normalized.getCommand().setArgs(List.of(op));
+        normalized.getCommand().setAccess(HubCommandAccess.WRITE);
+        normalized.getCommand().setSiteSession(SiteSessionMode.EPHEMERAL);
+
+        CountDownLatch twoInExecutor = new CountDownLatch(2);
+        CountDownLatch releaseExecutor = new CountDownLatch(1);
+        executor.setBehavior(() -> {
+            twoInExecutor.countDown();
+            try {
+                releaseExecutor.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+            return FakeOpenCliExecutor.Behaviour.successJson("[{\"parallel\":true}]");
+        });
+        when(resources.scan(any())).thenReturn(List.of());
+
+        HubExecutionDTO exec1 = service.submit(request(instance.getId(), 5_000L));
+        HubExecutionDTO exec2 = service.submit(request(instance.getId(), 5_000L));
+
+        try {
+            assertThat(twoInExecutor.await(2, TimeUnit.SECONDS))
+                .as("Both ephemeral write output commands reach OpenCLI concurrently")
+                .isTrue();
+        } finally {
+            releaseExecutor.countDown();
+        }
+
+        assertThat(service.getById(exec1.getId(), 2).getStatus())
+            .isEqualTo(HubExecutionStatus.SUCCEEDED);
+        assertThat(service.getById(exec2.getId(), 2).getStatus())
+            .isEqualTo(HubExecutionStatus.SUCCEEDED);
+
+        List<String> outputPaths = executor.invocations().stream()
+            .map(invocation -> {
+                int opIndex = invocation.argv.indexOf("--op");
+                assertThat(opIndex).isGreaterThanOrEqualTo(0);
+                return invocation.argv.get(opIndex + 1);
+            })
+            .toList();
+        assertThat(outputPaths).hasSize(2);
+        assertThat(outputPaths).doesNotHaveDuplicates();
+        assertThat(outputPaths).allSatisfy(path ->
+            assertThat(Path.of(path).toAbsolutePath().normalize())
+                .startsWith(tempDir.toAbsolutePath().normalize()));
+    }
+
     /** Persistent-session commands remain serialized even when the instance has two workers. */
     @Test
     void shouldSerializeExclusiveCommandsOnServiceLayer() throws Exception {

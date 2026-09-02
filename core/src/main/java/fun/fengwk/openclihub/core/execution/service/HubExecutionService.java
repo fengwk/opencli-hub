@@ -121,7 +121,7 @@ public class HubExecutionService {
         argvBuilder.assertNoCallerOutputArgument(normalized, outputRule);
 
         HubExecutionConcurrencyMode concurrencyMode = HubExecutionConcurrencyClassifier.classify(
-            normalized.getCommand(), outputRule);
+            normalized.getCommand());
 
         long timeoutMillis = resolveTimeout(request.getTimeoutMillis());
         HubInstance instance;
