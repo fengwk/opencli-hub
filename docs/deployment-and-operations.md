@@ -225,9 +225,9 @@ workflow 共用该文件，因此官方 baseline 与已发布 fork Release 的�
 
 ```text
 package=@jackwener/opencli
-CLI version=1.8.7-fengwk.9
-extension version=1.0.30
-source revision=fengwk/OpenCLI@d81da8b5f21654aec98716702b25c8449089f838
+CLI version=1.8.7-fengwk.10
+extension version=1.0.31
+source revision=fengwk/OpenCLI@c45913950cf4c7e2f35054ecf6599f7ddc63316b
 ```
 
 升级或切换 fork 时：
@@ -240,18 +240,18 @@ source revision=fengwk/OpenCLI@d81da8b5f21654aec98716702b25c8449089f838
 4. 构建后确认镜像内 `/opt/opencli/artifact-build-info.json` 反映解析结果；smoke 会比较
    `opencli --version` 与该文件中的 `cli.version`。
 
-当前 fork Release（tag `fork-v1.8.7-fengwk.9`，CLI `1.8.7-fengwk.9` + extension `1.0.30`）：
+当前 fork Release（tag `fork-v1.8.7-fengwk.10`，CLI `1.8.7-fengwk.10` + extension `1.0.31`）：
 
 ```bash
 # scripts/docker/opencli-artifact.lock.env
 OPENCLI_PACKAGE=@jackwener/opencli
-OPENCLI_VERSION=1.8.7-fengwk.9
-OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.9/jackwener-opencli-1.8.7-fengwk.9.tgz
-OPENCLI_CLI_SHA256=e0bf515d401da5a265a64de0c1a93d157462c448a3448edcf17fa7d08422f4ca
-OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@d81da8b5f21654aec98716702b25c8449089f838
-EXTENSION_VERSION=1.0.30
-OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.9/opencli-extension-v1.0.30.zip
-OPENCLI_EXTENSION_SHA256=50d117b47ee81fb362d3eb4a58d5a553ce96887fa76642743a286f33f45e0712
+OPENCLI_VERSION=1.8.7-fengwk.10
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.10/jackwener-opencli-1.8.7-fengwk.10.tgz
+OPENCLI_CLI_SHA256=69efbf83399baf1d562a0a8353690f5c806d8184d9c3bf79be0e2c4b2144925c
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@c45913950cf4c7e2f35054ecf6599f7ddc63316b
+EXTENSION_VERSION=1.0.31
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.7-fengwk.10/opencli-extension-v1.0.31.zip
+OPENCLI_EXTENSION_SHA256=7b8340d97a17333f10cd01463be19b772c4fd15a3b735092ffbe99ab41870634
 ```
 
 可选 build-arg 仅覆盖**单次构建**，不改变仓库默认 pin：
