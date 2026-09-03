@@ -73,6 +73,7 @@ public class HubExecutionService {
     private final ObjectMapper objectMapper;
     private final OpenCliHubProperties properties;
     private final Clock clock;
+    private final HubExecutionStartStagger startStagger;
 
     /**
      * Serialises the local route/persist/enqueue admission boundary. The lock is released
@@ -94,7 +95,8 @@ public class HubExecutionService {
         HubExecutionConverter converter,
         ObjectMapper objectMapper,
         OpenCliHubProperties properties,
-        Clock clock) {
+        Clock clock,
+        HubExecutionStartStagger startStagger) {
         this.argvValidator = argvValidator;
         this.blacklistService = blacklistService;
         this.outputRuleService = outputRuleService;
@@ -108,6 +110,7 @@ public class HubExecutionService {
         this.objectMapper = objectMapper;
         this.properties = properties;
         this.clock = clock;
+        this.startStagger = startStagger;
     }
 
     /**
@@ -344,7 +347,13 @@ public class HubExecutionService {
                 concurrencyMode,
                 deadline.deadlineNanos(),
                 () -> {
-                    executeOpenCli(execution, instance, normalized, outputRule, deadline);
+                    executeOpenCli(
+                        execution,
+                        instance,
+                        normalized,
+                        outputRule,
+                        deadline,
+                        concurrencyMode);
                     return null;
                 });
         } catch (RuntimeException ex) {
@@ -367,7 +376,8 @@ public class HubExecutionService {
         HubInstance instance,
         NormalizedOpenCliArgv normalized,
         HubCommandOutputRule outputRule,
-        HubExecutionDeadline deadline) {
+        HubExecutionDeadline deadline,
+        HubExecutionConcurrencyMode concurrencyMode) {
         HubExecutionResources.ResourceContext resourceContext = null;
         try {
             long remainingMillis = deadline.remainingMillis();
@@ -395,13 +405,34 @@ public class HubExecutionService {
                         ? null : resourceContext.getGroup().getRealPath()));
 
             remainingMillis = deadline.remainingMillis();
-            OpenCliExecutionResult result = remainingMillis <= 0
-                ? timedOutResult("Execution deadline elapsed before OpenCLI start")
-                : executor.execute(instance, managedArgv, remainingMillis, execution.getId());
+            OpenCliExecutionResult result;
+            if (remainingMillis <= 0) {
+                result = timedOutResult("Execution deadline elapsed before OpenCLI start");
+            } else {
+                result = startStagger.execute(
+                    execution.getSite(),
+                    concurrencyMode,
+                    deadline.deadlineNanos(),
+                    () -> {
+                        long processTimeoutMillis = deadline.remainingMillis();
+                        if (processTimeoutMillis <= 0) {
+                            throw HubErrorCodes.QUEUE_WAIT_TIMEOUT.asThrowable(
+                                "Execution deadline elapsed while waiting for start stagger");
+                        }
+                        return executor.execute(
+                            instance,
+                            managedArgv,
+                            processTimeoutMillis,
+                            execution.getId());
+                    });
+            }
             validateJsonOutput(result);
             execution.markFinished(result, LocalDateTime.now(clock));
         } catch (RuntimeException ex) {
-            execution.markFinished(failedResult(ex), LocalDateTime.now(clock));
+            OpenCliExecutionResult result = isError(ex, HubErrorCodes.QUEUE_WAIT_TIMEOUT)
+                ? timedOutResult(message(ex))
+                : failedResult(ex);
+            execution.markFinished(result, LocalDateTime.now(clock));
         } finally {
             HubExecutionResourceGroup group =
                 resourceContext == null ? null : resourceContext.getGroup();

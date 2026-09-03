@@ -91,6 +91,8 @@ opencli:
       max-capture-chars: ${OPENCLI_HUB_MAX_CAPTURE_CHARS:1048576}
       default-max-pending: 5
       default-max-concurrency: ${OPENCLI_HUB_DEFAULT_MAX_CONCURRENCY:1}
+      parallel-start-stagger-min-millis: ${OPENCLI_HUB_PARALLEL_START_STAGGER_MIN_MILLIS:3000}
+      parallel-start-stagger-max-millis: ${OPENCLI_HUB_PARALLEL_START_STAGGER_MAX_MILLIS:5000}
     resource:
       root-dir: ${OPENCLI_HUB_RESOURCE_DIR:${OPENCLI_HUB_DATA_DIR:/data/opencli-hub}/resources}
       max-file-size: ${OPENCLI_HUB_RESOURCE_MAX_FILE_SIZE:104857600}

@@ -101,6 +101,9 @@ class HubExecutionServiceTest {
         repository = new InMemoryExecutionRepository();
         executor = new FakeOpenCliExecutor();
         properties = new OpenCliHubProperties();
+        // Disable start stagger in shared setup so regression suite executes fast without sleeps
+        properties.getExecution().setParallelStartStaggerMinMillis(0L);
+        properties.getExecution().setParallelStartStaggerMaxMillis(0L);
         // Anchor the resource root at the temp dir so the final-argv defense accepts the
         // temp-dir execution groups this test's prepare() mock fabricates.
         properties.getResource().setRootDir(tempDir.toString());
@@ -153,7 +156,8 @@ class HubExecutionServiceTest {
             new HubExecutionConverter(),
             new ObjectMapper(),
             properties,
-            Clock.systemUTC());
+            Clock.systemUTC(),
+            new HubExecutionStartStagger(properties));
     }
 
     @AfterEach
@@ -1048,6 +1052,165 @@ class HubExecutionServiceTest {
         assertThat(service.getById(second.getId(), 2).getStatus())
             .isEqualTo(HubExecutionStatus.SUCCEEDED);
         assertThat(maxActive).hasValue(1);
+    }
+
+    /**
+     * Intent: Verify that PARALLEL_SAFE executions pass through the HubExecutionStartStagger
+     * coordinator before the OpenCLI executor starts.
+     * Effectiveness: Injects a recording coordinator with zero sleep, executes a PARALLEL_SAFE
+     * request, and asserts that the stagger coordinator was invoked with the command's site
+     * and PARALLEL_SAFE concurrency mode.
+     */
+    @Test
+    void shouldIntegrateStartStaggerForParallelSafeExecution() {
+        AtomicInteger staggerCalls = new AtomicInteger(0);
+        AtomicReference<HubExecutionConcurrencyMode> observedMode = new AtomicReference<>();
+        AtomicReference<String> observedSite = new AtomicReference<>();
+
+        HubExecutionStartStagger recordingStagger = new HubExecutionStartStagger(
+            0L,
+            0L,
+            System::nanoTime,
+            (min, max) -> 0L,
+            nanos -> {}) {
+            @Override
+            public <T> T execute(
+                String site,
+                HubExecutionConcurrencyMode mode,
+                long deadlineNanos,
+                Callable<T> action) {
+                staggerCalls.incrementAndGet();
+                observedSite.set(site);
+                observedMode.set(mode);
+                return super.execute(site, mode, deadlineNanos, action);
+            }
+        };
+
+        HubExecutionService customService = new HubExecutionService(
+            argvValidator,
+            blacklistService,
+            outputRuleService,
+            router,
+            dispatchRegistry,
+            repository,
+            new HubExecutionArgvBuilder(new HubLocalPathGuard(properties)),
+            resources,
+            executor,
+            new HubExecutionConverter(),
+            new ObjectMapper(),
+            properties,
+            Clock.systemUTC(),
+            recordingStagger);
+
+        HubExecutionDTO dto = customService.execute(request("7", 1000L));
+        assertThat(dto.getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
+        assertThat(staggerCalls.get()).isEqualTo(1);
+        assertThat(observedSite.get()).isEqualTo("bilibili");
+        assertThat(observedMode.get()).isEqualTo(HubExecutionConcurrencyMode.PARALLEL_SAFE);
+    }
+
+    /**
+     * Intent: Verify that EXCLUSIVE executions bypass the start stagger coordination logic,
+     * maintaining untouched serial execution behavior without any stagger queueing.
+     * Effectiveness: Configures a PERSISTENT command (classified as EXCLUSIVE), injects a coordinator
+     * that asserts no stagger delay is applied, and verifies execution completes under EXCLUSIVE mode
+     * without retaining stagger site coordination state.
+     */
+    @Test
+    void shouldBypassStartStaggerForExclusiveExecution() {
+        NormalizedOpenCliArgv persistentArgv = normalized(SiteSessionMode.PERSISTENT);
+        when(argvValidator.validate(any())).thenReturn(persistentArgv);
+        when(blacklistService.findByCommandKey(persistentArgv.getCanonicalKey()))
+            .thenReturn(Optional.empty());
+        when(outputRuleService.findByCommandKey(persistentArgv.getCanonicalKey()))
+            .thenReturn(Optional.empty());
+
+        AtomicReference<HubExecutionConcurrencyMode> observedMode = new AtomicReference<>();
+        HubExecutionStartStagger trackingStagger = new HubExecutionStartStagger(
+            3000L,
+            5000L,
+            System::nanoTime,
+            (min, max) -> TimeUnit.SECONDS.toNanos(4),
+            nanos -> { throw new AssertionError("Sleeper must not be called when bypassing stagger"); }) {
+            @Override
+            public <T> T execute(
+                String site,
+                HubExecutionConcurrencyMode mode,
+                long deadlineNanos,
+                Callable<T> action) {
+                observedMode.set(mode);
+                return super.execute(site, mode, deadlineNanos, action);
+            }
+        };
+
+        HubExecutionService customService = new HubExecutionService(
+            argvValidator,
+            blacklistService,
+            outputRuleService,
+            router,
+            dispatchRegistry,
+            repository,
+            new HubExecutionArgvBuilder(new HubLocalPathGuard(properties)),
+            resources,
+            executor,
+            new HubExecutionConverter(),
+            new ObjectMapper(),
+            properties,
+            Clock.systemUTC(),
+            trackingStagger);
+
+        HubExecutionDTO dto = customService.execute(request("7", 1000L));
+        assertThat(dto.getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
+        assertThat(observedMode.get()).isEqualTo(HubExecutionConcurrencyMode.EXCLUSIVE);
+        assertThat(trackingStagger.inFlightCount("bilibili")).isEqualTo(0);
+        assertThat(trackingStagger.activeSiteCount()).isEqualTo(0);
+    }
+
+    /**
+     * Intent: Verify that if start stagger wait exceeds the execution deadline,
+     * the execution is marked TIMED_OUT with exit code 124, and OpenCLI is never executed.
+     * Effectiveness: Injects a coordinator with an unreachable stagger slot, submits an execution,
+     * asserts that the execution terminates as TIMED_OUT without invoking executor, and releases reservation.
+     */
+    @Test
+    void shouldMarkExecutionTimedOutWhenStaggerWaitExceedsDeadline() {
+        // Coordinator where any subsequent stagger delay is 1 hour in the future
+        HubExecutionStartStagger timeoutStagger = new HubExecutionStartStagger(
+            3000L,
+            5000L,
+            System::nanoTime,
+            (min, max) -> TimeUnit.HOURS.toNanos(1),
+            nanos -> {});
+
+        HubExecutionService customService = new HubExecutionService(
+            argvValidator,
+            blacklistService,
+            outputRuleService,
+            router,
+            dispatchRegistry,
+            repository,
+            new HubExecutionArgvBuilder(new HubLocalPathGuard(properties)),
+            resources,
+            executor,
+            new HubExecutionConverter(),
+            new ObjectMapper(),
+            properties,
+            Clock.systemUTC(),
+            timeoutStagger);
+
+        // Keep one execution active in stagger so the next execution overlapping with it gets delayed
+        timeoutStagger.execute("bilibili", HubExecutionConcurrencyMode.PARALLEL_SAFE, Long.MAX_VALUE, () -> {
+            // Second execution submitted with 500ms timeout; its reserved slot is 1 hour away,
+            // which immediately exceeds deadline at reservation
+            HubExecutionDTO dto = customService.execute(request("7", 500L));
+            assertThat(dto.getStatus()).isEqualTo(HubExecutionStatus.TIMED_OUT);
+            assertThat(dto.getExitCode()).isEqualTo(124);
+        });
+
+        // Executor was never called for the timed out execution
+        assertThat(executor.invocations()).isEmpty();
+        assertThat(timeoutStagger.inFlightCount("bilibili")).isEqualTo(0);
+        assertThat(timeoutStagger.activeSiteCount()).isEqualTo(0);
     }
 
     private HubExecutionRequestDTO request(String instanceId, long timeoutMillis) {

@@ -30,4 +30,13 @@ class OpenCliHubPropertiesTest {
         assertThat(properties.getExecution().getDefaultMaxConcurrency()).isEqualTo(1);
     }
 
+    /** Parallel execution start stagger defaults to 3000ms minimum and 5000ms maximum. */
+    @Test
+    void shouldDefaultExecutionParallelStartStaggerRangeTo3000And5000() {
+        OpenCliHubProperties properties = new OpenCliHubProperties();
+
+        assertThat(properties.getExecution().getParallelStartStaggerMinMillis()).isEqualTo(3000L);
+        assertThat(properties.getExecution().getParallelStartStaggerMaxMillis()).isEqualTo(5000L);
+    }
+
 }
