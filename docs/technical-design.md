@@ -1348,11 +1348,11 @@ routingLoad = acceptedNotTerminalCount
 `submit` 到 worker 暴露为 active/pending 的过渡窗口。自动路由直接比较
 `routingLoad` 原始总量，选择已接受未终态任务数最少的 Instance，不按
 `maxConcurrency` 归一化；负载相同时选 `priority` 更大者（默认 0，越大越优先）；
-仍相同时在该平局组内轮询：记住上一次自动路由选中的 Instance，下一次选 id 字典序中
-的后继（环状），避免顺序提交在双方都空闲时永远打到同一个更小 id。第一次自动选择
-或上一次选中者不在当前平局组时，仍按 id 字典序取最小者，保持首轮确定。显式
-`instanceId` 不移动该轮询游标。运行时 API 展示的 `activeCount` 和 `pendingCount`
-仍保持 executor 指标定义。
+仍相同时在该平局组内按 site 独立轮询：Hub 进程内存记录该 site 上一次自动路由选中
+的 Instance，下一次选 id 字典序中的后继（环状）；即使该实例暂时不在平局组，也从其
+字典序插入点继续，避免动态候选组重新偏向最小 id。第一次自动选择按 id 字典序取
+最小者；Hub 重启后游标清空。显式 `instanceId` 不移动轮询游标。运行时 API展示的
+`activeCount` 和 `pendingCount` 仍保持 executor 指标定义。
 
 同一 Hub 进程内，所有 Execution 提交的 `choose instance -> insert PENDING ->
 Dispatcher accept` 由短临界区 admission lock 串行化，避免并发请求在前一任务尚未

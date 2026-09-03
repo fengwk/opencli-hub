@@ -194,6 +194,24 @@ class HubExecutionRouterTest {
     }
 
     /**
+     * The ring must include every member of an N-way tie before wrapping.
+     */
+    @Test
+    void shouldRotateAcrossEveryInstanceInTieGroup() throws Exception {
+        HubInstance a = persist("a", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-a");
+        HubInstance b = persist("b", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-b");
+        HubInstance c = persist("c", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-c");
+        registerRuntime(a, "ctx-a");
+        registerRuntime(b, "ctx-b");
+        registerRuntime(c, "ctx-c");
+
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(a.getId());
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(b.getId());
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(c.getId());
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(a.getId());
+    }
+
+    /**
      * Sequential submit-after-complete: both instances return to load 0 with equal
      * priority. Round-robin must keep assigning the idle peer instead of the same
      * smaller id forever.
@@ -226,6 +244,30 @@ class HubExecutionRouterTest {
         assertThat(router.chooseInstance("bilibili", null).getId())
             .as("explicit pick of B must not skip B on the next automatic rotation")
             .isEqualTo(b.getId());
+    }
+
+    /**
+     * Automatic requests for another site must not reset this site's cursor.
+     */
+    @Test
+    void shouldKeepRoundRobinCursorIndependentPerSite() throws Exception {
+        HubInstance bilibiliA = persist(
+            "bilibili-a", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-bilibili-a");
+        HubInstance bilibiliB = persist(
+            "bilibili-b", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-bilibili-b");
+        HubInstance chatgptA = persist(
+            "chatgpt-a", List.of("chatgpt"), HubInstanceState.RUNNING, "ctx-chatgpt-a");
+        HubInstance chatgptB = persist(
+            "chatgpt-b", List.of("chatgpt"), HubInstanceState.RUNNING, "ctx-chatgpt-b");
+        registerRuntime(bilibiliA, "ctx-bilibili-a");
+        registerRuntime(bilibiliB, "ctx-bilibili-b");
+        registerRuntime(chatgptA, "ctx-chatgpt-a");
+        registerRuntime(chatgptB, "ctx-chatgpt-b");
+
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(bilibiliA.getId());
+        assertThat(router.chooseInstance("chatgpt", null).getId()).isEqualTo(chatgptA.getId());
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(bilibiliB.getId());
+        assertThat(router.chooseInstance("chatgpt", null).getId()).isEqualTo(chatgptB.getId());
     }
 
     /**

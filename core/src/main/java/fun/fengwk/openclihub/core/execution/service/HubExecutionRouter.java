@@ -11,7 +11,9 @@ import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.springframework.stereotype.Component;
 
 /**
@@ -21,7 +23,7 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li><b>Explicit instanceId</b> — strict, no failover.</li>
  *   <li><b>Automatic</b> — lowest accepted non-terminal task count;
- *       ties broken by higher priority, then round-robin among remaining
+ *       ties broken by higher priority, then per-site round-robin among remaining
  *       instances (first pick uses ascending id).</li>
  *   <li><b>Queue full handling</b> — when otherwise-eligible candidates exist but all are full,
  *       automatic routing returns {@code INSTANCE_QUEUE_FULL} instead of {@code NO_INSTANCE_AVAILABLE}.</li>
@@ -37,11 +39,11 @@ public class HubExecutionRouter {
     private final HubDispatchRegistry dispatchRegistry;
 
     /**
-     * Last instance chosen by automatic routing. Only consulted when load and
-     * priority are tied; updated after every automatic pick. Explicit instanceId
-     * routing does not move this cursor.
+     * Last instance chosen by automatic routing for each site. Only consulted when
+     * load and priority are tied; updated after every automatic pick. Explicit
+     * instanceId routing does not move these process-local cursors.
      */
-    private String lastAutomaticInstanceId;
+    private final Map<String, String> lastAutomaticInstanceIdsBySite = new HashMap<>();
 
     public HubExecutionRouter(HubInstanceService instanceService,
                               HubInstanceRuntimeRegistry runtimeRegistry,
@@ -86,7 +88,7 @@ public class HubExecutionRouter {
         return instance;
     }
 
-    private HubInstance chooseAutomatic(String site) {
+    private synchronized HubInstance chooseAutomatic(String site) {
         List<HubInstance> all;
         try {
             all = instanceService.list();
@@ -137,31 +139,29 @@ public class HubExecutionRouter {
             }
         }
         tied.sort(Comparator.comparing(HubInstance::getId));
-        HubInstance chosen = rotateTiedCandidate(tied);
-        lastAutomaticInstanceId = chosen.getId();
+        HubInstance chosen = rotateTiedCandidate(
+            tied, lastAutomaticInstanceIdsBySite.get(site));
+        lastAutomaticInstanceIdsBySite.put(site, chosen.getId());
         return chosen;
     }
 
     /**
-     * Among load+priority ties, pick the instance after {@link #lastAutomaticInstanceId}
-     * in id order (wrapping). If there is no cursor or the cursor is not in this
-     * group, pick the smallest id so the first automatic choice stays deterministic.
+     * Among load+priority ties, pick the first id after {@code lastInstanceId},
+     * wrapping to the smallest id. This also preserves ring position while the last
+     * instance is temporarily absent from the current tie group. A missing cursor
+     * starts at the smallest id.
      */
-    private HubInstance rotateTiedCandidate(List<HubInstance> sortedTied) {
-        if (sortedTied.size() == 1 || lastAutomaticInstanceId == null) {
+    private HubInstance rotateTiedCandidate(
+        List<HubInstance> sortedTied, String lastInstanceId) {
+        if (sortedTied.size() == 1 || lastInstanceId == null) {
             return sortedTied.get(0);
         }
-        int lastIndex = -1;
-        for (int i = 0; i < sortedTied.size(); i++) {
-            if (lastAutomaticInstanceId.equals(sortedTied.get(i).getId())) {
-                lastIndex = i;
-                break;
+        for (HubInstance instance : sortedTied) {
+            if (instance.getId().compareTo(lastInstanceId) > 0) {
+                return instance;
             }
         }
-        if (lastIndex < 0) {
-            return sortedTied.get(0);
-        }
-        return sortedTied.get((lastIndex + 1) % sortedTied.size());
+        return sortedTied.get(0);
     }
 
     private record ScoredCandidate(HubInstance instance, int load) {
