@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
  * <p>Coverage:
  * <ul>
  *   <li>explicit instanceId — state, websites, runtime, live context, queue capacity, no failover,</li>
- *   <li>automatic — least-busy + priority/id tie-breaks, candidates, no-instance fallback,</li>
+ *   <li>automatic — least-busy + priority + round-robin among remaining ties, candidates, no-instance fallback,</li>
  *   <li>candidate rejection — runtime absent, context offline, stale contextId mismatch, queue full.</li>
  * </ul>
  */
@@ -171,21 +171,61 @@ class HubExecutionRouterTest {
     }
 
     /**
-     * Tie-break by ascending instance id (deterministic). Both instances have identical
-     * load, so the smaller id wins.
+     * First load+priority tie uses ascending instance id so the initial pick is
+     * deterministic. The next idle automatic pick must rotate to the other instance
+     * instead of starving it.
      */
     @Test
-    void shouldBreakTiesByAscendingInstanceId() throws Exception {
+    void shouldBreakFirstTieByAscendingIdThenRotate() throws Exception {
         HubInstance lower = persist("lower", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-lower");
         HubInstance higher = persist("higher", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-higher");
-        // Force persistence ordering: persist order already gives lower id first.
         registerRuntime(lower, "ctx-lower");
         registerRuntime(higher, "ctx-higher");
         busy(lower, 1);
         busy(higher, 1);
 
-        HubInstance chosen = router.chooseInstance("bilibili", null);
-        assertThat(chosen.getId()).isEqualTo(lower.getId());
+        HubInstance first = router.chooseInstance("bilibili", null);
+        HubInstance second = router.chooseInstance("bilibili", null);
+        HubInstance third = router.chooseInstance("bilibili", null);
+
+        assertThat(first.getId()).isEqualTo(lower.getId());
+        assertThat(second.getId()).isEqualTo(higher.getId());
+        assertThat(third.getId()).isEqualTo(lower.getId());
+    }
+
+    /**
+     * Sequential submit-after-complete: both instances return to load 0 with equal
+     * priority. Round-robin must keep assigning the idle peer instead of the same
+     * smaller id forever.
+     */
+    @Test
+    void shouldRotateWhenSequentialSubmissionsSeeEqualIdleLoad() throws Exception {
+        HubInstance a = persist("a", List.of("chatgpt"), HubInstanceState.RUNNING, "ctx-a", 2, 5, 1);
+        HubInstance b = persist("b", List.of("chatgpt"), HubInstanceState.RUNNING, "ctx-b", 2, 5, 1);
+        registerRuntime(a, "ctx-a");
+        registerRuntime(b, "ctx-b");
+
+        assertThat(router.chooseInstance("chatgpt", null).getId()).isEqualTo(a.getId());
+        assertThat(router.chooseInstance("chatgpt", null).getId()).isEqualTo(b.getId());
+        assertThat(router.chooseInstance("chatgpt", null).getId()).isEqualTo(a.getId());
+        assertThat(router.chooseInstance("chatgpt", null).getId()).isEqualTo(b.getId());
+    }
+
+    /**
+     * Explicit instanceId routing must not move the automatic round-robin cursor.
+     */
+    @Test
+    void shouldNotAdvanceRotationCursorForExplicitInstanceId() throws Exception {
+        HubInstance a = persist("a", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-a");
+        HubInstance b = persist("b", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-b");
+        registerRuntime(a, "ctx-a");
+        registerRuntime(b, "ctx-b");
+
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(a.getId());
+        assertThat(router.chooseInstance("bilibili", b.getId()).getId()).isEqualTo(b.getId());
+        assertThat(router.chooseInstance("bilibili", null).getId())
+            .as("explicit pick of B must not skip B on the next automatic rotation")
+            .isEqualTo(b.getId());
     }
 
     /**

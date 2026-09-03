@@ -9,6 +9,8 @@ import fun.fengwk.openclihub.core.instance.service.HubInstanceService;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import org.springframework.stereotype.Component;
 
@@ -19,7 +21,8 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li><b>Explicit instanceId</b> — strict, no failover.</li>
  *   <li><b>Automatic</b> — lowest accepted non-terminal task count;
- *       ties broken by higher priority, then ascending id.</li>
+ *       ties broken by higher priority, then round-robin among remaining
+ *       instances (first pick uses ascending id).</li>
  *   <li><b>Queue full handling</b> — when otherwise-eligible candidates exist but all are full,
  *       automatic routing returns {@code INSTANCE_QUEUE_FULL} instead of {@code NO_INSTANCE_AVAILABLE}.</li>
  * </ul>
@@ -32,6 +35,13 @@ public class HubExecutionRouter {
     private final HubInstanceService instanceService;
     private final HubInstanceRuntimeRegistry runtimeRegistry;
     private final HubDispatchRegistry dispatchRegistry;
+
+    /**
+     * Last instance chosen by automatic routing. Only consulted when load and
+     * priority are tied; updated after every automatic pick. Explicit instanceId
+     * routing does not move this cursor.
+     */
+    private String lastAutomaticInstanceId;
 
     public HubExecutionRouter(HubInstanceService instanceService,
                               HubInstanceRuntimeRegistry runtimeRegistry,
@@ -84,8 +94,7 @@ public class HubExecutionRouter {
             throw HubErrorCodes.NO_INSTANCE_AVAILABLE.asThrowable(ex,
                 "Failed to list instances: " + ex.getMessage());
         }
-        HubInstance chosen = null;
-        int chosenLoad = Integer.MAX_VALUE;
+        List<ScoredCandidate> eligible = new ArrayList<>();
         boolean hasFullCandidate = false;
 
         for (HubInstance instance : all) {
@@ -97,12 +106,9 @@ public class HubExecutionRouter {
                 hasFullCandidate = true;
                 continue;
             }
-            if (isBetterCandidate(instance, load, chosen, chosenLoad)) {
-                chosen = instance;
-                chosenLoad = load;
-            }
+            eligible.add(new ScoredCandidate(instance, load));
         }
-        if (chosen == null) {
+        if (eligible.isEmpty()) {
             if (hasFullCandidate) {
                 throw HubErrorCodes.INSTANCE_QUEUE_FULL.asThrowable(
                     "All candidate instances for site " + site + " are full");
@@ -110,22 +116,55 @@ public class HubExecutionRouter {
             throw HubErrorCodes.NO_INSTANCE_AVAILABLE.asThrowable(
                 "No instance available for site: " + site);
         }
+
+        int minLoad = Integer.MAX_VALUE;
+        int maxPriority = Integer.MIN_VALUE;
+        for (ScoredCandidate candidate : eligible) {
+            if (candidate.load < minLoad) {
+                minLoad = candidate.load;
+                maxPriority = candidate.instance.getPriority();
+            } else if (candidate.load == minLoad
+                && candidate.instance.getPriority() > maxPriority) {
+                maxPriority = candidate.instance.getPriority();
+            }
+        }
+
+        List<HubInstance> tied = new ArrayList<>();
+        for (ScoredCandidate candidate : eligible) {
+            if (candidate.load == minLoad
+                && candidate.instance.getPriority() == maxPriority) {
+                tied.add(candidate.instance);
+            }
+        }
+        tied.sort(Comparator.comparing(HubInstance::getId));
+        HubInstance chosen = rotateTiedCandidate(tied);
+        lastAutomaticInstanceId = chosen.getId();
         return chosen;
     }
 
-    private boolean isBetterCandidate(
-        HubInstance candidate, int candidateLoad,
-        HubInstance chosen, int chosenLoad) {
-        if (chosen == null) {
-            return true;
+    /**
+     * Among load+priority ties, pick the instance after {@link #lastAutomaticInstanceId}
+     * in id order (wrapping). If there is no cursor or the cursor is not in this
+     * group, pick the smallest id so the first automatic choice stays deterministic.
+     */
+    private HubInstance rotateTiedCandidate(List<HubInstance> sortedTied) {
+        if (sortedTied.size() == 1 || lastAutomaticInstanceId == null) {
+            return sortedTied.get(0);
         }
-        if (candidateLoad != chosenLoad) {
-            return candidateLoad < chosenLoad;
+        int lastIndex = -1;
+        for (int i = 0; i < sortedTied.size(); i++) {
+            if (lastAutomaticInstanceId.equals(sortedTied.get(i).getId())) {
+                lastIndex = i;
+                break;
+            }
         }
-        if (candidate.getPriority() != chosen.getPriority()) {
-            return candidate.getPriority() > chosen.getPriority();
+        if (lastIndex < 0) {
+            return sortedTied.get(0);
         }
-        return candidate.getId().compareTo(chosen.getId()) < 0;
+        return sortedTied.get((lastIndex + 1) % sortedTied.size());
+    }
+
+    private record ScoredCandidate(HubInstance instance, int load) {
     }
 
     private boolean isInstanceFull(HubInstance instance) {
