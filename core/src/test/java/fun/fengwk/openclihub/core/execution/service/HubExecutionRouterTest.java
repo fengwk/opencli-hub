@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
  * <p>Coverage:
  * <ul>
  *   <li>explicit instanceId — state, websites, runtime, live context, queue capacity, no failover,</li>
- *   <li>automatic — least-busy + priority/id tie-breaks, candidates, no-instance fallback,</li>
+ *   <li>automatic — least-busy + priority + round-robin among remaining ties, candidates, no-instance fallback,</li>
  *   <li>candidate rejection — runtime absent, context offline, stale contextId mismatch, queue full.</li>
  * </ul>
  */
@@ -171,21 +171,103 @@ class HubExecutionRouterTest {
     }
 
     /**
-     * Tie-break by ascending instance id (deterministic). Both instances have identical
-     * load, so the smaller id wins.
+     * First load+priority tie uses ascending instance id so the initial pick is
+     * deterministic. The next idle automatic pick must rotate to the other instance
+     * instead of starving it.
      */
     @Test
-    void shouldBreakTiesByAscendingInstanceId() throws Exception {
+    void shouldBreakFirstTieByAscendingIdThenRotate() throws Exception {
         HubInstance lower = persist("lower", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-lower");
         HubInstance higher = persist("higher", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-higher");
-        // Force persistence ordering: persist order already gives lower id first.
         registerRuntime(lower, "ctx-lower");
         registerRuntime(higher, "ctx-higher");
         busy(lower, 1);
         busy(higher, 1);
 
-        HubInstance chosen = router.chooseInstance("bilibili", null);
-        assertThat(chosen.getId()).isEqualTo(lower.getId());
+        HubInstance first = router.chooseInstance("bilibili", null);
+        HubInstance second = router.chooseInstance("bilibili", null);
+        HubInstance third = router.chooseInstance("bilibili", null);
+
+        assertThat(first.getId()).isEqualTo(lower.getId());
+        assertThat(second.getId()).isEqualTo(higher.getId());
+        assertThat(third.getId()).isEqualTo(lower.getId());
+    }
+
+    /**
+     * The ring must include every member of an N-way tie before wrapping.
+     */
+    @Test
+    void shouldRotateAcrossEveryInstanceInTieGroup() throws Exception {
+        HubInstance a = persist("a", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-a");
+        HubInstance b = persist("b", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-b");
+        HubInstance c = persist("c", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-c");
+        registerRuntime(a, "ctx-a");
+        registerRuntime(b, "ctx-b");
+        registerRuntime(c, "ctx-c");
+
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(a.getId());
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(b.getId());
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(c.getId());
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(a.getId());
+    }
+
+    /**
+     * Sequential submit-after-complete: both instances return to load 0 with equal
+     * priority. Round-robin must keep assigning the idle peer instead of the same
+     * smaller id forever.
+     */
+    @Test
+    void shouldRotateWhenSequentialSubmissionsSeeEqualIdleLoad() throws Exception {
+        HubInstance a = persist("a", List.of("chatgpt"), HubInstanceState.RUNNING, "ctx-a", 2, 5, 1);
+        HubInstance b = persist("b", List.of("chatgpt"), HubInstanceState.RUNNING, "ctx-b", 2, 5, 1);
+        registerRuntime(a, "ctx-a");
+        registerRuntime(b, "ctx-b");
+
+        assertThat(router.chooseInstance("chatgpt", null).getId()).isEqualTo(a.getId());
+        assertThat(router.chooseInstance("chatgpt", null).getId()).isEqualTo(b.getId());
+        assertThat(router.chooseInstance("chatgpt", null).getId()).isEqualTo(a.getId());
+        assertThat(router.chooseInstance("chatgpt", null).getId()).isEqualTo(b.getId());
+    }
+
+    /**
+     * Explicit instanceId routing must not move the automatic round-robin cursor.
+     */
+    @Test
+    void shouldNotAdvanceRotationCursorForExplicitInstanceId() throws Exception {
+        HubInstance a = persist("a", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-a");
+        HubInstance b = persist("b", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-b");
+        registerRuntime(a, "ctx-a");
+        registerRuntime(b, "ctx-b");
+
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(a.getId());
+        assertThat(router.chooseInstance("bilibili", b.getId()).getId()).isEqualTo(b.getId());
+        assertThat(router.chooseInstance("bilibili", null).getId())
+            .as("explicit pick of B must not skip B on the next automatic rotation")
+            .isEqualTo(b.getId());
+    }
+
+    /**
+     * Automatic requests for another site must not reset this site's cursor.
+     */
+    @Test
+    void shouldKeepRoundRobinCursorIndependentPerSite() throws Exception {
+        HubInstance bilibiliA = persist(
+            "bilibili-a", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-bilibili-a");
+        HubInstance bilibiliB = persist(
+            "bilibili-b", List.of("bilibili"), HubInstanceState.RUNNING, "ctx-bilibili-b");
+        HubInstance chatgptA = persist(
+            "chatgpt-a", List.of("chatgpt"), HubInstanceState.RUNNING, "ctx-chatgpt-a");
+        HubInstance chatgptB = persist(
+            "chatgpt-b", List.of("chatgpt"), HubInstanceState.RUNNING, "ctx-chatgpt-b");
+        registerRuntime(bilibiliA, "ctx-bilibili-a");
+        registerRuntime(bilibiliB, "ctx-bilibili-b");
+        registerRuntime(chatgptA, "ctx-chatgpt-a");
+        registerRuntime(chatgptB, "ctx-chatgpt-b");
+
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(bilibiliA.getId());
+        assertThat(router.chooseInstance("chatgpt", null).getId()).isEqualTo(chatgptA.getId());
+        assertThat(router.chooseInstance("bilibili", null).getId()).isEqualTo(bilibiliB.getId());
+        assertThat(router.chooseInstance("chatgpt", null).getId()).isEqualTo(chatgptB.getId());
     }
 
     /**
