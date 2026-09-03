@@ -108,6 +108,8 @@ public class OpenCliHubProperties {
         private int maxCaptureChars = 1_048_576;
         private int defaultMaxPending = 5;
         private int defaultMaxConcurrency = 1;
+        private long parallelStartStaggerMinMillis = 3000L;
+        private long parallelStartStaggerMaxMillis = 5000L;
 
     }
 

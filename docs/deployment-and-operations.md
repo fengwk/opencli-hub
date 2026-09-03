@@ -299,8 +299,16 @@ scripts/docker/test-install-opencli.sh
   接收到线程池指标可见前的交接窗口；优先选择该总数最小的 Instance，不按
   `maxConcurrency` 归一化。负载相同时再比较 `priority`，最后按 Instance ID 稳定打破平局。
 - **并发调度与独占规则**：
-  - 只有**同时**满足浏览器命令（`browser=true`）、`siteSession=EPHEMERAL`、`access=READ`、`defaultWindowMode=null` 或精确为 `background`，且**无受管输出规则**（`HubCommandOutputRule`）的命令才允许并行执行（最多并行 `maxConcurrency` 个）；
-  - 所有不满足上述条件的命令（包括 `siteSession` / `access` 元数据缺失、空字符串或大小写不匹配的窗口模式、写操作、持久会话、前台窗口交互或受管输出）均作为**独占任务**执行，与同 Instance 的其他任务互斥。
+  - 浏览器命令（`browser=true`）且 `siteSession=EPHEMERAL` 时按 `PARALLEL_SAFE` 执行，最多并行 `maxConcurrency` 个；不再依据 `access`、`defaultWindowMode`、受管输出规则或命令白名单分类；
+  - `siteSession=PERSISTENT`、非浏览器命令、命令元数据无法解析或 `siteSession=null` 时 fail-safe 为 `EXCLUSIVE`，与同 Instance 的其他任务互斥。
+- **同一 Site 跨实例并行启动错峰（Parallel Start Stagger）**：
+  - 对于满足并行条件的 `PARALLEL_SAFE` 任务，Hub 在启动 OpenCLI 进程前通过 `HubExecutionStartStagger` 按命令规范化 `site` 进行全局跨实例启动错峰：
+    - 首条同 site 任务立即启动；
+    - 生命周期重叠的同 site 后续任务经由 FIFO 公平门控排队，相邻实际启动时间间隔取自 `[minMillis, maxMillis]` 随机区间（默认 `3000..5000` ms）；
+    - 若前置任务出现超睡（oversleep），后续任务严格相对于前置任务的**实际启动时间**维持最小错峰间隔；
+    - 错峰等待消耗执行 deadline，若无法在 deadline 前启动则以 `QUEUE_WAIT_TIMEOUT` 终止且不调用 OpenCLI；
+    - `EXCLUSIVE` 独占任务及不同 site 任务完全旁路错峰；
+    - 可通过环境变量 `OPENCLI_HUB_PARALLEL_START_STAGGER_MIN_MILLIS` 与 `OPENCLI_HUB_PARALLEL_START_STAGGER_MAX_MILLIS` 配置；两者均设为 `0` 时禁用错峰。
 - **Canary 灰度与运维建议**：
   - 在多 Instance 生产环境中，建议采用 Canary 灰度策略：先选取 1 个非核心 Instance 将 `maxConcurrency` 从 `1` 调至 `2`，观察 Chrome 稳定性、内存占用与业务返回质量，确认稳定后再逐步推广。
 - **Chrome / shm / 渲染进程稳定性边界**：

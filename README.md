@@ -169,6 +169,14 @@ curl --fail --show-error http://127.0.0.1:8080/api/instances
 三种 Compose 均支持通过 `OPENCLI_HUB_MAX_CAPTURE_CHARS` 调整每次执行的 stdout/stderr 最大捕获字符数，
 默认 `1048576`。超出后 Hub 仍会截断并在 Execution 中记录截断状态。
 
+针对同一站点（site）生命周期重叠的 `PARALLEL_SAFE` 命令，Hub 在启动 OpenCLI 进程前提供全局跨实例的随机错峰协调器
+（`HubExecutionStartStagger`），降低突发并发触发站点风控的风险：
+- **首条立即执行**：当目标 site 无正在执行或等待启动的并行任务时，首个任务立即启动；
+- **重叠随机错峰**：后续与已有任务生命周期重叠的同 site 任务通过 FIFO 公平门控依次错峰，相邻两次实际启动时间由配置的随机区间（默认 `3000..5000` 毫秒）隔开；若前置任务因调度抖动出现超睡（oversleep），后续任务仍严格从前序任务的实际启动时间起错峰；
+- **耗尽 Deadline**：等待耗时计入任务的执行 deadline；若无法在 deadline 前获准启动，直接抛出 `QUEUE_WAIT_TIMEOUT` 超时终止，且绝不启动 OpenCLI；
+- **独占与异站旁路**：`EXCLUSIVE`（如 `PERSISTENT` 会话或 fail-safe 的非浏览器/无效元数据命令）任务及不同 site 之间的任务互不干扰，完全旁路错峰；
+- **配置与禁用**：通过环境变量 `OPENCLI_HUB_PARALLEL_START_STAGGER_MIN_MILLIS`（默认 `3000`）与 `OPENCLI_HUB_PARALLEL_START_STAGGER_MAX_MILLIS`（默认 `5000`）调整错峰范围；两者均设为 `0` 时彻底禁用错峰。
+
 镜像默认发布到 `127.0.0.1:8080`，并使用三个 named volume：`opencli-hub-postgresql-data`（数据库）、
 `opencli-hub-postgresql-hub-data`（日志、资源、Instance Profile 根目录）、`opencli-hub-postgresql-home`（OpenCLI home/data）。
 
