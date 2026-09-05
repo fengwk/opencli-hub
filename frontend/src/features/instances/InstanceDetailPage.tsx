@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { listCommands } from '@/features/commands/commands-api'
 import { bindInstanceActiveTab, clearInstanceQueue, deleteInstance, getInstance, getInstanceVncStatus, runInstanceLifecycleAction, updateInstance } from '@/features/instances/instances-api'
 import { InstanceForm } from '@/features/instances/InstanceForm'
 import { InstanceLifecycleActions } from '@/features/instances/InstanceLifecycleActions'
@@ -30,7 +31,8 @@ export function InstanceDetailPage() {
   const [actionPending, setActionPending] = useState(false)
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [confirmBindActiveTab, setConfirmBindActiveTab] = useState(false)
+  const [confirmBindSite, setConfirmBindSite] = useState<string | null>(null)
+  const [selectedSiteState, setSelectedSiteState] = useState<string>('')
   const instanceQuery = useQuery({
     queryKey: ['instance', instanceId],
     queryFn: () => getInstance(instanceId!),
@@ -41,6 +43,26 @@ export function InstanceDetailPage() {
     queryFn: () => getInstanceVncStatus(instanceId!),
     enabled: validId,
   })
+  const commandsQuery = useQuery({
+    queryKey: ['commands'],
+    queryFn: () => listCommands(),
+    enabled: validId,
+  })
+
+  const bindableSites = useMemo(() => {
+    const enabledWebsites = new Set(instanceQuery.data?.websites ?? [])
+    const sites = new Set<string>()
+    for (const cmd of commandsQuery.data ?? []) {
+      if (cmd.browser === true && cmd.siteSession === 'PERSISTENT' && enabledWebsites.has(cmd.site)) {
+        sites.add(cmd.site)
+      }
+    }
+    return Array.from(sites).sort()
+  }, [commandsQuery.data, instanceQuery.data?.websites])
+
+  const selectedSite = bindableSites.includes(selectedSiteState)
+    ? selectedSiteState
+    : (bindableSites[0] ?? '')
 
   if (!validId) {
     return <ErrorState title="无效的实例 ID" description="实例 ID 不能为空。" />
@@ -83,17 +105,17 @@ export function InstanceDetailPage() {
     }
   }
 
-  async function bindActiveTab() {
+  async function bindActiveTab(site: string) {
     setActionError(null)
     setActionSuccess(null)
     setActionPending(true)
     try {
-      await bindInstanceActiveTab(resolvedInstanceId)
-      setConfirmBindActiveTab(false)
-      setActionSuccess('已绑定当前 VNC 标签页。')
+      await bindInstanceActiveTab(resolvedInstanceId, site)
+      setConfirmBindSite(null)
+      setActionSuccess(`已将当前 VNC 标签页绑定至 ${site}。`)
       await refresh()
     } catch (error) {
-      setConfirmBindActiveTab(false)
+      setConfirmBindSite(null)
       setActionError(errorMessage(error))
     } finally {
       setActionPending(false)
@@ -140,7 +162,14 @@ export function InstanceDetailPage() {
   const instance = instanceQuery.data
   const runtime = instance.runtime
   const queueBusy = (runtime?.activeCount ?? 0) + (runtime?.pendingCount ?? 0) > 0
-  const canBindActiveTab = instance.state === 'RUNNING' && runtime?.registered === true && !queueBusy
+  const canBindActiveTab =
+    instance.state === 'RUNNING' &&
+    runtime?.registered === true &&
+    !queueBusy &&
+    !commandsQuery.isPending &&
+    !commandsQuery.isError &&
+    bindableSites.length > 0 &&
+    Boolean(selectedSite)
   const canDelete = !queueBusy && instance.state !== 'STARTING' && instance.state !== 'STOPPING'
   const initialValues: InstanceEditableProperties = {
     code: instance.code,
@@ -211,12 +240,32 @@ export function InstanceDetailPage() {
             {instance.lastErrorMessage ? <p className="inline-error instance-error" role="alert">最近错误：{instance.lastErrorMessage}</p> : null}
             <div className="instance-sidebar-actions">
               <InstanceLifecycleActions instance={instance} busy={actionPending} onAction={(action) => void runAction(action)} />
+              <select
+                aria-label="绑定目标网站"
+                value={selectedSite}
+                disabled={actionPending || !canBindActiveTab}
+                onChange={(event) => setSelectedSiteState(event.target.value)}
+              >
+                {commandsQuery.isPending ? (
+                  <option value="">正在加载网站…</option>
+                ) : commandsQuery.isError ? (
+                  <option value="">网站加载失败</option>
+                ) : bindableSites.length === 0 ? (
+                  <option value="">无可绑定网站</option>
+                ) : (
+                  bindableSites.map((site) => (
+                    <option key={site} value={site}>
+                      {site}
+                    </option>
+                  ))
+                )}
+              </select>
               <button
                 type="button"
                 className="btn"
                 disabled={actionPending || !canBindActiveTab}
-                title="先在 VNC 中选中目标 ChatGPT tab；运行中的任务不能绑定"
-                onClick={() => setConfirmBindActiveTab(true)}
+                title={selectedSite ? `先在 VNC 中选中目标 ${selectedSite} 标签页；运行中的任务不能绑定` : '无可绑定网站'}
+                onClick={() => setConfirmBindSite(selectedSite)}
               >
                 绑定当前 VNC 标签页
               </button>
@@ -254,13 +303,22 @@ export function InstanceDetailPage() {
       </div>
 
       <ConfirmDialog
-        open={confirmBindActiveTab}
-        title="绑定当前 VNC 标签页？"
-        description={<>请先在 VNC 中选中目标 ChatGPT tab。此操作会替换当前 chatgpt-agent 受管 tab，不会关闭目标用户 tab；运行中的任务不能绑定。</>}
-        confirmLabel="绑定当前标签页"
+        open={Boolean(confirmBindSite)}
+        title={`绑定 ${confirmBindSite ?? ''} 标签页？`}
+        description={
+          confirmBindSite ? (
+            <>
+              请先在 VNC 中选中目标 <strong>{confirmBindSite}</strong> 标签页。此操作会将当前活动 VNC 标签页绑定为{' '}
+              <strong>{confirmBindSite}</strong> 的持久受管标签页，不会关闭目标用户标签页；运行中的任务不能绑定。
+            </>
+          ) : undefined
+        }
+        confirmLabel={confirmBindSite ? `确认绑定 ${confirmBindSite}` : '确认绑定'}
         busy={actionPending}
-        onConfirm={() => void bindActiveTab()}
-        onCancel={() => setConfirmBindActiveTab(false)}
+        onConfirm={() => {
+          if (confirmBindSite) void bindActiveTab(confirmBindSite)
+        }}
+        onCancel={() => setConfirmBindSite(null)}
       />
 
       <ConfirmDialog

@@ -1705,11 +1705,11 @@ POST   /api/instances/{id}/start
 POST   /api/instances/{id}/stop
 POST   /api/instances/{id}/restart
 POST   /api/instances/{id}/clear-queue
-POST   /api/instances/{id}/chatgpt-agent/bind-active-tab
+POST   /api/instances/{id}/{site}/bind-active-tab
 ```
 
 `clear-queue` 丢弃该 Instance 排队中的 PENDING 任务并持久化为 CANCELLED；
-`bind-active-tab` 将 `site:chatgpt-agent` 固定会话绑定到当前活动标签页。
+`bind-active-tab` 将指定站点（site）的固定适配器会话 `site:{site}` 绑定到当前活动标签页。可绑定能力完全由 Command Catalog 判定（即该站点在 Catalog 中声明了至少一个 `siteSession=PERSISTENT` 的公开 Browser 命令），非 persistent 站点或未知站点将返回 `INSTANCE_ARGUMENT_INVALID` 错误；同时要求目标 Instance 已启用该站点（配置在 `websites` 列表中），否则返回 `INSTANCE_WEBSITE_NOT_ENABLED` 错误。绑定是 Instance 局部状态，不建立跨 Instance 的隐式路由；执行方仍需通过显式 `instanceId` 或既有 session token 命中同一 Instance。该机制纯粹提供通用的持久化标签页（persistent tab）生命周期管理与会话归属绑定，并不代表各站点插件或底层模型能力之间的对齐或等价。
 
 ### 26.2 VNC
 

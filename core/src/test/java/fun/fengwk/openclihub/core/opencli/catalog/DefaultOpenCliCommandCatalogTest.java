@@ -74,6 +74,27 @@ class DefaultOpenCliCommandCatalogTest {
         assertThat(bilibili.get().getSiteSession()).isEqualTo(SiteSessionMode.EPHEMERAL);
     }
 
+    @Test
+    void shouldListPersistentWebsitesPreservingOrderAndDeduplicating() {
+        OpenCliCommandCatalog catalog = newCatalog();
+        var persistentWebsites = catalog.listPersistentWebsites();
+
+        // 12306 declares login as persistent; chatgpt declares ask/image as persistent.
+        assertThat(persistentWebsites).containsExactly("12306", "chatgpt");
+        assertThat(catalog.containsPersistentWebsite("12306")).isTrue();
+        assertThat(catalog.containsPersistentWebsite("chatgpt")).isTrue();
+
+        // Ephemeral-only sites, unknown sites, and null must not be reported as persistent websites.
+        assertThat(catalog.containsPersistentWebsite("bilibili")).isFalse();
+        assertThat(catalog.containsPersistentWebsite("dianping")).isFalse();
+        assertThat(catalog.containsPersistentWebsite("unknown-site")).isFalse();
+        assertThat(catalog.containsPersistentWebsite(null)).isFalse();
+
+        // Immutable set check.
+        assertThatThrownBy(() -> persistentWebsites.add("mutation-attempt"))
+            .isInstanceOf(UnsupportedOperationException.class);
+    }
+
     /**
      * A failed reload must leave the previous snapshot fully served: the catalog builds a
      * fresh index and atomically swaps it, so a broken source can never clear the cache into

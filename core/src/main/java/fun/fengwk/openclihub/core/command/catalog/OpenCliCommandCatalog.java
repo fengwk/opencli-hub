@@ -1,5 +1,8 @@
 package fun.fengwk.openclihub.core.command.catalog;
 
+import fun.fengwk.openclihub.share.model.execution.SiteSessionMode;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -19,6 +22,35 @@ public interface OpenCliCommandCatalog {
 
     default boolean containsWebsite(String website) {
         return website != null && listWebsites().contains(website);
+    }
+
+    /**
+     * Lists websites that declare at least one public command with
+     * {@link SiteSessionMode#PERSISTENT}. Preserves declaration order and returns an
+     * unmodifiable set.
+     */
+    default Set<String> listPersistentWebsites() {
+        Set<String> persistent = new LinkedHashSet<>();
+        List<OpenCliCommand> commands = listPublicCommands();
+        if (commands != null) {
+            for (OpenCliCommand command : commands) {
+                if (command != null
+                    && command.isBrowser()
+                    && command.getSite() != null
+                    && !command.getSite().isBlank()
+                    && command.getSiteSession() == SiteSessionMode.PERSISTENT) {
+                    persistent.add(command.getSite());
+                }
+            }
+        }
+        return Collections.unmodifiableSet(persistent);
+    }
+
+    /**
+     * Checks if the given website has at least one public persistent command in the catalog.
+     */
+    default boolean containsPersistentWebsite(String website) {
+        return website != null && !website.isBlank() && listPersistentWebsites().contains(website);
     }
 
     /**

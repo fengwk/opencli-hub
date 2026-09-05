@@ -5,9 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
+import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandCatalog;
 import fun.fengwk.openclihub.core.execution.runtime.HubDispatchRegistry;
 import fun.fengwk.openclihub.core.instance.runtime.test.InMemoryHubInstanceService;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
+import fun.fengwk.openclihub.core.opencli.catalog.DefaultOpenCliCommandCatalog;
+import fun.fengwk.openclihub.core.opencli.catalog.FileOpenCliCatalogSource;
 import fun.fengwk.openclihub.core.opencli.daemon.FakeOpenCliDaemonClient;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonCommandResponse;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliProfileSnapshot;
@@ -22,6 +25,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -46,6 +50,7 @@ import org.junit.jupiter.api.Test;
 class HubInstanceLifecycleServiceTest {
 
     private static final String TEST_EXTENSION_ID = "abcdefghijklmnopabcdefghijklmnop";
+    private static final Path CATALOG_FIXTURE = Path.of("src/test/resources/opencli/cli-manifest.json");
 
     private Path dataDir;
     private Path buildInfoPath;
@@ -60,6 +65,7 @@ class HubInstanceLifecycleServiceTest {
     private FakeHubSystemSettingsService settingsService;
     private HubDispatchRegistry dispatchRegistry;
     private HubInstanceStartCoordinator startCoordinator;
+    private OpenCliCommandCatalog commandCatalog;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -79,7 +85,8 @@ class HubInstanceLifecycleServiceTest {
         cleanupX11BaseRange(properties.getRuntime().getDisplayBase());
         daemon = new FakeOpenCliDaemonClient();
         launcher = new FakeInstanceProcessLauncher();
-        instanceService = new InMemoryHubInstanceService();
+        commandCatalog = new DefaultOpenCliCommandCatalog(new FileOpenCliCatalogSource(CATALOG_FIXTURE));
+        instanceService = new InMemoryHubInstanceService(commandCatalog::listWebsites);
         allocationService = new HubInstanceAllocationService(properties);
         watcher = new FakeUnexpectedExitListener();
         registry = new HubInstanceRuntimeRegistry(launcher, allocationService, watcher);
@@ -757,25 +764,82 @@ class HubInstanceLifecycleServiceTest {
     }
 
     @Test
-    void shouldBindChatgptAgentActiveTabThroughConnectedProfile() {
-        String id = seedPersistedInstance("chatgpt-bind-success", "ctx-bind-success");
+    void shouldBindPersistentSiteActiveTabThroughConnectedProfile() {
+        String id = seedPersistedInstance("chatgpt-bind-success", "ctx-bind-success", List.of("chatgpt"));
         OpenCliProfileSnapshot profile = connectedProfile("ctx-bind-success");
         daemon.setProfiles(List.of(profile));
 
         lifecycle.start(id);
-        lifecycle.bindActiveTab(id);
+        lifecycle.bindActiveTab(id, "chatgpt");
 
         assertThat(daemon.bindContextIds()).containsExactly("ctx-bind-success");
         assertThat(daemon.bindSessions())
-            .as("the endpoint must bind the fixed chatgpt-agent adapter session")
-            .containsExactly(HubInstanceLifecycleService.CHATGPT_AGENT_ADAPTER_SESSION);
+            .as("the endpoint must bind the fixed adapter session for the persistent site")
+            .containsExactly("site:chatgpt");
+    }
+
+    @Test
+    void shouldBindArbitraryThirdPersistentSiteThroughConnectedProfile() {
+        String id = seedPersistedInstance("12306-bind-success", "ctx-bind-12306", List.of("12306"));
+        OpenCliProfileSnapshot profile = connectedProfile("ctx-bind-12306");
+        daemon.setProfiles(List.of(profile));
+
+        lifecycle.start(id);
+        lifecycle.bindActiveTab(id, "12306");
+
+        assertThat(daemon.bindContextIds()).containsExactly("ctx-bind-12306");
+        assertThat(daemon.bindSessions())
+            .as("the endpoint must bind the fixed adapter session for 12306")
+            .containsExactly("site:12306");
+    }
+
+    @Test
+    void shouldRejectActiveTabBindWhenSiteIsNotEnabledOnInstance() {
+        String id = seedPersistedInstance("bind-disabled-site", "ctx-disabled-site", List.of("bilibili"));
+        OpenCliProfileSnapshot profile = connectedProfile("ctx-disabled-site");
+        daemon.setProfiles(List.of(profile));
+        lifecycle.start(id);
+
+        assertThatThrownBy(() -> lifecycle.bindActiveTab(id, "chatgpt"))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_WEBSITE_NOT_ENABLED));
+        assertThat(daemon.bindContextIds()).isEmpty();
+    }
+
+    @Test
+    void shouldRejectActiveTabBindWhenSiteIsEphemeralOrUnknownOrBlank() {
+        String id = seedPersistedInstance("bind-invalid-site", "ctx-invalid-site", List.of("bilibili", "chatgpt"));
+        OpenCliProfileSnapshot profile = connectedProfile("ctx-invalid-site");
+        daemon.setProfiles(List.of(profile));
+        lifecycle.start(id);
+
+        List<String> invalidSites = Arrays.asList(
+            null,
+            "",
+            "   ",
+            "bilibili",
+            "unknown-site",
+            "site:chatgpt",
+            " chatgpt ",
+            "../injection",
+            "chatgpt/extra"
+        );
+
+        for (String invalidSite : invalidSites) {
+            assertThatThrownBy(() -> lifecycle.bindActiveTab(id, invalidSite))
+                .isInstanceOf(ThrowableConventionErrorCode.class)
+                .extracting("code")
+                .isEqualTo(prefixed(HubErrorCodes.INSTANCE_ARGUMENT_INVALID));
+        }
+        assertThat(daemon.bindContextIds()).isEmpty();
     }
 
     @Test
     void shouldRejectActiveTabBindWhenInstanceIsNotRunning() {
-        String id = seedPersistedInstance("chatgpt-bind-stopped", "ctx-bind-stopped");
+        String id = seedPersistedInstance("chatgpt-bind-stopped", "ctx-bind-stopped", List.of("chatgpt"));
 
-        assertThatThrownBy(() -> lifecycle.bindActiveTab(id))
+        assertThatThrownBy(() -> lifecycle.bindActiveTab(id, "chatgpt"))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .extracting("code")
             .isEqualTo(prefixed(HubErrorCodes.INSTANCE_NOT_RUNNING));
@@ -784,12 +848,12 @@ class HubInstanceLifecycleServiceTest {
 
     @Test
     void shouldRejectActiveTabBindWhenDaemonProfileIsDisconnected() {
-        String id = seedPersistedInstance("chatgpt-bind-offline", "ctx-bind-offline");
+        String id = seedPersistedInstance("chatgpt-bind-offline", "ctx-bind-offline", List.of("chatgpt"));
         daemon.setProfiles(List.of(connectedProfile("ctx-bind-offline")));
         lifecycle.start(id);
         daemon.clearProfiles();
 
-        assertThatThrownBy(() -> lifecycle.bindActiveTab(id))
+        assertThatThrownBy(() -> lifecycle.bindActiveTab(id, "chatgpt"))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .extracting("code")
             .isEqualTo(prefixed(HubErrorCodes.INSTANCE_CONTEXT_NOT_CONNECTED));
@@ -798,7 +862,7 @@ class HubInstanceLifecycleServiceTest {
 
     @Test
     void shouldRejectActiveTabBindWhileInstanceIsBusy() throws Exception {
-        String id = seedPersistedInstance("chatgpt-bind-busy", "ctx-bind-busy");
+        String id = seedPersistedInstance("chatgpt-bind-busy", "ctx-bind-busy", List.of("chatgpt"));
         daemon.setProfiles(List.of(connectedProfile("ctx-bind-busy")));
         lifecycle.start(id);
         CountDownLatch activeStarted = new CountDownLatch(1);
@@ -812,7 +876,7 @@ class HubInstanceLifecycleServiceTest {
             }, Long.MAX_VALUE));
             assertThat(activeStarted.await(1, TimeUnit.SECONDS)).isTrue();
 
-            assertThatThrownBy(() -> lifecycle.bindActiveTab(id))
+            assertThatThrownBy(() -> lifecycle.bindActiveTab(id, "chatgpt"))
                 .isInstanceOf(ThrowableConventionErrorCode.class)
                 .extracting("code")
                 .isEqualTo(prefixed(HubErrorCodes.INSTANCE_BUSY));
@@ -826,7 +890,7 @@ class HubInstanceLifecycleServiceTest {
 
     @Test
     void shouldPreserveDaemonBindFailureAndHint() {
-        String id = seedPersistedInstance("chatgpt-bind-failed", "ctx-bind-failed");
+        String id = seedPersistedInstance("chatgpt-bind-failed", "ctx-bind-failed", List.of("chatgpt"));
         daemon.setProfiles(List.of(connectedProfile("ctx-bind-failed")));
         lifecycle.start(id);
         OpenCliDaemonCommandResponse failure = new OpenCliDaemonCommandResponse();
@@ -837,7 +901,7 @@ class HubInstanceLifecycleServiceTest {
         failure.setErrorHint("Focus the target Chrome tab/window, then retry bind.");
         daemon.setBindResponse(failure);
 
-        assertThatThrownBy(() -> lifecycle.bindActiveTab(id))
+        assertThatThrownBy(() -> lifecycle.bindActiveTab(id, "chatgpt"))
             .isInstanceOf(ThrowableConventionErrorCode.class)
             .hasMessageContaining("No debuggable tab found")
             .hasMessageContaining("Focus the target Chrome tab/window")
@@ -1403,7 +1467,7 @@ class HubInstanceLifecycleServiceTest {
             daemon, properties, service, registry, starter);
         return new HubInstanceLifecycleService(
             service, registry, newDispatchRegistry, startCoordinator,
-            files, starter, daemonContext, properties, java.time.Clock.systemUTC());
+            files, starter, daemonContext, commandCatalog, properties, java.time.Clock.systemUTC());
     }
 
     private OpenCliProfileSnapshot connectedProfile(String contextId) {
@@ -1416,6 +1480,19 @@ class HubInstanceLifecycleServiceTest {
 
     private String seedPersistedInstance(String code, String contextId) {
         return seedPersistedInstance(code, contextId, HubProxyMode.INHERIT, null);
+    }
+
+    private String seedPersistedInstance(String code, String contextId, List<String> websites) {
+        HubInstance inst = new HubInstance();
+        inst.setCode(code);
+        inst.setDisplayName(code + " display");
+        inst.setWebsites(websites);
+        inst.setMaxPending(5);
+        inst.setProxyMode(HubProxyMode.INHERIT);
+        inst.setState(HubInstanceState.STOPPED);
+        inst.setContextId(contextId);
+        instanceService.create(inst);
+        return inst.getId();
     }
 
     private String seedPersistedInstance(String code, String contextId,
