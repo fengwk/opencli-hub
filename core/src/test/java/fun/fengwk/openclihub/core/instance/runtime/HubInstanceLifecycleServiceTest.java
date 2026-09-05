@@ -1203,8 +1203,8 @@ class HubInstanceLifecycleServiceTest {
         String a = seedPersistedInstance("bilibili-concurrent-a", null);
         String b = seedPersistedInstance("bilibili-concurrent-b", null);
         // Whichever start wins the lock consumes fetches 1-2, the other fetches 3-4.
-        daemon.addConnectedContextAfterFetch("ctx-concurrent-a", 2);
-        daemon.addConnectedContextAfterFetch("ctx-concurrent-b", 4);
+        daemon.addConnectedContextAfterFetch("ctx-concurrent-first", 2);
+        daemon.addConnectedContextAfterFetch("ctx-concurrent-second", 4);
 
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
@@ -1219,8 +1219,11 @@ class HubInstanceLifecycleServiceTest {
         assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
             .as("two serialised starts must launch exactly two Chromes")
             .isEqualTo(2);
-        assertThat(instanceService.get(a).getContextId()).isEqualTo("ctx-concurrent-a");
-        assertThat(instanceService.get(b).getContextId()).isEqualTo("ctx-concurrent-b");
+        // Executor submission order does not define which task acquires the fair lock first.
+        assertThat(List.of(
+            instanceService.get(a).getContextId(),
+            instanceService.get(b).getContextId()))
+            .containsExactlyInAnyOrder("ctx-concurrent-first", "ctx-concurrent-second");
     }
 
     /** Concurrent restarts of the same instance are serialised; each restart launches Chrome once. */
