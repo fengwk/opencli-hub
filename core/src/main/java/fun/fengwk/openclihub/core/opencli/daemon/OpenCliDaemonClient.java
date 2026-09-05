@@ -39,7 +39,7 @@ public interface OpenCliDaemonClient {
      * supplies its fixed session name); the transport never hardcodes a site-specific session.
      *
      * @param contextId the live daemon profile context to route to
-     * @param session the adapter session to bind, e.g. {@code site:chatgpt-agent}
+     * @param session the adapter session to bind, e.g. {@code site:example}
      * @return the daemon command result; command-level failures are represented by {@code ok=false}
      * @throws OpenCliDaemonException when the daemon is unreachable or returns an invalid response
      */

@@ -2,8 +2,10 @@ package fun.fengwk.openclihub.core.instance.runtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandCatalog;
 import fun.fengwk.openclihub.core.execution.runtime.HubDispatchRegistry;
 import fun.fengwk.openclihub.core.instance.runtime.test.InMemoryHubInstanceService;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
@@ -229,7 +231,8 @@ class HubInstanceRuntimeApplicationRunnerTest {
             daemon, properties, instanceService, registry, starter);
         return new HubInstanceLifecycleService(
             instanceService, registry, new HubDispatchRegistry(), startCoordinator,
-            files, starter, daemonContext, properties, Clock.systemUTC());
+            files, starter, daemonContext, mock(OpenCliCommandCatalog.class),
+            properties, Clock.systemUTC());
     }
 
     private String seedRow(String code) {

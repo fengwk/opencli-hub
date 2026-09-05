@@ -50,8 +50,8 @@ export async function runInstanceLifecycleAction(
   return normalizeInstance(await apiClient.post<HubInstanceResponse>(`${instancePath(id)}/${action}`))
 }
 
-export function bindInstanceActiveTab(id: BackendId): Promise<void> {
-  return apiClient.post<void>(`${instancePath(id)}/chatgpt-agent/bind-active-tab`)
+export function bindInstanceActiveTab(id: BackendId, site: string): Promise<void> {
+  return apiClient.post<void>(`${instancePath(id)}/${encodeURIComponent(site)}/bind-active-tab`)
 }
 
 export function getInstanceVncStatus(id: BackendId): Promise<HubInstanceVncStatus> {

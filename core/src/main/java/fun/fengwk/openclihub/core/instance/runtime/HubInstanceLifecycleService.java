@@ -1,6 +1,7 @@
 package fun.fengwk.openclihub.core.instance.runtime;
 
 import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
+import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandCatalog;
 import fun.fengwk.openclihub.core.execution.runtime.HubDispatchRegistry;
 import fun.fengwk.openclihub.core.instance.service.HubInstanceService;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
@@ -49,12 +50,6 @@ import org.springframework.stereotype.Service;
 @Service
 public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceConsumer {
 
-    /**
-     * Fixed adapter session bound by
-     * {@code POST /api/instances/{id}/chatgpt-agent/bind-active-tab}.
-     */
-    public static final String CHATGPT_AGENT_ADAPTER_SESSION = "site:chatgpt-agent";
-
     private final HubInstanceService instanceService;
     private final HubInstanceRuntimeRegistry registry;
     private final HubDispatchRegistry dispatchRegistry;
@@ -62,6 +57,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     private final HubInstanceFiles files;
     private final HubInstanceRuntimeStarter runtimeStarter;
     private final HubInstanceDaemonContextService daemonContext;
+    private final OpenCliCommandCatalog commandCatalog;
     private final OpenCliHubProperties properties;
     private final Clock clock;
 
@@ -73,6 +69,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         HubInstanceFiles files,
         HubInstanceRuntimeStarter runtimeStarter,
         HubInstanceDaemonContextService daemonContext,
+        OpenCliCommandCatalog commandCatalog,
         OpenCliHubProperties properties,
         Clock clock) {
         this.instanceService = instanceService;
@@ -82,6 +79,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         this.files = files;
         this.runtimeStarter = runtimeStarter;
         this.daemonContext = daemonContext;
+        this.commandCatalog = commandCatalog;
         this.properties = properties;
         this.clock = clock;
     }
@@ -194,18 +192,31 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     }
 
     /**
-     * Binds the fixed chatgpt-agent adapter session (see {@link #CHATGPT_AGENT_ADAPTER_SESSION})
+     * Binds the fixed adapter session for the given persistent site ({@code "site:" + site})
      * to the tab currently focused in the instance's VNC browser. The dispatcher idle guard
      * remains held for the complete daemon round trip, so no execution can be accepted while
      * the tab is being replaced.
+     *
+     * <p>A site is bindable iff at least one public command for that site in the catalog
+     * declares {@code siteSession=PERSISTENT}. The target instance must also have that site
+     * enabled in its configured websites.
+     *
+     * @param instanceId instance identifier
+     * @param site persistent website name declared in the command catalog
      */
-    public void bindActiveTab(String instanceId) {
+    public void bindActiveTab(String instanceId, String site) {
+        validateBindSite(site);
+        String session = toAdapterSession(site);
         ReentrantLock lock = lockExistingInstance(instanceId);
         try {
             HubInstance instance = loadInstance(instanceId);
             if (!instance.isRunning()) {
                 throw HubErrorCodes.INSTANCE_NOT_RUNNING.asThrowable(
                     "instance is not RUNNING: " + instanceId);
+            }
+            if (!instance.supportsWebsite(site)) {
+                throw HubErrorCodes.INSTANCE_WEBSITE_NOT_ENABLED.asThrowable(
+                    "instance does not support site: " + site);
             }
             HubInstanceRuntime runtime = registry.get(instanceId);
             if (runtime == null) {
@@ -220,7 +231,7 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
                     "instance live contextId is unavailable or stale: " + instanceId);
             }
             dispatchRegistry.executeWhenIdle(instance, () -> {
-                daemonContext.bindActiveTab(contextId, CHATGPT_AGENT_ADAPTER_SESSION);
+                daemonContext.bindActiveTab(contextId, session);
                 return null;
             });
         } finally {
@@ -554,6 +565,21 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
         } else if (runtime != null) {
             runtimeStarter.releaseAllocation(runtime);
         }
+    }
+
+    private void validateBindSite(String site) {
+        if (site == null || site.isBlank() || !site.equals(site.trim())) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable(
+                "site must be a non-blank canonical catalog name");
+        }
+        if (!commandCatalog.containsPersistentWebsite(site)) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable(
+                "site is not a persistent website: " + site);
+        }
+    }
+
+    private String toAdapterSession(String site) {
+        return "site:" + site;
     }
 
     private HubInstance loadInstance(String instanceId) {

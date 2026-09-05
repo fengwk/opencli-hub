@@ -208,13 +208,46 @@ class HubInstanceControllerTest {
     }
 
 
-    /** The bind endpoint has no request body and delegates only to the lifecycle service. */
+    /** The bind endpoint has no request body and delegates to the lifecycle service for the legacy ChatGPT route. */
     @Test
-    void shouldBindActiveTabThroughDedicatedRoute() throws Exception {
+    void shouldBindActiveTabThroughLegacyChatgptRoute() throws Exception {
         mockMvc.perform(post("/api/instances/11/chatgpt-agent/bind-active-tab"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.success").value(true));
-        verify(lifecycleService).bindActiveTab("11");
+        verify(lifecycleService).bindActiveTab("11", "chatgpt-agent");
+    }
+
+    /** The bind endpoint supports arbitrary persistent sites. */
+    @Test
+    void shouldBindActiveTabThroughArbitrarySiteRoute() throws Exception {
+        mockMvc.perform(post("/api/instances/11/custom-site/bind-active-tab"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.success").value(true));
+        verify(lifecycleService).bindActiveTab("11", "custom-site");
+    }
+
+    /** Non-persistent or invalid site produces INSTANCE_ARGUMENT_INVALID error. */
+    @Test
+    void shouldRejectActiveTabBindWhenSiteIsInvalid() throws Exception {
+        doThrow(HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("site is not a persistent website: unknown"))
+            .when(lifecycleService).bindActiveTab("11", "unknown");
+
+        mockMvc.perform(post("/api/instances/11/unknown/bind-active-tab"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value(HubErrorCodes.INSTANCE_ARGUMENT_INVALID.getCode()));
+        verify(lifecycleService).bindActiveTab("11", "unknown");
+    }
+
+    /** Site not enabled on the instance produces INSTANCE_WEBSITE_NOT_ENABLED error. */
+    @Test
+    void shouldRejectActiveTabBindWhenWebsiteNotEnabledOnInstance() throws Exception {
+        doThrow(HubErrorCodes.INSTANCE_WEBSITE_NOT_ENABLED.asThrowable("instance does not support site: disabled-site"))
+            .when(lifecycleService).bindActiveTab("11", "disabled-site");
+
+        mockMvc.perform(post("/api/instances/11/disabled-site/bind-active-tab"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value(HubErrorCodes.INSTANCE_WEBSITE_NOT_ENABLED.getCode()));
+        verify(lifecycleService).bindActiveTab("11", "disabled-site");
     }
 
     /** clear-queue drains pending tasks and reports the cancelled count. */

@@ -1382,7 +1382,7 @@ input[type='file']::file-selector-button:hover {
   grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
-/* Six equal-width action slots: start/stop/restart | clear | logs | delete */
+/* Six equal-width action slots: lifecycle | bind-site | bind | clear; secondary actions wrap. */
 .instance-sidebar-actions {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -1398,7 +1398,8 @@ input[type='file']::file-selector-button:hover {
   min-width: 0;
 }
 
-.instance-sidebar-actions .btn {
+.instance-sidebar-actions .btn,
+.instance-sidebar-actions select {
   width: 100%;
   min-width: 0;
   justify-content: center;
