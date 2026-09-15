@@ -1,5 +1,6 @@
 package fun.fengwk.openclihub.web.controller;
 
+import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.convention4j.api.result.Result;
 import fun.fengwk.convention4j.common.result.Results;
 import fun.fengwk.openclihub.core.command.service.OpenCliCommandPolicyException;
@@ -26,6 +27,18 @@ public class HubWebExceptionHandler {
     @ExceptionHandler(OpenCliCommandPolicyException.class)
     public Result<Void> handleCommandPolicy(OpenCliCommandPolicyException ex) {
         return Results.error(ex.getErrorCode());
+    }
+
+    /**
+     * Maps {@code HubErrorCodes#asThrowable} rejections to their declared status.
+     *
+     * <p>convention4j's own advice only maps handlers whose return type is {@code Result};
+     * handlers returning {@code ResponseEntity} (e.g. the 202 submit endpoint) would
+     * otherwise surface every rejection as HTTP 500 without its error code.
+     */
+    @ExceptionHandler(ThrowableConventionErrorCode.class)
+    public Result<Void> handleThrowableConventionErrorCode(ThrowableConventionErrorCode ex) {
+        return Results.error(ex);
     }
 
 }

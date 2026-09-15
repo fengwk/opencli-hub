@@ -86,6 +86,25 @@ class HubExecutionControllerTest {
             .andExpect(jsonPath("$.code").value(HubErrorCodes.OPENCLI_COMMAND_NOT_FOUND.getCode()));
     }
 
+    /**
+     * The submit endpoint returns {@code ResponseEntity} (202 contract), which convention4j's
+     * own advice skips; a Hub-managed output argument must still surface as 400 + its code
+     * instead of HTTP 500.
+     */
+    @Test
+    void shouldMapHubManagedOutputArgumentRejection() throws Exception {
+        when(executionService.submit(any())).thenThrow(
+            HubErrorCodes.OPENCLI_RESOURCE_OUTPUT_ARGUMENT_MANAGED.asThrowable(
+                "Caller supplied a Hub-managed output argument: --out"));
+
+        mockMvc.perform(post("/api/opencli/execute")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(request())))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code")
+                .value(HubErrorCodes.OPENCLI_RESOURCE_OUTPUT_ARGUMENT_MANAGED.getCode()));
+    }
+
     @Test
     void shouldLongPollGet() throws Exception {
         when(executionService.getById("e1", 30))
