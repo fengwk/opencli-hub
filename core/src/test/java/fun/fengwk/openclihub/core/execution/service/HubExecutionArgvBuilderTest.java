@@ -71,6 +71,43 @@ class HubExecutionArgvBuilderTest {
     }
 
     /**
+     * When command is a browser command (browser=true), builder must inject --warm-tab-ttl
+     * on the leaf browser command after the normalized argv (site, name, business args)
+     * and before managed output / format.
+     */
+    @Test
+    void shouldInjectWarmTabTtlForBrowserCommand() {
+        HubInstance instance = newInstance("ctx-b");
+        instance.setWarmTabTtlSeconds(300);
+        NormalizedOpenCliArgv normalized = normalizedBrowser(List.of("chatgpt", "ask", "hello"));
+
+        List<String> argv = builder.build(instance, normalized, null, null);
+
+        assertThat(argv).containsExactly(
+            "--profile", "ctx-b",
+            "chatgpt", "ask", "hello",
+            "--warm-tab-ttl", "300",
+            "--format", "json");
+    }
+
+    /**
+     * When command is non-browser (browser=false), builder must not inject --warm-tab-ttl.
+     */
+    @Test
+    void shouldNotInjectWarmTabTtlForNonBrowserCommand() {
+        HubInstance instance = newInstance("ctx-nb");
+        instance.setWarmTabTtlSeconds(300);
+        NormalizedOpenCliArgv normalized = normalized(List.of("bilibili", "hot", "--limit", "5"));
+
+        List<String> argv = builder.build(instance, normalized, null, null);
+
+        assertThat(argv).containsExactly(
+            "--profile", "ctx-nb",
+            "bilibili", "hot", "--limit", "5",
+            "--format", "json");
+    }
+
+    /**
      * When the caller has already supplied the argument managed by an output rule, the
      * service must refuse with OPENCLI_RESOURCE_OUTPUT_ARGUMENT_MANAGED before any work
      * is performed. This is the "managed output argument not double-listed" check the
@@ -225,13 +262,22 @@ class HubExecutionArgvBuilderTest {
     }
 
     private static NormalizedOpenCliArgv normalized(List<String> argv) {
-        return normalizedWithNamed(argv, new LinkedHashMap<>());
+        return normalizedWithNamed(argv, new LinkedHashMap<>(), false);
+    }
+
+    private static NormalizedOpenCliArgv normalizedBrowser(List<String> argv) {
+        return normalizedWithNamed(argv, new LinkedHashMap<>(), true);
     }
 
     private static NormalizedOpenCliArgv normalizedWithNamed(List<String> argv, Map<String, List<String>> named) {
+        return normalizedWithNamed(argv, named, false);
+    }
+
+    private static NormalizedOpenCliArgv normalizedWithNamed(List<String> argv, Map<String, List<String>> named, boolean browser) {
         OpenCliCommand command = new OpenCliCommand();
         command.setSite(argv.get(0));
         command.setName(argv.get(1));
+        command.setBrowser(browser);
         command.setSiteSession(fun.fengwk.openclihub.share.model.execution.SiteSessionMode.EPHEMERAL);
         OpenCliCommandArg dummy = new OpenCliCommandArg();
         dummy.setName("output");

@@ -309,6 +309,13 @@ scripts/docker/test-install-opencli.sh
     - 错峰等待消耗执行 deadline，若无法在 deadline 前启动则以 `QUEUE_WAIT_TIMEOUT` 终止且不调用 OpenCLI；
     - `EXCLUSIVE` 独占任务及不同 site 任务完全旁路错峰；
     - 可通过环境变量 `OPENCLI_HUB_PARALLEL_START_STAGGER_MIN_MILLIS` 与 `OPENCLI_HUB_PARALLEL_START_STAGGER_MAX_MILLIS` 配置；两者均设为 `0` 时禁用错峰。
+- **闲置标签页保留超时（warmTabTtlSeconds）**：
+  - 合法范围 `[-1, 2147483647]`，默认值 `1800`（秒，即 30 分钟）；
+  - `-1` 表示永不自动回收闲置 warm tab（仅在 context 停止或生命周期终结时清理）；
+  - `0` 表示临时 adapter lease 释放后立即回收 warm tab；
+  - 正数表示 warm tab 闲置指定秒数后自动回收；
+  - 持久标签（`siteSession=PERSISTENT`）与显式 keep-tab lease 生命周期由自身机制独立保障，不受闲置 TTL 影响；
+  - `--warm-tab-ttl` 属于 Hub 受管保留参数，仅由 Hub 为浏览器命令追加在规范化的站点命令参数之后，调用方禁止在请求中直接传入或覆盖。
 - **Canary 灰度与运维建议**：
   - 在多 Instance 生产环境中，建议采用 Canary 灰度策略：先选取 1 个非核心 Instance 将 `maxConcurrency` 从 `1` 调至 `2`，观察 Chrome 稳定性、内存占用与业务返回质量，确认稳定后再逐步推广。
 - **Chrome / shm / 渲染进程稳定性边界**：
@@ -323,9 +330,13 @@ PostgreSQL 变体在停机备份后执行：
 ```bash
 psql -h "$OPENCLI_HUB_POSTGRESQL_HOST" -U "$OPENCLI_HUB_POSTGRESQL_USERNAME" -d opencli_hub \
   -f scripts/migrate-postgresql-instance-concurrency.sql
+psql -h "$OPENCLI_HUB_POSTGRESQL_HOST" -U "$OPENCLI_HUB_POSTGRESQL_USERNAME" -d opencli_hub \
+  -f scripts/migrate-postgresql-instance-warm-tab-ttl.sql
 ```
 
-该脚本在事务块中幂等执行 `ALTER TABLE hub_instance ADD COLUMN IF NOT EXISTS max_concurrency int NOT NULL DEFAULT 1;`，附带 `information_schema` 校验输出，可安全重复执行。
+`migrate-postgresql-instance-concurrency.sql` 在事务块中幂等执行 `ALTER TABLE hub_instance ADD COLUMN IF NOT EXISTS max_concurrency int NOT NULL DEFAULT 1;`，附带 `information_schema` 校验输出，可安全重复执行。
+
+`migrate-postgresql-instance-warm-tab-ttl.sql` 在事务块中幂等执行 `ALTER TABLE hub_instance ADD COLUMN IF NOT EXISTS warm_tab_ttl_seconds int NOT NULL DEFAULT 1800;`，同样具备校验输出与幂等性。
 
 #### 6.3.4 MySQL 既有 schema 迁移
 
@@ -338,6 +349,7 @@ psql -h "$OPENCLI_HUB_POSTGRESQL_HOST" -U "$OPENCLI_HUB_POSTGRESQL_USERNAME" -d 
 5. `scripts/migrate-mysql-execution-queued-at-immutable.sql`
 6. `scripts/migrate-mysql-instance-state-changed-at-immutable.sql`
 7. `scripts/migrate-mysql-instance-concurrency.sql`
+8. `scripts/migrate-mysql-instance-warm-tab-ttl.sql`
 
 每个脚本都有 `information_schema` 校验输出。完整字段、索引和回滚说明在各自的迁移文档中；不要跳过备份，也不要将 MySQL 8 volume 直接降级挂载到 5.7。
 
@@ -349,6 +361,8 @@ psql -h "$OPENCLI_HUB_POSTGRESQL_HOST" -U "$OPENCLI_HUB_POSTGRESQL_USERNAME" -d 
 
 `migrate-mysql-instance-concurrency.sql` 为既有 `hub_instance` 增加 `max_concurrency int not null default 1`（合法范围 1..4，默认 1）。历史行保持 `1`，原有单并发串行行为不受影响。
 
+`migrate-mysql-instance-warm-tab-ttl.sql` 为既有 `hub_instance` 增加 `warm_tab_ttl_seconds int not null default 1800`（合法范围 `[-1, 2147483647]`，默认 1800）。历史行保持 `1800`。
+
 #### 6.3.5 SQLite 迁移
 
 SQLite 变体在停止 Hub 进程并备份数据卷后执行 shell 脚本：
@@ -356,11 +370,13 @@ SQLite 变体在停止 Hub 进程并备份数据卷后执行 shell 脚本：
 ```bash
 # 传入 SQLite 数据库文件路径（支持含空格路径）
 scripts/migrate-sqlite-instance-concurrency.sh /path/to/opencli-hub.db
+scripts/migrate-sqlite-instance-warm-tab-ttl.sh /path/to/opencli-hub.db
 # 或通过环境变量指定
 OPENCLI_HUB_SQLITE_PATH=/path/to/opencli-hub.db scripts/migrate-sqlite-instance-concurrency.sh
+OPENCLI_HUB_SQLITE_PATH=/path/to/opencli-hub.db scripts/migrate-sqlite-instance-warm-tab-ttl.sh
 ```
 
-该脚本安全检测 `hub_instance` 表中是否存在 `max_concurrency`，执行 `ALTER TABLE hub_instance ADD COLUMN max_concurrency int NOT NULL DEFAULT 1;`，失败即退出，且可安全重复执行（幂等）。
+脚本安全检测 `hub_instance` 表中是否存在对应列，执行 `ALTER TABLE hub_instance ADD COLUMN ...`，失败即退出，且可安全重复执行（幂等）。
 
 ## 7. 日常检查
 

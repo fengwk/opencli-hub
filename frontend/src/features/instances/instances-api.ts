@@ -4,8 +4,8 @@ import type { HubInstance, HubInstanceVncStatus, InstanceEditableProperties, Ins
 
 const instancesPath = '/instances'
 
-type HubInstanceResponse = Omit<HubInstance, 'proxyMode' | 'proxyServer' | 'maxConcurrency' | 'maxPending'> &
-  Partial<Pick<HubInstance, 'proxyMode' | 'proxyServer' | 'maxConcurrency' | 'maxPending'>>
+type HubInstanceResponse = Omit<HubInstance, 'proxyMode' | 'proxyServer' | 'maxConcurrency' | 'maxPending' | 'warmTabTtlSeconds'> &
+  Partial<Pick<HubInstance, 'proxyMode' | 'proxyServer' | 'maxConcurrency' | 'maxPending' | 'warmTabTtlSeconds'>>
 
 function instancePath(id: BackendId): string {
   return `${instancesPath}/${encodeURIComponent(id)}`
@@ -31,10 +31,18 @@ function normalizeInstance(instance: HubInstanceResponse): HubInstance {
     instance.maxPending <= 50
       ? instance.maxPending
       : 5
+  const warmTabTtlSeconds =
+    typeof instance.warmTabTtlSeconds === 'number' &&
+    Number.isInteger(instance.warmTabTtlSeconds) &&
+    instance.warmTabTtlSeconds >= -1 &&
+    instance.warmTabTtlSeconds <= 2147483647
+      ? instance.warmTabTtlSeconds
+      : 1800
   return {
     ...instance,
     maxConcurrency,
     maxPending,
+    warmTabTtlSeconds,
     proxyMode,
     proxyServer: proxyMode === 'CUSTOM' && typeof instance.proxyServer === 'string' ? instance.proxyServer : null,
   }

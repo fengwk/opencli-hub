@@ -5,6 +5,7 @@ import { listCommands } from '@/features/commands/commands-api'
 import { bindInstanceActiveTab, clearInstanceQueue, deleteInstance, getInstance, getInstanceVncStatus, runInstanceLifecycleAction, updateInstance } from '@/features/instances/instances-api'
 import { InstanceForm } from '@/features/instances/InstanceForm'
 import { InstanceLifecycleActions } from '@/features/instances/InstanceLifecycleActions'
+import { formatWarmTabTtl } from '@/features/instances/types'
 import type { InstanceEditableProperties } from '@/features/instances/types'
 import { VncViewer } from '@/features/instances/VncViewer'
 import { ConfirmDialog, ErrorState, Loading, StatusBadge } from '@/shared/components'
@@ -178,6 +179,7 @@ export function InstanceDetailPage() {
     maxConcurrency: instance.maxConcurrency,
     maxPending: instance.maxPending,
     priority: instance.priority ?? 0,
+    warmTabTtlSeconds: instance.warmTabTtlSeconds,
     proxyMode: instance.proxyMode,
     proxyServer: instance.proxyServer,
   }
@@ -235,6 +237,7 @@ export function InstanceDetailPage() {
               <div><dt>显示器</dt><dd>{runtime?.registered ? `:${runtime.displayNumber ?? '—'}` : '运行时未注册'}</dd></div>
               <div><dt>执行队列</dt><dd>活跃 {runtime?.activeCount ?? 0}/{instance.maxConcurrency} · 待处理 {runtime?.pendingCount ?? 0}/{instance.maxPending}</dd></div>
               <div><dt>优先级</dt><dd>{instance.priority ?? 0}</dd></div>
+              <div><dt>闲置标签页回收</dt><dd>{formatWarmTabTtl(instance.warmTabTtlSeconds)}</dd></div>
               <div><dt>代理</dt><dd title={instance.proxyServer ?? undefined}>{proxySummary(instance.proxyMode, instance.proxyServer)}</dd></div>
             </dl>
             {instance.lastErrorMessage ? <p className="inline-error instance-error" role="alert">最近错误：{instance.lastErrorMessage}</p> : null}

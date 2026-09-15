@@ -280,6 +280,48 @@ class HubInstanceServiceImplTest {
     }
 
     @Test
+    void shouldRetainExistingWarmTabTtlWhenUpdatePayloadOmitsIt() {
+        // Legacy update requests omitting warmTabTtlSeconds must preserve existing DB values.
+        HubInstance existing = newInstance("1", "kept-code");
+        existing.setWarmTabTtlSeconds(600);
+        doReturn(existing).when(repository).findById("1");
+        doReturn(existing).when(repository).findByCode("kept-code");
+        doReturn(true).when(repository).update(any());
+
+        HubInstanceUpdateDTO dto = new HubInstanceUpdateDTO();
+        dto.setCode("kept-code");
+        dto.setDisplayName("Renamed");
+        dto.setWebsites(List.of("bilibili"));
+        dto.setMaxPending(5);
+        dto.setWarmTabTtlSeconds(null);
+
+        HubInstance updated = service.update("1", dto);
+
+        assertThat(updated.getWarmTabTtlSeconds()).isEqualTo(600);
+    }
+
+    @Test
+    void shouldUpdateWarmTabTtlWhenProvided() {
+        // Modern clients providing warmTabTtlSeconds in range [-1, 2147483647] must have it applied.
+        HubInstance existing = newInstance("1", "kept-code");
+        existing.setWarmTabTtlSeconds(1800);
+        doReturn(existing).when(repository).findById("1");
+        doReturn(existing).when(repository).findByCode("kept-code");
+        doReturn(true).when(repository).update(any());
+
+        HubInstanceUpdateDTO dto = new HubInstanceUpdateDTO();
+        dto.setCode("kept-code");
+        dto.setDisplayName("Renamed");
+        dto.setWebsites(List.of("bilibili"));
+        dto.setMaxPending(5);
+        dto.setWarmTabTtlSeconds(-1);
+
+        HubInstance updated = service.update("1", dto);
+
+        assertThat(updated.getWarmTabTtlSeconds()).isEqualTo(-1);
+    }
+
+    @Test
     void shouldMaintainStateAndClearErrorOnNormalTransition() {
         // Transitioning out of an error state must clear lastErrorMessage.
         HubInstance existing = newInstance("1", "code");

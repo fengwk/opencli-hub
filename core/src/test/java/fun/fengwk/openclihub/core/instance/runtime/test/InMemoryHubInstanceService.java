@@ -59,6 +59,8 @@ public class InMemoryHubInstanceService implements HubInstanceService {
         instance.setMaxPending(validator.validateMaxPending(instance.getMaxPending()));
         instance.setMaxConcurrency(validator.validateMaxConcurrency(instance.getMaxConcurrency()));
         instance.setPriority(validator.validatePriority(instance.getPriority()));
+        instance.setWarmTabTtlSeconds(
+            validator.validateWarmTabTtlSeconds(instance.getWarmTabTtlSeconds()));
         instance.setWebsites(validator.validateWebsites(instance.getWebsites()));
         var proxy = validator.normalizeInstanceProxy(
             instance.getProxyMode(), instance.getProxyServer());
@@ -153,6 +155,9 @@ public class InMemoryHubInstanceService implements HubInstanceService {
                 existing.setMaxConcurrency(dto.getMaxConcurrency());
             }
             existing.setPriority(dto.getPriority() == null ? 0 : dto.getPriority());
+            if (dto.getWarmTabTtlSeconds() != null) {
+                existing.setWarmTabTtlSeconds(dto.getWarmTabTtlSeconds());
+            }
             existing.setProxyMode(dto.getProxyMode());
             existing.setProxyServer(dto.getProxyServer());
             existing.setUpdateTime(LocalDateTime.now());
@@ -234,6 +239,7 @@ public class InMemoryHubInstanceService implements HubInstanceService {
         target.setMaxPending(source.getMaxPending());
         target.setMaxConcurrency(source.getMaxConcurrency());
         target.setPriority(source.getPriority());
+        target.setWarmTabTtlSeconds(source.getWarmTabTtlSeconds());
         target.setProxyMode(source.getProxyMode());
         target.setProxyServer(source.getProxyServer());
         target.setLastErrorMessage(source.getLastErrorMessage());

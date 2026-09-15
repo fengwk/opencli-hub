@@ -16,6 +16,7 @@ const instanceId = '343020517415976960'
 const instance: HubInstance = {
   id: instanceId, code: 'beta', displayName: 'Beta browser', contextId: 'ctx-42', state: 'RUNNING',
   websites: ['chatgpt-agent', 'custom-hub', 'ephemeral-site', 'non-browser'], maxPending: 2, maxConcurrency: 1, priority: 0,
+  warmTabTtlSeconds: 1800,
   proxyMode: 'CUSTOM', proxyServer: 'socks5://proxy.example.com:1080', lastErrorMessage: null, stateChangedAt: null,
   runtime: { registered: true, displayNumber: 13, vncPort: 5901, activeCount: 0, pendingCount: 0 },
   createTime: null, updateTime: null,
@@ -83,6 +84,7 @@ describe('InstanceDetailPage', () => {
       proxyServer: undefined,
       maxConcurrency: undefined,
       maxPending: undefined,
+      warmTabTtlSeconds: undefined,
     } as unknown as HubInstance
     vi.mocked(apiClient.get).mockImplementation((url: string) => Promise.resolve(
       url === `/instances/${instanceId}/vnc/status` ? vncStatus : url === '/opencli/commands' ? [{
@@ -102,10 +104,12 @@ describe('InstanceDetailPage', () => {
     await screen.findByRole('checkbox', { name: 'demo' })
     expect(screen.getByRole('spinbutton', { name: '最大并发数' })).toHaveValue(1)
     expect(screen.getByRole('spinbutton', { name: '最大待处理数' })).toHaveValue(5)
+    expect(screen.getByRole('spinbutton', { name: '闲置标签页保留时间（秒）' })).toHaveValue(1800)
     await user.click(screen.getByRole('button', { name: '保存更改' }))
 
     await waitFor(() => expect(apiClient.put).toHaveBeenCalledWith(`/instances/${instanceId}`, {
       code: 'beta', displayName: 'Beta browser', websites: ['demo'], maxConcurrency: 1, maxPending: 5, priority: 0,
+      warmTabTtlSeconds: 1800,
       proxyMode: 'INHERIT', proxyServer: null,
     }))
   })
@@ -133,6 +137,7 @@ describe('InstanceDetailPage', () => {
     await waitFor(() => expect(apiClient.put).toHaveBeenCalledWith(`/instances/${instanceId}`, {
       code: 'beta', displayName: 'Updated browser', websites: ['chatgpt-agent', 'custom-hub', 'ephemeral-site', 'non-browser'],
       maxConcurrency: 1, maxPending: 2, priority: 0,
+      warmTabTtlSeconds: 1800,
       proxyMode: 'CUSTOM', proxyServer: 'socks5://proxy.example.com:1080',
     }))
   })
@@ -162,6 +167,7 @@ describe('InstanceDetailPage', () => {
 
     await waitFor(() => expect(apiClient.put).toHaveBeenCalledWith(`/instances/${instanceId}`, {
       code: 'beta', displayName: 'Beta browser', websites: ['demo'], maxConcurrency: 3, maxPending: 0, priority: 0,
+      warmTabTtlSeconds: 1800,
       proxyMode: 'CUSTOM', proxyServer: 'socks5://proxy.example.com:1080',
     }))
   })

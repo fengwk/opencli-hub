@@ -51,6 +51,8 @@ public class HubInstanceValidator {
     public static final int MAX_PENDING_MAX = 50;
     public static final int MAX_CONCURRENCY_MIN = 1;
     public static final int MAX_CONCURRENCY_MAX = 4;
+    public static final int WARM_TAB_TTL_SECONDS_MIN = -1;
+    public static final int WARM_TAB_TTL_SECONDS_MAX = Integer.MAX_VALUE;
     public static final int CONTEXT_ID_MAX_LENGTH = 128;
 
     private final CatalogWebsiteLookup websiteSource;
@@ -62,8 +64,8 @@ public class HubInstanceValidator {
     /**
      * Validates the editable properties and returns the normalized website list (trimmed,
      * deduplicated, order-preserving). Side effect: writes the normalized code, displayName,
-     * maxPending and maxConcurrency (when provided) back to {@code dto} so the caller
-     * persists the canonical form.
+     * maxPending, maxConcurrency and warmTabTtlSeconds (when provided) back to {@code dto}
+     * so the caller persists the canonical form.
      *
      * @param dto input properties, may be {@code null}
      * @return normalized websites
@@ -80,6 +82,9 @@ public class HubInstanceValidator {
             dto.setMaxConcurrency(validateMaxConcurrency(dto.getMaxConcurrency()));
         }
         dto.setPriority(validatePriority(dto.getPriority()));
+        if (dto.getWarmTabTtlSeconds() != null) {
+            dto.setWarmTabTtlSeconds(validateWarmTabTtlSeconds(dto.getWarmTabTtlSeconds()));
+        }
         ProxyConfiguration proxy = HubProxyValidator.normalizeInstance(
             dto.getProxyMode(), dto.getProxyServer());
         dto.setProxyMode(proxy.proxyMode());
@@ -250,5 +255,22 @@ public class HubInstanceValidator {
                 "priority must be between -1000 and 1000");
         }
         return priority;
+    }
+
+    /**
+     * Warm tab idle TTL in seconds: -1 = never, 0 = immediately, positive = seconds.
+     * Default 1800. Allowed range [-1, 2147483647].
+     */
+    public int validateWarmTabTtlSeconds(Integer warmTabTtlSeconds) {
+        if (warmTabTtlSeconds == null) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable("warmTabTtlSeconds is required");
+        }
+        if (warmTabTtlSeconds < WARM_TAB_TTL_SECONDS_MIN
+            || warmTabTtlSeconds > WARM_TAB_TTL_SECONDS_MAX) {
+            throw HubErrorCodes.INSTANCE_ARGUMENT_INVALID.asThrowable(
+                "warmTabTtlSeconds must be between " + WARM_TAB_TTL_SECONDS_MIN
+                    + " and " + WARM_TAB_TTL_SECONDS_MAX);
+        }
+        return warmTabTtlSeconds;
     }
 }

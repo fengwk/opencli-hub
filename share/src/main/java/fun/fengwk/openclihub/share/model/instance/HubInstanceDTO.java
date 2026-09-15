@@ -22,6 +22,7 @@ public class HubInstanceDTO {
     private int maxPending;
     private int maxConcurrency = 1;
     private int priority;
+    private int warmTabTtlSeconds = 1800;
     private HubProxyMode proxyMode;
     private String proxyServer;
     private String lastErrorMessage;

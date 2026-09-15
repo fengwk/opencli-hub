@@ -196,7 +196,7 @@ class HubExecutionServiceTest {
             .containsExactly(HubExecutionStatus.RUNNING, HubExecutionStatus.SUCCEEDED);
         assertThat(executor.invocationCount()).isOne();
         assertThat(executor.invocations().get(0).argv)
-            .containsExactly("--profile", "ctx-primary", "bilibili", "hot", "--format", "json");
+            .containsExactly("--profile", "ctx-primary", "bilibili", "hot", "--warm-tab-ttl", "1800", "--format", "json");
         // Audit-time rule: on insert createTime equals the queue time; on the final update
         // updateTime equals the finish time (gmt_modified mirrors finished_at).
         HubExecution saved = repository.findById(result.getId());

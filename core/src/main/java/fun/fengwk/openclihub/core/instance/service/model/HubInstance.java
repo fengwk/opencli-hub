@@ -16,6 +16,8 @@ import lombok.Data;
 @Data
 public class HubInstance {
 
+    public static final int DEFAULT_WARM_TAB_TTL_SECONDS = 1800;
+
     private String id;
     private String code;
     private String displayName;
@@ -25,6 +27,7 @@ public class HubInstance {
     private int maxPending;
     private int maxConcurrency = 1;
     private int priority;
+    private int warmTabTtlSeconds = DEFAULT_WARM_TAB_TTL_SECONDS;
     private HubProxyMode proxyMode = HubProxyMode.INHERIT;
     private String proxyServer;
     private String lastErrorMessage;

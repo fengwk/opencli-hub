@@ -80,6 +80,7 @@ public class MybatisHubInstanceRepository implements HubInstanceRepository {
         target.setMaxPending(instance.getMaxPending());
         target.setMaxConcurrency(instance.getMaxConcurrency());
         target.setPriority(instance.getPriority());
+        target.setWarmTabTtlSeconds(instance.getWarmTabTtlSeconds());
         target.setProxyMode(instance.getProxyMode() == null ? null : instance.getProxyMode().name());
         target.setProxyServer(instance.getProxyServer());
         target.setLastErrorMessage(instance.getLastErrorMessage());
@@ -104,6 +105,8 @@ public class MybatisHubInstanceRepository implements HubInstanceRepository {
         target.setMaxPending(source.getMaxPending() == null ? 0 : source.getMaxPending());
         target.setMaxConcurrency(source.getMaxConcurrency() == null ? 1 : source.getMaxConcurrency());
         target.setPriority(source.getPriority() == null ? 0 : source.getPriority());
+        target.setWarmTabTtlSeconds(source.getWarmTabTtlSeconds() == null
+            ? HubInstance.DEFAULT_WARM_TAB_TTL_SECONDS : source.getWarmTabTtlSeconds());
         target.setProxyMode(source.getProxyMode() == null
             ? HubProxyMode.INHERIT : HubProxyMode.valueOf(source.getProxyMode()));
         target.setProxyServer(source.getProxyServer());

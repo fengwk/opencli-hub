@@ -169,6 +169,7 @@ class HubInstanceLifecycleServiceTest {
         assertThat(created.getState()).isEqualTo(HubInstanceState.RUNNING);
         assertThat(created.getContextId()).isEqualTo("ctx-success");
         assertThat(created.getMaxConcurrency()).isEqualTo(1);
+        assertThat(created.getWarmTabTtlSeconds()).isEqualTo(1800);
         assertThat(created.getStateChangedAt()).isNotNull();
 
         // Runtime registered.
@@ -202,14 +203,17 @@ class HubInstanceLifecycleServiceTest {
     }
 
     @Test
-    void shouldApplyExplicitMaxConcurrencyOnCreate() {
+    void shouldApplyExplicitExecutionSettingsOnCreate() {
+        // Explicit instance execution settings must survive lifecycle creation.
         daemon.addConnectedContextAfterFetch("ctx-explicit-concurrency", 2);
 
         HubInstanceCreateDTO dto = createDto("bilibili-exp-c");
         dto.setMaxConcurrency(3);
+        dto.setWarmTabTtlSeconds(0);
         HubInstance created = lifecycle.create(dto);
 
         assertThat(created.getMaxConcurrency()).isEqualTo(3);
+        assertThat(created.getWarmTabTtlSeconds()).isZero();
     }
 
     /** A newly visible RUNNING row must already have runtime and dispatcher registrations. */
@@ -731,10 +735,12 @@ class HubInstanceLifecycleServiceTest {
         update.setWebsites(List.of("chatgpt"));
         update.setProxyMode(HubProxyMode.CUSTOM);
         update.setProxyServer("http://proxy.example:8080");
+        update.setWarmTabTtlSeconds(0);
         HubInstance updated = lifecycle.update(id, update);
 
         assertThat(updated.getState()).isEqualTo(HubInstanceState.RUNNING);
         assertThat(updated.getWebsites()).containsExactly("chatgpt");
+        assertThat(updated.getWarmTabTtlSeconds()).isZero();
         assertThat(dispatchRegistry.getMaxPending(id)).isOne();
         assertThat(launcher.launchCount(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
             .isEqualTo(chromeLaunches);

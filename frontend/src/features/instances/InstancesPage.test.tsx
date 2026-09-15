@@ -22,7 +22,7 @@ const instanceId = '2c6eefbd-a8cf-44fb-8016-14d6886c2557'
 
 const stoppedInstance: HubInstance = {
   id: instanceId, code: 'alpha', displayName: 'Alpha browser', contextId: null, state: 'STOPPED',
-  websites: ['demo'], maxPending: 3, maxConcurrency: 1, priority: 0, proxyMode: 'INHERIT', proxyServer: null, lastErrorMessage: 'last launch failed', stateChangedAt: null,
+  websites: ['demo'], maxPending: 3, maxConcurrency: 1, priority: 0, warmTabTtlSeconds: 1800, proxyMode: 'INHERIT', proxyServer: null, lastErrorMessage: 'last launch failed', stateChangedAt: null,
   runtime: { registered: false, displayNumber: null, vncPort: null, activeCount: 0, pendingCount: 0 },
   createTime: null, updateTime: null,
 }
@@ -64,6 +64,8 @@ describe('InstancesPage', () => {
     expect(within(card).getByText('等待注册')).toBeInTheDocument()
     expect(within(card).getByText('最大并发数')).toBeInTheDocument()
     expect(within(card).getByText('最大并发数').nextElementSibling).toHaveTextContent('1')
+    expect(within(card).getByText('闲置标签页回收')).toBeInTheDocument()
+    expect(within(card).getByText('闲置标签页回收').nextElementSibling).toHaveTextContent('1800 秒')
     expect(within(card).getByText(/活跃 0\/1 · 待处理 0\/3/)).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('最近错误：last launch failed')
     expect(screen.getByRole('link', { name: '详情与控制台' })).toHaveAttribute('href', `/instances/${instanceId}`)
@@ -106,6 +108,7 @@ describe('InstancesPage', () => {
 
     expect(apiClient.post).toHaveBeenCalledWith('/instances', {
       code: 'new-browser', displayName: 'New browser', websites: ['demo'], maxConcurrency: 1, maxPending: 4, priority: 0,
+      warmTabTtlSeconds: 1800,
       proxyMode: 'INHERIT', proxyServer: null,
     })
     expect(screen.getByRole('button', { name: '正在保存…' })).toBeDisabled()
@@ -135,6 +138,7 @@ describe('InstancesPage', () => {
 
     expect(apiClient.post).toHaveBeenCalledWith('/instances', {
       code: 'no-queue', displayName: 'No Queue Browser', websites: ['demo'], maxConcurrency: 2, maxPending: 0, priority: 0,
+      warmTabTtlSeconds: 1800,
       proxyMode: 'INHERIT', proxyServer: null,
     })
   })

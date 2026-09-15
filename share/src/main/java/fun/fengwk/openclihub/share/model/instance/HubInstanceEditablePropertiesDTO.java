@@ -19,6 +19,8 @@ public class HubInstanceEditablePropertiesDTO {
     private Integer maxConcurrency;
     /** Larger value is preferred when load is equal; default 0. */
     private Integer priority;
+    /** Warm tab idle TTL in seconds; -1 = never, 0 = immediately, positive = seconds. Default 1800. */
+    private Integer warmTabTtlSeconds;
     private HubProxyMode proxyMode;
     private String proxyServer;
 

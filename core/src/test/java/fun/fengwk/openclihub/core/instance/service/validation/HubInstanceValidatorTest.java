@@ -283,6 +283,45 @@ class HubInstanceValidatorTest {
             .isInstanceOf(ThrowableConventionErrorCode.class);
     }
 
+    @Test
+    void shouldAcceptValidWarmTabTtlSeconds() {
+        // -1 (never reclaim), 0 (immediately reclaim), 1800 (default), and Integer.MAX_VALUE are all valid.
+        assertThat(validator.validateWarmTabTtlSeconds(-1)).isEqualTo(-1);
+        assertThat(validator.validateWarmTabTtlSeconds(0)).isEqualTo(0);
+        assertThat(validator.validateWarmTabTtlSeconds(1800)).isEqualTo(1800);
+        assertThat(validator.validateWarmTabTtlSeconds(Integer.MAX_VALUE)).isEqualTo(Integer.MAX_VALUE);
+    }
+
+    @Test
+    void shouldRejectNullWarmTabTtlSeconds() {
+        // Null is rejected in direct validation because create/domain requires an integer.
+        assertThatThrownBy(() -> validator.validateWarmTabTtlSeconds(null))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_ARGUMENT_INVALID));
+    }
+
+    @Test
+    void shouldRejectWarmTabTtlSecondsBelowMinusOne() {
+        // Values below -1 (e.g. -2) violate the allowed range [-1, 2147483647].
+        assertThatThrownBy(() -> validator.validateWarmTabTtlSeconds(-2))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_ARGUMENT_INVALID));
+    }
+
+    @Test
+    void shouldValidateWarmTabTtlInEditablePropertiesWhenProvided() {
+        // When warmTabTtlSeconds is supplied in editable properties DTO, it must be validated.
+        HubInstanceEditablePropertiesDTO dto = baseDto();
+        dto.setWarmTabTtlSeconds(-1);
+        validator.validateEditableProperties(dto);
+        assertThat(dto.getWarmTabTtlSeconds()).isEqualTo(-1);
+
+        dto.setWarmTabTtlSeconds(-5);
+        assertThatThrownBy(() -> validator.validateEditableProperties(dto))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code").isEqualTo(prefixed(HubErrorCodes.INSTANCE_ARGUMENT_INVALID));
+    }
+
     private HubInstanceEditablePropertiesDTO baseDto() {
         HubInstanceEditablePropertiesDTO dto = new HubInstanceEditablePropertiesDTO();
         dto.setCode("instance-01");

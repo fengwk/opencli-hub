@@ -55,6 +55,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
         instance.setMaxPending(validator.validateMaxPending(instance.getMaxPending()));
         instance.setMaxConcurrency(validator.validateMaxConcurrency(instance.getMaxConcurrency()));
         instance.setPriority(validator.validatePriority(instance.getPriority()));
+        instance.setWarmTabTtlSeconds(validator.validateWarmTabTtlSeconds(instance.getWarmTabTtlSeconds()));
         instance.setWebsites(validator.validateWebsites(instance.getWebsites()));
         var proxy = validator.normalizeInstanceProxy(
             instance.getProxyMode(), instance.getProxyServer());
@@ -129,8 +130,7 @@ public class HubInstanceServiceImpl implements HubInstanceService {
     @Override
     public HubInstance update(String id, HubInstanceUpdateDTO dto) {
         HubInstance existing = get(id);
-        // validateEditableProperties validates every editable field and writes back
-        // normalized values (trimmed displayName, validated maxPending, and validated maxConcurrency if provided) to the DTO.
+        // Validation writes normalized editable values back to the DTO.
         List<String> normalizedWebsites = validator.validateEditableProperties(dto);
 
         existing.setCode(dto.getCode());
@@ -142,6 +142,10 @@ public class HubInstanceServiceImpl implements HubInstanceService {
             existing.setMaxConcurrency(dto.getMaxConcurrency());
         }
         existing.setPriority(dto.getPriority());
+        // Legacy update payloads omit this field; preserve the existing value.
+        if (dto.getWarmTabTtlSeconds() != null) {
+            existing.setWarmTabTtlSeconds(dto.getWarmTabTtlSeconds());
+        }
         existing.setProxyMode(dto.getProxyMode());
         existing.setProxyServer(dto.getProxyServer());
         existing.setUpdateTime(LocalDateTime.now(clock));

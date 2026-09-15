@@ -48,6 +48,7 @@ public class HubInstanceConverter {
         dto.setMaxPending(instance.getMaxPending());
         dto.setMaxConcurrency(instance.getMaxConcurrency());
         dto.setPriority(instance.getPriority());
+        dto.setWarmTabTtlSeconds(instance.getWarmTabTtlSeconds());
         dto.setProxyMode(instance.getProxyMode());
         dto.setProxyServer(instance.getProxyServer());
         dto.setLastErrorMessage(instance.getLastErrorMessage());

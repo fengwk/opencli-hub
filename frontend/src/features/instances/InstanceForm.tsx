@@ -25,6 +25,10 @@ const minimumPendingCount = 0
 const maximumPendingCount = 50
 const defaultPendingCount = 5
 
+const minimumWarmTabTtlSeconds = -1
+const maximumWarmTabTtlSeconds = 2147483647
+const defaultWarmTabTtlSeconds = 1800
+
 function catalogErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '无法加载网站目录。'
 }
@@ -44,6 +48,7 @@ export function InstanceForm({
   const [maxConcurrency, setMaxConcurrency] = useState(String(initialValues?.maxConcurrency ?? defaultConcurrencyCount))
   const [maxPending, setMaxPending] = useState(String(initialValues?.maxPending ?? defaultPendingCount))
   const [priority, setPriority] = useState(String(initialValues?.priority ?? 0))
+  const [warmTabTtlSeconds, setWarmTabTtlSeconds] = useState(String(initialValues?.warmTabTtlSeconds ?? defaultWarmTabTtlSeconds))
   const [proxyMode, setProxyMode] = useState<InstanceProxyMode>(initialValues?.proxyMode ?? 'INHERIT')
   const [proxyServer, setProxyServer] = useState(initialValues?.proxyServer ?? '')
   const [websiteKeyword, setWebsiteKeyword] = useState('')
@@ -96,6 +101,11 @@ export function InstanceForm({
       setValidationError('优先级必须是 -1000 到 1000 之间的整数（越大越优先，默认 0）。')
       return
     }
+    const parsedWarmTabTtlSeconds = Number(warmTabTtlSeconds)
+    if (!warmTabTtlSeconds.trim() || !Number.isInteger(parsedWarmTabTtlSeconds) || parsedWarmTabTtlSeconds < minimumWarmTabTtlSeconds || parsedWarmTabTtlSeconds > maximumWarmTabTtlSeconds) {
+      setValidationError(`闲置标签页保留时间必须是 ${minimumWarmTabTtlSeconds} 到 ${maximumWarmTabTtlSeconds} 之间的整数秒（-1 为不自动回收，0 为立即回收，默认 1800 秒）。`)
+      return
+    }
     const normalizedProxyServer = proxyServer.trim()
     if (proxyMode === 'CUSTOM') {
       const proxyError = validateCustomProxyServer(normalizedProxyServer)
@@ -112,6 +122,7 @@ export function InstanceForm({
       maxConcurrency: parsedMaxConcurrency,
       maxPending: parsedMaxPending,
       priority: parsedPriority,
+      warmTabTtlSeconds: parsedWarmTabTtlSeconds,
       proxyMode,
       proxyServer: proxyMode === 'CUSTOM' ? normalizedProxyServer : null,
     })
@@ -184,6 +195,24 @@ export function InstanceForm({
           }}
         />
       </label>
+      <label>
+        闲置标签页保留时间（秒）
+        <input
+          type="number"
+          min={minimumWarmTabTtlSeconds}
+          max={maximumWarmTabTtlSeconds}
+          step="1"
+          value={warmTabTtlSeconds}
+          required
+          disabled={busy}
+          title="临时适配器标签页释放后的空闲保持时长，-1 为不自动回收，0 为立即回收，默认 1800 秒"
+          onChange={(event) => {
+            setWarmTabTtlSeconds(event.target.value)
+            setValidationError(null)
+          }}
+        />
+      </label>
+      <p className="form-help">临时适配器标签页释放后的空闲保持时长。-1 表示不自动回收，0 表示立即回收，正整数为保留的空闲秒数（默认 1800 秒）。常驻站点标签以及通过 keep-tab 保持的租约不受此设置影响。</p>
       <label>
         代理模式
         <select

@@ -21,6 +21,7 @@ export interface HubInstance {
   maxPending: number
   maxConcurrency: number
   priority: number
+  warmTabTtlSeconds: number
   proxyMode: InstanceProxyMode
   proxyServer: string | null
   lastErrorMessage: string | null
@@ -37,6 +38,7 @@ export interface InstanceEditableProperties {
   maxPending: number
   maxConcurrency: number
   priority: number
+  warmTabTtlSeconds: number
   proxyMode: InstanceProxyMode
   proxyServer: string | null
 }
@@ -47,4 +49,10 @@ export interface HubInstanceVncStatus {
   running: boolean
   runtimeAvailable: boolean
   vncAvailable: boolean
+}
+
+export function formatWarmTabTtl(seconds: number): string {
+  if (seconds === -1) return '不自动回收'
+  if (seconds === 0) return '立即回收'
+  return `${seconds} 秒`
 }

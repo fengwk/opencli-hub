@@ -18,6 +18,7 @@ create table if not exists hub_instance (
     max_pending int not null,
     max_concurrency int not null default 1,
     priority int not null default 0,
+    warm_tab_ttl_seconds int not null default 1800,
     proxy_mode varchar(16) not null default 'INHERIT',
     proxy_server varchar(512) null,
     last_error_message text null,

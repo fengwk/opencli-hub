@@ -8,6 +8,7 @@ create table if not exists hub_instance (
     max_pending int not null,
     max_concurrency int not null default 1,
     priority int not null default 0,
+    warm_tab_ttl_seconds int not null default 1800,
     proxy_mode varchar(16) not null default 'INHERIT',
     proxy_server varchar(512) null,
     last_error_message clob null,
@@ -22,6 +23,7 @@ create table if not exists hub_instance (
 
 alter table hub_instance alter column id varchar(36) not null;
 alter table hub_instance add column if not exists max_concurrency int default 1 not null;
+alter table hub_instance add column if not exists warm_tab_ttl_seconds int default 1800 not null;
 alter table hub_instance add column if not exists proxy_mode varchar(16) default 'INHERIT' not null;
 alter table hub_instance add column if not exists proxy_server varchar(512) null;
 alter table hub_instance add column if not exists priority int default 0 not null;

@@ -69,7 +69,9 @@ class HubInstanceConverterTest {
 
         // The key invariant: no positive counters leak out when the snapshot is absent.
         assertThat(dto.getMaxConcurrency()).isEqualTo(2);
+        assertThat(dto.getWarmTabTtlSeconds()).isEqualTo(3600);
         assertThat(json).contains("\"maxConcurrency\":2");
+        assertThat(json).contains("\"warmTabTtlSeconds\":3600");
         assertThat(json).contains("\"registered\":false");
         assertThat(json).contains("\"activeCount\":0");
         assertThat(json).contains("\"pendingCount\":0");
@@ -96,6 +98,7 @@ class HubInstanceConverterTest {
         inst.setWebsites(List.of("bilibili"));
         inst.setMaxPending(5);
         inst.setMaxConcurrency(2);
+        inst.setWarmTabTtlSeconds(3600);
         inst.setProxyMode(HubProxyMode.CUSTOM);
         inst.setProxyServer("http://proxy.example:8080");
         inst.setLastErrorMessage(null);

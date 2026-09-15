@@ -26,15 +26,16 @@ function renderForm(props: Partial<React.ComponentProps<typeof InstanceForm>> = 
 }
 
 describe('InstanceForm', () => {
-  it('populates defaults for maxConcurrency (1) and maxPending (5) in creation mode', async () => {
-    // Verifies creation defaults: maxConcurrency defaults to 1 and maxPending defaults to 5.
+  it('populates defaults for maxConcurrency (1), maxPending (5), and warmTabTtlSeconds (1800) in creation mode', async () => {
+    // Verifies creation defaults: maxConcurrency defaults to 1, maxPending defaults to 5, and warmTabTtlSeconds defaults to 1800.
     renderForm()
     expect(screen.getByRole('spinbutton', { name: '最大并发数' })).toHaveValue(1)
     expect(screen.getByRole('spinbutton', { name: '最大待处理数' })).toHaveValue(5)
+    expect(screen.getByRole('spinbutton', { name: '闲置标签页保留时间（秒）' })).toHaveValue(1800)
   })
 
-  it('populates provided initialValues including maxPending=0 correctly in edit mode', async () => {
-    // Verifies initial values with maxPending=0 (no queue) are preserved and displayed as 0.
+  it('populates provided initialValues including maxPending=0 and warmTabTtlSeconds correctly in edit mode', async () => {
+    // Verifies initial values with maxPending=0 and custom TTL are preserved and displayed correctly.
     renderForm({
       initialValues: {
         code: 'test-inst',
@@ -43,6 +44,7 @@ describe('InstanceForm', () => {
         maxConcurrency: 3,
         maxPending: 0,
         priority: 10,
+        warmTabTtlSeconds: -1,
         proxyMode: 'INHERIT',
         proxyServer: null,
       },
@@ -51,6 +53,7 @@ describe('InstanceForm', () => {
     expect(screen.getByRole('textbox', { name: '显示名称' })).toHaveValue('Test Instance')
     expect(screen.getByRole('spinbutton', { name: '最大并发数' })).toHaveValue(3)
     expect(screen.getByRole('spinbutton', { name: '最大待处理数' })).toHaveValue(0)
+    expect(screen.getByRole('spinbutton', { name: '闲置标签页保留时间（秒）' })).toHaveValue(-1)
   })
 
   it('submits maxPending=0 and custom maxConcurrency successfully', async () => {
@@ -75,6 +78,7 @@ describe('InstanceForm', () => {
       maxConcurrency: 4,
       maxPending: 0,
       priority: 0,
+      warmTabTtlSeconds: 1800,
       proxyMode: 'INHERIT',
       proxyServer: null,
     })
@@ -135,5 +139,37 @@ describe('InstanceForm', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent('最大待处理数必须是 0 到 50 之间的整数。')
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('validates bounds for warmTabTtlSeconds (-1..2147483647) and allows -1 and 0', async () => {
+    // Verifies TTL bounds validation and ensures -1 and 0 are accepted and submitted.
+    const user = userEvent.setup()
+    const { onSubmit } = renderForm()
+    await screen.findByRole('checkbox', { name: 'demo' })
+
+    await user.type(screen.getByRole('textbox', { name: '实例代码' }), 'inst-ttl')
+    await user.type(screen.getByRole('textbox', { name: '显示名称' }), 'TTL Instance')
+    await user.click(screen.getByRole('checkbox', { name: 'demo' }))
+
+    // Test warmTabTtlSeconds < -1 (e.g. -2)
+    await user.clear(screen.getByRole('spinbutton', { name: '闲置标签页保留时间（秒）' }))
+    await user.type(screen.getByRole('spinbutton', { name: '闲置标签页保留时间（秒）' }), '-2')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('闲置标签页保留时间必须是 -1 到 2147483647 之间的整数秒')
+
+    // Boundary values -1 and 0 are both accepted.
+    await user.clear(screen.getByRole('spinbutton', { name: '闲置标签页保留时间（秒）' }))
+    await user.type(screen.getByRole('spinbutton', { name: '闲置标签页保留时间（秒）' }), '-1')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      warmTabTtlSeconds: -1,
+    }))
+
+    await user.clear(screen.getByRole('spinbutton', { name: '闲置标签页保留时间（秒）' }))
+    await user.type(screen.getByRole('spinbutton', { name: '闲置标签页保留时间（秒）' }), '0')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(onSubmit).toHaveBeenLastCalledWith(expect.objectContaining({
+      warmTabTtlSeconds: 0,
+    }))
   })
 })

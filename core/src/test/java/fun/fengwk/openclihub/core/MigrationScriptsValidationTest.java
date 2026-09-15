@@ -8,8 +8,8 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 /**
- * Validates the presence, formatting, and key DDL contents of all three database migration scripts
- * for instance concurrency (PostgreSQL, MySQL, SQLite).
+ * Validates the presence, formatting, and key DDL contents of the database migration scripts
+ * for instance concurrency and warm-tab TTL (PostgreSQL, MySQL, SQLite).
  */
 class MigrationScriptsValidationTest {
 
@@ -67,6 +67,55 @@ class MigrationScriptsValidationTest {
             .contains("set -Eeuo pipefail")
             .contains("sqlite3 -batch -bail")
             .contains("ALTER TABLE hub_instance ADD COLUMN max_concurrency int NOT NULL DEFAULT 1;")
+            .contains("PRAGMA table_info(hub_instance)")
+            .contains("OPENCLI_HUB_SQLITE_PATH");
+    }
+
+    @Test
+    void shouldValidatePostgresqlWarmTabTtlMigrationScript() throws Exception {
+        // Validates the PostgreSQL migration script adds warm_tab_ttl_seconds with DEFAULT 1800 safely.
+        Path scriptPath = resolveScript("migrate-postgresql-instance-warm-tab-ttl.sql");
+        assertThat(Files.isRegularFile(scriptPath)).isTrue();
+
+        String content = Files.readString(scriptPath, StandardCharsets.UTF_8);
+        assertThat(content)
+            .contains("alter table hub_instance")
+            .contains("add column if not exists warm_tab_ttl_seconds int not null default 1800")
+            .contains("\\set ON_ERROR_STOP on")
+            .contains("begin;")
+            .contains("commit;")
+            .contains("information_schema.columns")
+            .contains("warm_tab_ttl_seconds_column_count");
+    }
+
+    @Test
+    void shouldValidateMysqlWarmTabTtlMigrationScript() throws Exception {
+        // Validates the MySQL migration script adds warm_tab_ttl_seconds idempotently with DEFAULT 1800.
+        Path scriptPath = resolveScript("migrate-mysql-instance-warm-tab-ttl.sql");
+        assertThat(Files.isRegularFile(scriptPath)).isTrue();
+
+        String content = Files.readString(scriptPath, StandardCharsets.UTF_8);
+        assertThat(content)
+            .contains("alter table hub_instance add column warm_tab_ttl_seconds int not null default 1800 after priority")
+            .contains("information_schema.columns")
+            .contains("warm_tab_ttl_seconds_column_count")
+            .contains("prepare stmt from @sql")
+            .contains("execute stmt");
+    }
+
+    @Test
+    void shouldValidateSqliteWarmTabTtlMigrationScript() throws Exception {
+        // Validates the SQLite migration shell script exists, is executable, and adds warm_tab_ttl_seconds with DEFAULT 1800.
+        Path scriptPath = resolveScript("migrate-sqlite-instance-warm-tab-ttl.sh");
+        assertThat(Files.isRegularFile(scriptPath)).isTrue();
+        assertThat(Files.isExecutable(scriptPath)).isTrue();
+
+        String content = Files.readString(scriptPath, StandardCharsets.UTF_8);
+        assertThat(content)
+            .startsWith("#!/usr/bin/env bash")
+            .contains("set -Eeuo pipefail")
+            .contains("sqlite3 -batch -bail")
+            .contains("ALTER TABLE hub_instance ADD COLUMN warm_tab_ttl_seconds int NOT NULL DEFAULT 1800;")
             .contains("PRAGMA table_info(hub_instance)")
             .contains("OPENCLI_HUB_SQLITE_PATH");
     }

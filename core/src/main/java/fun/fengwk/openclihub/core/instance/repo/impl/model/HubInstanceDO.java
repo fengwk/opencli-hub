@@ -23,6 +23,7 @@ public class HubInstanceDO {
     private Integer maxPending;
     private Integer maxConcurrency;
     private Integer priority;
+    private Integer warmTabTtlSeconds;
     private String proxyMode;
     private String proxyServer;
     private String lastErrorMessage;

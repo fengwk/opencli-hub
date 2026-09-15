@@ -14,6 +14,7 @@ import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceState;
 import fun.fengwk.openclihub.share.model.instance.HubInstanceUpdateDTO;
 import fun.fengwk.openclihub.share.model.proxy.HubProxyMode;
+import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -67,6 +68,7 @@ class MybatisHubInstanceRepositoryH2Test {
         instance.setMaxPending(5);
         instance.setMaxConcurrency(3);
         instance.setPriority(7);
+        instance.setWarmTabTtlSeconds(-1);
         instance.setProxyMode(HubProxyMode.CUSTOM);
         instance.setProxyServer("http://proxy.example:8080");
         LocalDateTime now = LocalDateTime.now();
@@ -86,6 +88,7 @@ class MybatisHubInstanceRepositoryH2Test {
         assertThat(loaded.getMaxPending()).isEqualTo(5);
         assertThat(loaded.getMaxConcurrency()).isEqualTo(3);
         assertThat(loaded.getPriority()).isEqualTo(7);
+        assertThat(loaded.getWarmTabTtlSeconds()).isEqualTo(-1);
         assertThat(loaded.getProxyMode()).isEqualTo(HubProxyMode.CUSTOM);
         assertThat(loaded.getProxyServer()).isEqualTo("http://proxy.example:8080");
     }
@@ -251,12 +254,31 @@ class MybatisHubInstanceRepositoryH2Test {
         source.setMaxPending(5);
         source.setMaxConcurrency(null);
 
-        java.lang.reflect.Method fromDoMethod = MybatisHubInstanceRepository.class
+        Method fromDoMethod = MybatisHubInstanceRepository.class
             .getDeclaredMethod("fromDO", HubInstanceDO.class);
         fromDoMethod.setAccessible(true);
         HubInstance instance = (HubInstance) fromDoMethod.invoke(repository, source);
 
         assertThat(instance.getMaxConcurrency()).isEqualTo(1);
+    }
+
+    @Test
+    void shouldFallbackToWarmTabTtl1800WhenDoHasNull() throws Exception {
+        // Verify fromDO handles null warmTabTtlSeconds in HubInstanceDO safely by defaulting to 1800.
+        HubInstanceDO source = new HubInstanceDO();
+        source.setId("test-null-ttl");
+        source.setCode("test-null-ttl");
+        source.setDisplayName("Test");
+        source.setState("STOPPED");
+        source.setMaxPending(5);
+        source.setWarmTabTtlSeconds(null);
+
+        Method fromDoMethod = MybatisHubInstanceRepository.class
+            .getDeclaredMethod("fromDO", HubInstanceDO.class);
+        fromDoMethod.setAccessible(true);
+        HubInstance instance = (HubInstance) fromDoMethod.invoke(repository, source);
+
+        assertThat(instance.getWarmTabTtlSeconds()).isEqualTo(1800);
     }
 
     private HubInstance build(String id, String code, HubInstanceState state) {

@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom'
 import { createInstance, deleteInstance, listInstances, runInstanceLifecycleAction } from '@/features/instances/instances-api'
 import { InstanceForm } from '@/features/instances/InstanceForm'
 import { InstanceLifecycleActions } from '@/features/instances/InstanceLifecycleActions'
+import { formatWarmTabTtl } from '@/features/instances/types'
 import type { HubInstance, InstanceEditableProperties } from '@/features/instances/types'
 import { ConfirmDialog, Empty, ErrorState, Loading, StatusBadge } from '@/shared/components'
 
@@ -95,6 +96,7 @@ function InstanceCard({
         <div><dt>最大并发数</dt><dd>{instance.maxConcurrency}</dd></div>
         <div><dt>执行队列</dt><dd>活跃 {runtime?.activeCount ?? 0}/{instance.maxConcurrency} · 待处理 {runtime?.pendingCount ?? 0}/{instance.maxPending}</dd></div>
         <div><dt>优先级</dt><dd>{instance.priority ?? 0}</dd></div>
+        <div><dt>闲置标签页回收</dt><dd>{formatWarmTabTtl(instance.warmTabTtlSeconds)}</dd></div>
         <div><dt>会话上下文</dt><dd className="mono-value" title={instance.contextId ?? undefined}>{instance.contextId || '尚未分配'}</dd></div>
       </dl>
       {instance.lastErrorMessage ? <p className="inline-error instance-error" role="alert">最近错误：{instance.lastErrorMessage}</p> : null}

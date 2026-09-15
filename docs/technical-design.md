@@ -376,6 +376,8 @@ public class HubInstance {
     private List<String> websites;
     private int maxPending;
     private int maxConcurrency = 1;
+    private int priority = 0;
+    private int warmTabTtlSeconds = 1800;
     private HubProxyMode proxyMode;
     private String proxyServer;
     private String lastErrorMessage;
@@ -406,6 +408,12 @@ public enum HubInstanceState {
 - `ERROR`：启动、运行时检查或重新绑定失败。
 
 `websites` 表示管理员确认该 Instance 可以参与这些网站的路由，不表示 OpenCLI 理论上支持的站点。
+
+`warmTabTtlSeconds`：每个 Instance 的闲置标签页回收超时秒数（合法范围 `[-1, 2147483647]`，默认 `1800`）：
+- `-1`：永不自动回收闲置标签页；
+- `0`：临时 adapter lease 释放后立即回收；
+- `>0`：闲置指定秒数后自动回收；
+- 仅作用于已释放的临时 adapter 闲置标签页（released ephemeral adapter tabs）；持久会话标签（`siteSession=PERSISTENT`）与显式 keep-tab lease 生命周期由各自独立机制保障，不受此超时影响。
 
 ### 8.2 HubExecution
 
@@ -508,6 +516,7 @@ create table hub_instance (
     max_pending int not null,
     max_concurrency int not null default 1,
     priority int not null default 0,
+    warm_tab_ttl_seconds int not null default 1800,
     proxy_mode varchar(16) not null default 'INHERIT',
     proxy_server varchar(512) null,
     last_error_message text null,
@@ -822,6 +831,7 @@ command.addAll(request.getArgv());
 
 ```text
 --profile
+--warm-tab-ttl
 -f / --format
 --site-session
 --keep-tab
@@ -1496,6 +1506,7 @@ process.destroy()
 opencli
 --profile <contextId>
 <normalized argv>
+[--warm-tab-ttl <seconds>] (仅浏览器命令且 normalized.getCommand().isBrowser() 时追加，取自 Instance.warmTabTtlSeconds)
 <managed output argument if any>
 --format json
 ```

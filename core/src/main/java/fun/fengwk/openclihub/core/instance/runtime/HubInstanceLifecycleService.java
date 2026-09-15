@@ -110,6 +110,8 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
             ? properties.getExecution().getDefaultMaxConcurrency()
             : dto.getMaxConcurrency());
         preset.setPriority(dto.getPriority() == null ? 0 : dto.getPriority());
+        preset.setWarmTabTtlSeconds(dto.getWarmTabTtlSeconds() == null
+            ? HubInstance.DEFAULT_WARM_TAB_TTL_SECONDS : dto.getWarmTabTtlSeconds());
         preset.setState(HubInstanceState.STARTING);
         preset.setStateChangedAt(LocalDateTime.now(clock));
         instanceService.validateAndNormalizeForCreate(preset);

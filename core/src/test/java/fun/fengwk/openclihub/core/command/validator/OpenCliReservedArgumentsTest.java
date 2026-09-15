@@ -16,6 +16,7 @@ class OpenCliReservedArgumentsTest {
     void shouldRecognizeAllLongReservedNames() {
         for (String name : new String[] {
             "--profile", "--format", "--site-session", "--keep-tab",
+            "--warm-tab-ttl",
             "--window", "--trace", "--verbose", "--help", "--version",
         }) {
             assertThat(OpenCliReservedArguments.isReserved(name))
@@ -37,6 +38,7 @@ class OpenCliReservedArgumentsTest {
     void shouldRecognizeInlineValueReservedNames() {
         assertThat(OpenCliReservedArguments.isReserved("--format=json")).isTrue();
         assertThat(OpenCliReservedArguments.isReserved("--profile=foo")).isTrue();
+        assertThat(OpenCliReservedArguments.isReserved("--warm-tab-ttl=60")).isTrue();
         assertThat(OpenCliReservedArguments.isReserved("-f=json")).isTrue();
     }
 

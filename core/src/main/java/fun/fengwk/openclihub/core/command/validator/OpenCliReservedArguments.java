@@ -9,7 +9,7 @@ import java.util.Set;
  * never pass through.
  *
  * <p>These match the {@code --profile}/{@code -f --format}/{@code --site-session}/
- * {@code --keep-tab}/{@code --window}/{@code --trace}/{@code -v --verbose}/{@code -h --help}/
+ * {@code --keep-tab}/{@code --warm-tab-ttl}/{@code --window}/{@code --trace}/{@code -v --verbose}/{@code -h --help}/
  * {@code -V --version} options listed in the design document. A short alias
  * ({@code -f}, {@code -v}, {@code -h}, {@code -V}) is part of the same block because the
  * OpenCLI root option parser binds them globally.
@@ -39,6 +39,7 @@ public final class OpenCliReservedArguments {
         longNames.add("--format");
         longNames.add("--site-session");
         longNames.add("--keep-tab");
+        longNames.add("--warm-tab-ttl");
         longNames.add("--window");
         longNames.add("--trace");
         longNames.add("--verbose");
