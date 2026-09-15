@@ -87,7 +87,7 @@ Hub 配置的 `desiredPlugins` 是**子插件名**（如 `crm`），不是任意
 | 字段 | 说明 |
 |---|---|
 | `name` | 展示名，唯一 |
-| `source` | 官方 source：`github:org/repo`、`github:org/repo/sub`、`https://...`、`file://...` |
+| `source` | 官方 source：`github:org/repo`、`github:org/repo/sub`、`https://...`、`ssh://git@host/path/repo.git`、`git@host:path/repo.git`、`file://...` |
 | `desiredPlugins` | 子插件名列表；空表示 `opencli plugin install <source>` 的默认集合。非空时仅支持 `github:org/repo` 或规范 GitHub URL `https://github.com/org/repo[.git]`，Hub 会转换为官方 `github:org/repo/sub` 语法。 |
 | `enabled` | 是否允许同步 |
 

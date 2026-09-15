@@ -36,7 +36,7 @@ public class HubPluginService {
 
     private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
     private static final Pattern SOURCE_PATTERN = Pattern.compile(
-        "^(github:[\\w.-]+/[\\w.-]+(?:/[\\w.-]+)?|https?://\\S+|file://\\S+|/[\\w./-]+)$",
+        "^(github:[\\w.-]+/[\\w.-]+(?:/[\\w.-]+)?|https?://\\S+|ssh://\\S+|git@[\\w.-]+:\\S+|file://\\S+|/[\\w./-]+)$",
         Pattern.CASE_INSENSITIVE);
     private static final Pattern GITHUB_REPOSITORY_URL_PATTERN = Pattern.compile(
         "^https?://github\\.com/([\\w.-]+)/([\\w.-]+)/?$",
@@ -445,7 +445,8 @@ public class HubPluginService {
         String trimmed = source.trim();
         if (!SOURCE_PATTERN.matcher(trimmed).matches()) {
             throw HubErrorCodes.PLUGIN_SOURCE_ARGUMENT_INVALID.asThrowable(
-                "source must be github:user/repo[/sub], https://..., file://... or an absolute path");
+                "source must be github:user/repo[/sub], https://..., ssh://git@host/path/repo.git, "
+                    + "git@host:path/repo.git, file://... or an absolute path");
         }
         return trimmed;
     }

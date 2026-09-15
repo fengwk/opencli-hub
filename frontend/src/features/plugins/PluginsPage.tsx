@@ -82,7 +82,7 @@ function SourceForm({
         <input
           value={source}
           disabled={busy}
-          placeholder="github:org/repo 或 https://github.com/org/repo"
+          placeholder="github:org/repo、https://github.com/org/repo 或 ssh://git@host/path/repo.git"
           onChange={(event) => setSource(event.target.value)}
         />
       </label>

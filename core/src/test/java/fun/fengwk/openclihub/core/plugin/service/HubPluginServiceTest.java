@@ -40,6 +40,26 @@ class HubPluginServiceTest {
             .hasMessageContaining("source must be");
     }
 
+    /** 内网 Git 走 ssh://（或 scp 简写）克隆，官方 CLI 支持，Hub 不能在校验阶段拦掉。 */
+    @Test
+    void shouldAcceptSshCloneSources() {
+        HubPluginService service = new HubPluginService(
+            mock(HubPluginSourceRepository.class),
+            mock(OpenCliPluginCli.class),
+            mock(OpenCliCommandCatalog.class), java.time.Clock.systemUTC());
+
+        for (String source : List.of(
+            "ssh://git@g.hz.netease.com:22222/cloudmusic/music-community/community-opencli-plugins.git",
+            "git@g.hz.netease.com:cloudmusic/music-community/community-opencli-plugins.git")) {
+            HubPluginSourceUpsertDTO request = new HubPluginSourceUpsertDTO();
+            request.setName("internal-git");
+            request.setSource(source);
+            // 仓库未 mock：断言只关心来源校验放行（失败信息不能是 source must be）。
+            assertThatThrownBy(() -> service.createSource(request))
+                .hasMessageNotContaining("source must be");
+        }
+    }
+
     /** GitHub source forms must compile to the official sub-plugin grammar without malformed URL suffixes. */
     @Test
     void shouldJoinGitHubSourceAndPluginNames() {
