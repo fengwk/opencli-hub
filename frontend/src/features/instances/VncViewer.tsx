@@ -11,9 +11,21 @@ type ClipboardOperation = 'read' | 'write' | null
 const MAX_CLIPBOARD_BYTES = 256 * 1024
 const clipboardTextEncoder = new TextEncoder()
 const clipboardTextDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+const LEGACY_CLIPBOARD_STRING_CHUNK_BYTES = 32 * 1024
 
 function utf8ByteLength(text: string): number {
   return clipboardTextEncoder.encode(text).length
+}
+
+function encodeLegacyRfbUtf8(text: string): string {
+  // x11vnc accepts UTF-8 bytes in legacy ClientCutText, but noVNC otherwise replaces every
+  // code point above Latin-1 with '?'. A byte-shaped string preserves the UTF-8 payload.
+  const bytes = clipboardTextEncoder.encode(text)
+  const chunks: string[] = []
+  for (let offset = 0; offset < bytes.length; offset += LEGACY_CLIPBOARD_STRING_CHUNK_BYTES) {
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + LEGACY_CLIPBOARD_STRING_CHUNK_BYTES)))
+  }
+  return chunks.join('')
 }
 
 function decodeLegacyRfbUtf8(text: string): string {
@@ -337,10 +349,8 @@ export function VncViewer({ instanceId, available }: { instanceId: BackendId; av
       if (rfbRef.current !== rfb) {
         return
       }
-      rfb.clipboardPasteFrom(text)
-      setClipboardNotice(containsNonLatin1(text)
-        ? `已向远端发送 ${outboundBytes} 字节；传统 RFB 剪贴板可能替换非 Latin-1 字符。`
-        : `已向远端发送 ${outboundBytes} 字节，请在远端按 Ctrl+V。`)
+      rfb.clipboardPasteFrom(encodeLegacyRfbUtf8(text))
+      setClipboardNotice(`已向远端发送 ${outboundBytes} 字节，请在远端按 Ctrl+V。`)
     } finally {
       // Only clear busy if this op still owns it; a concurrent invalidating lifecycle event has already
       // cleared (or re-assigned) clipboardOperation for the new connection.

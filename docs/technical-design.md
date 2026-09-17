@@ -1652,6 +1652,8 @@ Hub 不做认证，SCG 代理 WebSocket 并负责认证授权。
 
 Instance 详情页动态加载 `@novnc/novnc`，使用 `binary` subprotocol。支持连接、断开、重连、缩放和剪贴板基本操作。
 
+x11vnc 使用传统 `ClientCutText` / `ServerCutText` 透明传输 X11 剪贴板字节。前端发送前将 Unicode 文本转换为 UTF-8 字节字符串，避免 noVNC 的 Latin-1 降级把中文替换为 `?`；接收时仅对严格合法且可还原为非 Latin-1 文本的 UTF-8 字节串解码。双向载荷均按 UTF-8 编码后限制为 256 KiB。
+
 ## 25. 日志
 
 ### 25.1 系统日志

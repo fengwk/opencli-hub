@@ -24,6 +24,7 @@
 - OpenCLI stdout/stderr 默认捕获上限从 65,535 提升到 1,048,576 字符，并支持 `OPENCLI_HUB_MAX_CAPTURE_CHARS` 覆盖，减少长 JSON 结果因截断而被判定为无效输出。
 - Runtime 镜像安装 `ffmpeg`，提供 `ffprobe`，供 `jimeng-agent` 等插件做音视频时长预检。
 - VNC 远端剪贴板兼容 x11vnc 通过传统 `ServerCutText` 传输的 UTF-8 文本，避免中文复制到本机后出现 Latin-1 乱码。
+- VNC 本机剪贴板发送前编码为 x11vnc 可透传的 UTF-8 字节，避免中文通过传统 `ClientCutText` 时被 noVNC 替换为 `?`。
 - noVNC 固定到包含大发送队列修复的 `1.5.0-g50e4685`，避免长脚本文本跨越 10 KiB 队列后发生传输损坏。
 
 ## 1.0.0

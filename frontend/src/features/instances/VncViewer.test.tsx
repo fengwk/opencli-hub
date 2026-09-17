@@ -440,10 +440,11 @@ describe('VncViewer', () => {
     expect(screen.getByRole('button', { name: '远端剪贴板 → 本机' })).not.toBeDisabled()
   })
 
-  it('warns when the local clipboard contains characters outside the legacy Latin-1 range', async () => {
-    // nonVNC's legacy clipboard substitutes '?' for code points above 0xff, so the UI must call this out.
+  it('encodes local Unicode text as UTF-8 bytes for the legacy x11vnc clipboard', async () => {
+    // A byte-shaped string bypasses noVNC's replacement of code points above Latin-1 with '?'.
     const user = userEvent.setup()
-    const readText = vi.fn().mockResolvedValue('你好')
+    const localText = '你好🙂'
+    const readText = vi.fn().mockResolvedValue(localText)
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { readText, writeText: vi.fn() },
@@ -455,8 +456,10 @@ describe('VncViewer', () => {
 
     await user.click(screen.getByRole('button', { name: '本机剪贴板 → 远端' }))
 
-    expect(rfbMock.instances[0].clipboardPasteFrom).toHaveBeenCalledWith('你好')
-    expect(screen.getByText(/Latin-1/)).toBeInTheDocument()
+    const utf8Bytes = new TextEncoder().encode(localText)
+    const legacyByteString = Array.from(utf8Bytes, (byte) => String.fromCharCode(byte)).join('')
+    expect(rfbMock.instances[0].clipboardPasteFrom).toHaveBeenCalledWith(legacyByteString)
+    expect(screen.getByText(`已向远端发送 ${utf8Bytes.length} 字节，请在远端按 Ctrl+V。`)).toBeInTheDocument()
   })
 
   it('releases the busy state when the clipboard-read permission prompt is left unanswered', async () => {
