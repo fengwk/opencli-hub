@@ -225,9 +225,9 @@ workflow 共用该文件，因此官方 baseline 与已发布 fork Release 的�
 
 ```text
 package=@jackwener/opencli
-CLI version=1.8.7-fengwk.11
-extension version=1.0.32
-source revision=fengwk/OpenCLI@bbf1109b8a2a814a67cea7690b026f7bd45a8575
+CLI version=1.8.8-fengwk.2
+extension version=1.0.35
+source revision=fengwk/OpenCLI@65db12b76bff83863c55560d6ea67c592390798e
 ```
 
 升级或切换 fork 时：
@@ -240,19 +240,23 @@ source revision=fengwk/OpenCLI@bbf1109b8a2a814a67cea7690b026f7bd45a8575
 4. 构建后确认镜像内 `/opt/opencli/artifact-build-info.json` 反映解析结果；smoke 会比较
    `opencli --version` 与该文件中的 `cli.version`。
 
-当前 fork Release（tag `fork-v1.8.8-fengwk.1`，CLI `1.8.8-fengwk.1` + extension `1.0.34`）：
+当前 fork Release（tag `fork-v1.8.8-fengwk.2`，CLI `1.8.8-fengwk.2` + extension `1.0.35`）：
 
 ```bash
 # scripts/docker/opencli-artifact.lock.env
 OPENCLI_PACKAGE=@jackwener/opencli
-OPENCLI_VERSION=1.8.8-fengwk.1
-OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.1/jackwener-opencli-1.8.8-fengwk.1.tgz
-OPENCLI_CLI_SHA256=2258bd82fe6e4a03103aa767a27833c4feaf2e633d76fb9ddb8704b45ebe705d
-OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@87fcca85dc96dfeaecd9be03fcee07f0be4557ec
-EXTENSION_VERSION=1.0.34
-OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.1/opencli-extension-v1.0.34.zip
-OPENCLI_EXTENSION_SHA256=a6559f95858936f521ad5d92b255783a4086be6efacf6906340e122217186412
+OPENCLI_VERSION=1.8.8-fengwk.2
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.2/jackwener-opencli-1.8.8-fengwk.2.tgz
+OPENCLI_CLI_SHA256=0677e32e8a05759fd892cfd4f4c14f722179f75503fee5bbf938d46df9c96636
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@65db12b76bff83863c55560d6ea67c592390798e
+EXTENSION_VERSION=1.0.35
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.2/opencli-extension-v1.0.35.zip
+OPENCLI_EXTENSION_SHA256=fbb69c9bc1d0c0502bbf4769a16f3fb2d04b0af613f5c303b11a1ed80e0ae1f8
 ```
+
+镜像升级不会更新已有的插件卷。升级完成、确认 CLI/extension 版本后，通过
+[`/plugins` 的插件维护流程](plugins.md) 将 `my-opencli` 更新至 `0.1.54`；
+`chatgpt-agent` 需要这一对版本才能捕获 HTTP SSE 回合。
 
 可选 build-arg 仅覆盖**单次构建**，不改变仓库默认 pin：
 

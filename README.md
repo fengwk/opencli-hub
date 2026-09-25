@@ -67,8 +67,8 @@ VNC TCP 只监听容器 loopback；客户端只通过同源 WebSocket `/api/inst
 | Java | 17 |
 | 前端构建 | Node.js 20 + npm lockfile |
 | Google Chrome | `150.0.7871.114-1`，仅 `linux/amd64` |
-| OpenCLI | 见 `scripts/docker/opencli-artifact.lock.env`（当前 fork `1.8.7-fengwk.11`） |
-| Browser Bridge extension | 见同一 lock（当前 fork `1.0.32`） |
+| OpenCLI | 见 `scripts/docker/opencli-artifact.lock.env`（当前 fork `1.8.8-fengwk.2`） |
+| Browser Bridge extension | 见同一 lock（当前 fork `1.0.35`） |
 | PostgreSQL（默认） | `16`，`compose.yml` |
 | MySQL | `8.4` LTS，`compose.mysql.yml`；迁移脚本兼容 5.7/8.4 |
 | SQLite | 内嵌（sqlite-jdbc），`compose.sqlite.yml` |
@@ -93,19 +93,19 @@ scripts/docker/opencli-artifact.lock.env
 
 1. **成对升级**：CLI 与 extension 必须来自同一 OpenCLI Release，不要只改一侧。
 2. **校验和必填**：任何远程 CLI tarball / extension zip 都必须写入对应 SHA256；构建会先校验再安装。
-3. **默认 lock 只指向已发布资产**：当前钉住已验证的 `fork-v1.8.8-fengwk.1`；不要提交未发布的本地产物 URL。
+3. **默认 lock 只指向已发布资产**：当前钉住已验证的 `fork-v1.8.8-fengwk.2`；不要提交未发布的本地产物 URL。
 4. **后续升级 fork Release 时只改 lock**，当前值为：
 
 ```bash
 # scripts/docker/opencli-artifact.lock.env
 OPENCLI_PACKAGE=@jackwener/opencli
-OPENCLI_VERSION=1.8.8-fengwk.1
-OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.1/jackwener-opencli-1.8.8-fengwk.1.tgz
-OPENCLI_CLI_SHA256=2258bd82fe6e4a03103aa767a27833c4feaf2e633d76fb9ddb8704b45ebe705d
-OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@87fcca85dc96dfeaecd9be03fcee07f0be4557ec
-EXTENSION_VERSION=1.0.34
-OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.1/opencli-extension-v1.0.34.zip
-OPENCLI_EXTENSION_SHA256=a6559f95858936f521ad5d92b255783a4086be6efacf6906340e122217186412
+OPENCLI_VERSION=1.8.8-fengwk.2
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.2/jackwener-opencli-1.8.8-fengwk.2.tgz
+OPENCLI_CLI_SHA256=0677e32e8a05759fd892cfd4f4c14f722179f75503fee5bbf938d46df9c96636
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@65db12b76bff83863c55560d6ea67c592390798e
+EXTENSION_VERSION=1.0.35
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.2/opencli-extension-v1.0.35.zip
+OPENCLI_EXTENSION_SHA256=fbb69c9bc1d0c0502bbf4769a16f3fb2d04b0af613f5c303b11a1ed80e0ae1f8
 ```
 
 可选 build-arg 覆盖范围（仅当前构建生效，不改仓库默认 pin）：
