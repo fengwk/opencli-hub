@@ -190,7 +190,7 @@ opencli plugin install github:fengwk/my-opencli/chatgpt-agent
 `chatgpt-agent`，并在该 Instance 的 Chrome Profile 中完成 ChatGPT 登录，才能执行
 `chatgpt-agent/*` 命令。
 
-仓库版本为 `v0.1.54`（四个子插件统一版本）；`chatgpt-agent` 要求 CLI
+仓库版本为 `v0.1.55`（四个子插件统一版本）；`chatgpt-agent` 要求 CLI
 `1.8.8-fengwk.2` 与配套 Browser Bridge `1.0.35`。先升级 Hub 镜像并确认两者版本，
 再在 `/plugins` 对已配置的源执行“安装/更新已选子插件”，最后核对已安装版本和命令目录。
 镜像升级不会自动更新持久卷中的插件。当前 OpenCLI plugin installer 尚不支持
