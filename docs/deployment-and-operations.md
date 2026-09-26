@@ -255,7 +255,7 @@ OPENCLI_EXTENSION_SHA256=fbb69c9bc1d0c0502bbf4769a16f3fb2d04b0af613f5c303b11a1ed
 ```
 
 镜像升级不会更新已有的插件卷。升级完成、确认 CLI/extension 版本后，通过
-[`/plugins` 的插件维护流程](plugins.md) 将 `my-opencli` 更新至 `0.1.55`；
+[`/plugins` 的插件维护流程](plugins.md) 将 `my-opencli` 更新至 `0.1.56`；
 `chatgpt-agent` 需要这一对版本才能捕获 HTTP SSE 回合。
 
 可选 build-arg 仅覆盖**单次构建**，不改变仓库默认 pin：
