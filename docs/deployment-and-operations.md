@@ -240,22 +240,22 @@ source revision=fengwk/OpenCLI@65db12b76bff83863c55560d6ea67c592390798e
 4. 构建后确认镜像内 `/opt/opencli/artifact-build-info.json` 反映解析结果；smoke 会比较
    `opencli --version` 与该文件中的 `cli.version`。
 
-当前 fork Release（tag `fork-v1.8.8-fengwk.2`，CLI `1.8.8-fengwk.2` + extension `1.0.35`）：
+当前 fork Release（tag `fork-v1.8.8-fengwk.3`，CLI `1.8.8-fengwk.3` + extension `1.0.35`）：
 
 ```bash
 # scripts/docker/opencli-artifact.lock.env
 OPENCLI_PACKAGE=@jackwener/opencli
-OPENCLI_VERSION=1.8.8-fengwk.2
-OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.2/jackwener-opencli-1.8.8-fengwk.2.tgz
-OPENCLI_CLI_SHA256=0677e32e8a05759fd892cfd4f4c14f722179f75503fee5bbf938d46df9c96636
-OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@65db12b76bff83863c55560d6ea67c592390798e
+OPENCLI_VERSION=1.8.8-fengwk.3
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.3/jackwener-opencli-1.8.8-fengwk.3.tgz
+OPENCLI_CLI_SHA256=7aa3043d63daba987af4e3bd9ba13dc3cfd91e1243c9d1bf9ba8271b2cd11d3e
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@71e193b41d0f09b1602b25fb8d4a282e65e359b5
 EXTENSION_VERSION=1.0.35
-OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.2/opencli-extension-v1.0.35.zip
-OPENCLI_EXTENSION_SHA256=fbb69c9bc1d0c0502bbf4769a16f3fb2d04b0af613f5c303b11a1ed80e0ae1f8
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.3/opencli-extension-v1.0.35.zip
+OPENCLI_EXTENSION_SHA256=91be3a318e32901d294286b477a481fdd65bf404731e89e60f7770887ebdbf2b
 ```
 
 镜像升级不会更新已有的插件卷。升级完成、确认 CLI/extension 版本后，通过
-[`/plugins` 的插件维护流程](plugins.md) 将 `my-opencli` 更新至 `0.1.56`；
+[`/plugins` 的插件维护流程](plugins.md) 将 `my-opencli` 更新至 `0.1.57`；
 `chatgpt-agent` 需要这一对版本才能捕获 HTTP SSE 回合。
 
 可选 build-arg 仅覆盖**单次构建**，不改变仓库默认 pin：
