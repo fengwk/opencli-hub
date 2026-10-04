@@ -14,6 +14,7 @@ import fun.fengwk.openclihub.core.opencli.catalog.FileOpenCliCatalogSource;
 import fun.fengwk.openclihub.core.opencli.daemon.FakeOpenCliDaemonClient;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonClient;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonCommandResponse;
+import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonStatus;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliProfileSnapshot;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import fun.fengwk.openclihub.core.settings.service.FakeHubSystemSettingsService;
@@ -1781,6 +1782,193 @@ class HubInstanceLifecycleServiceTest {
     }
 
     // ---------------------------------------------------------------------------------
+    //  DAEMON CAPABILITY READINESS (asynchronous extension upgrade)
+    // ---------------------------------------------------------------------------------
+
+    /** Keep Chrome alive and unregistered while the expected extension upgrades and reloads. */
+    @Test
+    void shouldWaitForExpectedProfileCapabilityUpgradeInsteadOfFailingImmediately() {
+        String id = seedPersistedInstance("bilibili-upgrade", "ctx-upgrade");
+        daemon.setStatusOnFetch(1,
+            daemonWithProfiles(List.of(profile("ctx-upgrade", "1.0.35", List.of()))));
+        daemon.setStatusOnFetch(2,
+            daemonWithProfiles(List.of(profile("ctx-upgrade", "1.0.35", List.of()))));
+        // Transient disconnect while the extension reloads.
+        daemon.setStatusOnFetch(3, daemonWithProfiles(List.of()));
+        daemon.setStatusOnFetch(4, daemonWithProfiles(List.of(profile("ctx-upgrade", "1.0.36",
+            List.of(OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1)))));
+        List<Boolean> registeredDuringWait = new ArrayList<>();
+        List<Boolean> chromeAliveDuringWait = new ArrayList<>();
+        List<HubInstanceState> stateDuringWait = new ArrayList<>();
+        daemon.observeFetches(count -> {
+            if (count >= 2) {
+                registeredDuringWait.add(registry.get(id) != null);
+                chromeAliveDuringWait.add(launcher.lastHandle(
+                    HubInstanceRuntime.HubInstanceProcessKind.CHROME).isAlive());
+                stateDuringWait.add(instanceService.get(id).getState());
+            }
+        });
+
+        HubInstance started = lifecycle.start(id);
+
+        assertThat(started.getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(started.getContextId()).isEqualTo("ctx-upgrade");
+        assertThat(registeredDuringWait).isNotEmpty().containsOnly(false);
+        assertThat(stateDuringWait).isNotEmpty().containsOnly(HubInstanceState.STARTING);
+        assertThat(chromeAliveDuringWait).isNotEmpty().containsOnly(true);
+        assertThat(daemon.fetchCount()).isGreaterThanOrEqualTo(4);
+    }
+
+    /** A unique new profile is not ready until its handshake advertises the capability. */
+    @Test
+    void shouldBindUniqueNewProfileOnceCapabilityAppears() {
+        daemon.setStatusOnFetch(1, daemonWithProfiles(List.of()));
+        daemon.setStatusOnFetch(2,
+            daemonWithProfiles(List.of(profile("ctx-new", "1.0.35", List.of()))));
+        daemon.setStatusOnFetch(3,
+            daemonWithProfiles(List.of(profile("ctx-new", "1.0.35", List.of()))));
+        daemon.setStatusOnFetch(4, daemonWithProfiles(List.of(profile("ctx-new", "1.0.36",
+            List.of(OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1)))));
+
+        HubInstance created = lifecycle.create(createDto("bilibili-new-upgrade"));
+
+        assertThat(created.getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(created.getContextId()).isEqualTo("ctx-new");
+        assertThat(daemon.fetchCount()).isGreaterThanOrEqualTo(4);
+    }
+
+    /** Persistent capability absence fails at the deadline with diagnostics and full cleanup. */
+    @Test
+    void shouldFailAtDeadlineWithCapabilityDiagnosticsWhenProfileNeverUpgrades() {
+        String id = seedPersistedInstance("bilibili-stuck", "ctx-stuck");
+        daemon.setStatusOnFetch(1,
+            daemonWithProfiles(List.of(profile("ctx-stuck", "1.0.35", List.of()))));
+
+        assertThatThrownBy(() -> lifecycle.start(id))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .hasMessageContaining("ctx-stuck")
+            .hasMessageContaining("1.0.35")
+            .hasMessageContaining(OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1)
+            .hasMessageContaining("within 500 ms")
+            .hasMessageContaining("capabilities=[]")
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.OPENCLI_CAPABILITY_MISSING));
+
+        assertThat(daemon.fetchCount())
+            .as("the wait must keep polling past the first snapshot")
+            .isGreaterThanOrEqualTo(3);
+        assertThat(registry.get(id)).isNull();
+        assertThat(instanceService.get(id).getState()).isEqualTo(HubInstanceState.ERROR);
+        assertThat(launcher.handlesOf(HubInstanceRuntime.HubInstanceProcessKind.CHROME))
+            .isNotEmpty()
+            .extracting(FakeInstanceProcessLauncher.FakeHandle::isAlive)
+            .containsOnly(false);
+    }
+
+    /** Capability readiness must not defer or mask ambiguous context discovery. */
+    @Test
+    void shouldStillFailFastOnAmbiguousNewContextsWhileWaitingForCapability() {
+        daemon.setStatusOnFetch(1, daemonWithProfiles(List.of()));
+        daemon.setStatusOnFetch(2, daemonWithProfiles(List.of(
+            profile("ctx-ambig-a", "1.0.35", List.of()),
+            profile("ctx-ambig-b", "1.0.35", List.of()))));
+
+        assertThatThrownBy(() -> lifecycle.create(createDto("bilibili-ambig-wait")))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.CONTEXT_ID_AMBIGUOUS));
+        assertThat(daemon.fetchCount())
+            .as("ambiguity aborts on the ambiguous poll, not at the capability deadline")
+            .isLessThanOrEqualTo(3);
+    }
+
+    /** Process death during capability polling still aborts startup immediately. */
+    @Test
+    void shouldAbortCapabilityWaitWhenAProcessDies() {
+        String id = seedPersistedInstance("bilibili-die", "ctx-die");
+        daemon.setStatusOnFetch(1,
+            daemonWithProfiles(List.of(profile("ctx-die", "1.0.35", List.of()))));
+        daemon.observeFetches(count -> {
+            if (count == 3) {
+                launcher.killAll();
+            }
+        });
+
+        assertThatThrownBy(() -> lifecycle.start(id))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.INSTANCE_START_FAILED));
+        assertThat(registry.get(id)).isNull();
+        assertThat(instanceService.get(id).getState()).isEqualTo(HubInstanceState.ERROR);
+    }
+
+    /** Startup readiness does not weaken the capability gate on the reclaim command. */
+    @Test
+    void shouldStillRejectReclaimWhenProfileLacksCapability() {
+        daemon.addConnectedContextAfterFetch("ctx-reclaim-nocap", 2);
+        HubInstance instance = lifecycle.create(createDto("bilibili-reclaim-nocap"));
+        enableWarmTabTtl(instance.getId(), 0);
+        daemon.setProfiles(List.of(profile("ctx-reclaim-nocap", "1.0.35", List.of())));
+
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId())).isFalse();
+        assertThat(daemon.reclaimContextIds()).isEmpty();
+    }
+
+    /** A capable competing profile cannot bypass the connected expected profile's upgrade. */
+    @Test
+    void shouldKeepExpectedProfilePrecedenceDuringCapabilityUpgrade() {
+        String id = seedPersistedInstance("bilibili-upgrade-priority", "ctx-expected-upgrade");
+        OpenCliProfileSnapshot oldExpected =
+            profile("ctx-expected-upgrade", "1.0.35", List.of());
+        OpenCliProfileSnapshot other = profile("ctx-other-capable", "1.0.36",
+            List.of(OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1));
+        daemon.setStatusOnFetch(1, daemonWithProfiles(List.of(oldExpected)));
+        daemon.setStatusOnFetch(2, daemonWithProfiles(List.of(oldExpected, other)));
+        daemon.setStatusOnFetch(3, daemonWithProfiles(List.of(
+            profile("ctx-expected-upgrade", "1.0.36",
+                List.of(OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1)), other)));
+
+        HubInstance started = lifecycle.start(id);
+
+        assertThat(started.getContextId()).isEqualTo("ctx-expected-upgrade");
+        assertThat(started.getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(daemon.fetchCount()).isGreaterThanOrEqualTo(3);
+    }
+
+    /** Even a newer extension version cannot substitute for an advertised capability. */
+    @Test
+    void shouldRejectNewerExtensionVersionWithoutCapability() {
+        String id = seedPersistedInstance("bilibili-new-version-nocap", "ctx-new-version-nocap");
+        daemon.setStatusOnFetch(1, daemonWithProfiles(List.of(
+            profile("ctx-new-version-nocap", "9.9.9", List.of("unrelated-v1")))));
+
+        assertThatThrownBy(() -> lifecycle.start(id))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .hasMessageContaining("extensionVersion=9.9.9")
+            .hasMessageContaining("capabilities=[unrelated-v1]")
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.OPENCLI_CAPABILITY_MISSING));
+        assertThat(registry.get(id)).isNull();
+    }
+
+    /** An incomplete handshake reports unknown version rather than failing in diagnostics. */
+    @Test
+    void shouldReportUnknownExtensionVersionWhenHandshakeOmitsIt() {
+        String id = seedPersistedInstance("bilibili-unknown-version", "ctx-unknown-version");
+        daemon.setStatusOnFetch(1, daemonWithProfiles(List.of(
+            profile("ctx-unknown-version", null, null))));
+
+        assertThatThrownBy(() -> lifecycle.start(id))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .hasMessageContaining("ctx-unknown-version")
+            .hasMessageContaining("extensionVersion=unknown")
+            .hasMessageContaining("capabilities=[]")
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.OPENCLI_CAPABILITY_MISSING));
+        assertThat(registry.get(id)).isNull();
+    }
+
+    // ---------------------------------------------------------------------------------
     //  HELPERS
     // ---------------------------------------------------------------------------------
 
@@ -1863,6 +2051,24 @@ class HubInstanceLifecycleServiceTest {
         profile.setExtensionVersion("v1.0.22");
         profile.setCapabilities(List.of(OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1));
         return profile;
+    }
+
+    /** Builds a status whose daemon advertises the reclaim capability but with custom profiles. */
+    private static OpenCliDaemonStatus daemonWithProfiles(List<OpenCliProfileSnapshot> profiles) {
+        OpenCliDaemonStatus status = FakeOpenCliDaemonClient.empty();
+        status.setPid(1L);
+        status.setProfiles(profiles);
+        return status;
+    }
+
+    private static OpenCliProfileSnapshot profile(
+        String contextId, String extensionVersion, List<String> capabilities) {
+        OpenCliProfileSnapshot snapshot = new OpenCliProfileSnapshot();
+        snapshot.setContextId(contextId);
+        snapshot.setExtensionConnected(true);
+        snapshot.setExtensionVersion(extensionVersion);
+        snapshot.setCapabilities(capabilities);
+        return snapshot;
     }
 
     private String seedPersistedInstance(String code, String contextId) {

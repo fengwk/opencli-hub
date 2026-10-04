@@ -426,7 +426,7 @@ Dispatcher 使用单调时钟记录空闲起点，接收任务及真实任务结
 {"id":"<uuid>","action":"reclaim-adapter-tabs","contextId":"<live-context>","surface":"adapter","deadlineAt":1234567890000,"timeout":5}
 ```
 
-`deadlineAt` 为调用时刻加 5 秒，Hub HTTP 超时为 7 秒。成功响应为 `{id,ok:true,data:{closedTabs,resetTabs}}`。daemon 和目标 profile 的 `/status` capabilities 都必须包含 `adapter-tab-reclaim-v1`（profile capability 来自扩展 hello）；缺失时拒绝启动并提示成对升级，无旧策略 fallback。daemon/扩展额外保护在途浏览器命令和写租约，并在破坏性操作前校验截止时间，避免超时清理迟到关闭新任务页面。
+`deadlineAt` 为调用时刻加 5 秒，Hub HTTP 超时为 7 秒。成功响应为 `{id,ok:true,data:{closedTabs,resetTabs}}`。daemon 和目标 profile 的 `/status` capabilities 都必须包含 `adapter-tab-reclaim-v1`（profile capability 来自扩展 hello）。daemon 缺能力时立即拒绝启动；profile 可能先加载旧扩展再异步升级，Hub 在现有浏览器启动超时内等待能力握手，未就绪前不绑定 Runtime 或发布 RUNNING。超时仍缺能力时明确拒绝并报告最后观察到的 context、实际扩展版本与 capabilities；版本只用于诊断，不替代能力判断，无旧策略 fallback。daemon/扩展额外保护在途浏览器命令和写租约，并在破坏性操作前校验截止时间，避免超时清理迟到关闭新任务页面。
 
 ### 8.2 HubExecution
 

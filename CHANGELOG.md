@@ -23,6 +23,7 @@
 
 ### 修复
 
+- 修复旧 Profile 的 Browser Bridge 先连接、再由 Chrome managed policy 异步更新时，Hub 过早拒绝能力握手并关闭 Chrome 的问题；复用现有启动超时等待 `adapter-tab-reclaim-v1`，超时仍拒绝并报告实际扩展版本与 capabilities，不放宽回收门禁。
 - 修复并发提交时多个请求读取相同陈旧路由负载、导致任务在繁忙 Instance 排队而其他可用 Instance 空闲的问题；自动路由按每个 Instance 的 `acceptedNotTerminalCount` 原始总量选择最低负载，不再按 `maxConcurrency` 归一化。
 - OpenCLI stdout/stderr 默认捕获上限从 65,535 提升到 1,048,576 字符，并支持 `OPENCLI_HUB_MAX_CAPTURE_CHARS` 覆盖，减少长 JSON 结果因截断而被判定为无效输出。
 - Runtime 镜像安装 `ffmpeg`，提供 `ffprobe`，供 `jimeng-agent` 等插件做音视频时长预检。

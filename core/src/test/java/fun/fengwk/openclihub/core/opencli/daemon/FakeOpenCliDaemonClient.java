@@ -2,11 +2,14 @@ package fun.fengwk.openclihub.core.opencli.daemon;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntConsumer;
 
 /**
  * Test double for {@link OpenCliDaemonClient}. Behaviour can be flipped per phase using the
@@ -41,6 +44,10 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
     /** When set, the daemon exposes the named context on the SECOND fetch and clears it after. */
     private String firstWinsContextId;
     private boolean firstWinsFired = false;
+    /** Per-fetch snapshot overrides keyed by 1-based fetch index. */
+    private final Map<Integer, OpenCliDaemonStatus> statusOverrides = new ConcurrentHashMap<>();
+    /** Optional observer invoked after the fetch counter increments (1-based index). */
+    private volatile IntConsumer fetchObserver;
 
     public FakeOpenCliDaemonClient() {
     }
@@ -77,6 +84,16 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
     @Override
     public OpenCliDaemonStatus fetchStatus() {
         int count = fetchCount.incrementAndGet();
+        IntConsumer observer = fetchObserver;
+        if (observer != null) {
+            observer.accept(count);
+        }
+        // Per-fetch override lets a test model a profile whose extension upgrades (or
+        // temporarily disconnects) across successive polls.
+        OpenCliDaemonStatus override = statusOverrides.get(count);
+        if (override != null) {
+            nextStatus.set(override);
+        }
         // Apply any deferred additions whose threshold has been reached.
         for (DeferredAdd add : new ArrayList<>(deferredAdds)) {
             if (count >= add.activateOnFetch) {
@@ -105,6 +122,20 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
     public void setFirstWinsStrategy(String contextId) {
         this.firstWinsContextId = contextId;
         this.firstWinsFired = false;
+    }
+
+    /**
+     * Overrides the snapshot returned by the n-th {@link #fetchStatus} call (1-based). Lets a
+     * test model a profile whose extension upgrades, drops a capability or temporarily
+     * disconnects across successive polls without any timing dependence.
+     */
+    public void setStatusOnFetch(int fetchIndex, OpenCliDaemonStatus status) {
+        statusOverrides.put(fetchIndex, status == null ? empty() : status);
+    }
+
+    /** Observes every {@link #fetchStatus} call with its 1-based fetch index. */
+    public void observeFetches(IntConsumer observer) {
+        this.fetchObserver = observer;
     }
 
     @Override

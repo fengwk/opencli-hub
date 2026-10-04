@@ -423,6 +423,7 @@ curl --fail --show-error --request PUT "$HUB_URL/api/settings" \
 | Instance 启动失败 | `lastErrorMessage`、Chrome/Xvfb/openbox/x11vnc 日志、`2gb` shm、seccomp、Chrome/OpenCLI binaries。 |
 | VNC 不可用 | `GET /api/instances/{id}/vnc/status`；Gateway 是否允许 WebSocket Upgrade，而不是开放 VNC TCP。 |
 | extension/contextId 超时 | CRX loopback server、managed policy、Chrome 日志和 Profile；不要添加 `--load-extension`、`--disable-extensions-except` 或 `--no-sandbox`。 |
+| profile 缺少 `adapter-tab-reclaim-v1` | 镜像内扩展版本不等于旧 Profile 已加载的版本；Hub 在现有启动超时内等待扩展更新握手，超时后查看实际 `extensionVersion`、CRX 更新服务与 policy。不要删除 Profile 或绕过能力检查。 |
 | CUSTOM proxy 无法连通 | 从容器网络检查代理地址；`127.0.0.1` 指向容器自身，认证代理不受支持。 |
 | MySQL 迁移失败 | 停止 Hub 并恢复迁移前备份；不要以反向 DDL 回滚隐式提交。 |
 

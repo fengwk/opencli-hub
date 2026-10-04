@@ -279,6 +279,34 @@ scripts/docker/validate-opencli-artifact-lock.sh
 scripts/docker/test-install-opencli.sh
 ```
 
+#### 6.2.1 旧 Profile 的扩展更新与能力就绪
+
+镜像内 `/opt/opencli/extension/manifest.json` 的版本表示构建资产版本，不保证已有
+Profile 正在运行该版本。Chrome 可以先启动 Profile 内的旧 Browser Bridge，再通过
+managed policy 和 loopback CRX 服务异步更新。Hub 使用现有
+`opencli.hub.browser.startup-timeout-millis`（默认 `60000` ms）等待目标 profile 广告
+`adapter-tab-reclaim-v1`；期间保持 Chrome 存活、Instance 处于 STARTING，不接收任务。
+只有能力握手就绪才进入 RUNNING；永久不支持仍在超时后明确拒绝，并显示最后观察到的扩展版本和能力列表。
+
+出现能力错误时，先只读对照镜像资产与 daemon 握手（替换容器名）：
+
+```bash
+docker exec <hub-container> sh -c '
+  opencli --version
+  jq "{sourceRevision,cliVersion:.cli.version,extensionVersion:.extension.version}" \
+    /opt/opencli/artifact-build-info.json
+  jq "{extensionId,extensionVersion,crxSha256}" /opt/opencli/crx/build-info.json
+  curl --fail --silent --show-error -H "X-OpenCLI: 1" http://127.0.0.1:19825/status \
+    | jq "{daemonVersion,capabilities,profiles:[.profiles[]? |
+        {contextId,extensionVersion,capabilities}]}"
+'
+```
+
+最后一项的 `profiles[].extensionVersion` 来自实际加载扩展的 hello，与镜像资产版本
+应分开判断。启动失败的 Chrome 已退出时 `profiles` 可能为空，不能据此认定升级完成；
+结合实例 Chrome 日志、CRX 服务和 managed policy 继续排查。保留原 signing key、Profile、
+Cookie 与登录数据；不要删除 Profile、手改 capability 或关闭安全门禁，不要反复重启共享 daemon。
+
 ### 6.3 数据库升级与迁移
 
 #### 6.3.1 三库标准升级顺序

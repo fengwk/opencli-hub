@@ -87,24 +87,37 @@ class HubInstanceDaemonContextService {
 
     /**
      * Waits (bounded by the browser startup timeout) until the instance's expected contextId
-     * is connected or exactly one new contextId appears. Conflicts with already-bound ids and
-     * multiple new ids abort with {@code CONTEXT_ID_CONFLICT} / {@code CONTEXT_ID_AMBIGUOUS};
-     * a timeout maps to {@code EXTENSION_CONNECT_TIMEOUT}. The chosen context is recorded on
-     * the runtime; the process tree is checked for liveness on every poll.
+     * is connected with the reclaim capability or exactly one new capability-ready contextId
+     * appears. Conflicts with already-bound ids and multiple new ids abort with
+     * {@code CONTEXT_ID_CONFLICT} / {@code CONTEXT_ID_AMBIGUOUS}.
+     *
+     * <p>Force-installed extensions may upgrade after their first connection. Keep polling
+     * until the capability appears; at timeout, report the last unsupported profile instead
+     * of a generic connection timeout. The expected context retains precedence, and process
+     * liveness is checked on every poll.
      */
     void waitForExpectedOrUniqueContext(
         String instanceId, HubInstance instance, Set<String> before, HubInstanceRuntime runtime) {
         long startup = properties.getBrowser().getStartupTimeoutMillis();
         long deadline = System.currentTimeMillis() + startup;
         String expected = instance.getContextId();
+        // Preserve the last unsupported handshake for timeout diagnostics across disconnects.
+        OpenCliDaemonStatus unsupportedStatus = null;
+        String unsupportedContextId = null;
         while (System.currentTimeMillis() < deadline) {
             runtimeStarter.ensureProcessesAlive(runtime);
             OpenCliDaemonStatus status = fetchStatusOrFail();
             Set<String> now = status == null ? Set.of() : new HashSet<>(status.connectedContextIds());
+            // Another capable profile must not replace a connected expected profile.
             if (expected != null && now.contains(expected)) {
-                runtime.setContextId(expected);
-                requireProfileReclaimCapability(status, expected);
-                return;
+                if (profileHasReclaimCapability(status, expected)) {
+                    runtime.setContextId(expected);
+                    return;
+                }
+                unsupportedStatus = status;
+                unsupportedContextId = expected;
+                sleepQuietly(properties.getRuntime().getReadinessPollMillis());
+                continue;
             }
             Set<String> newIds = new HashSet<>(now);
             newIds.removeAll(before);
@@ -116,20 +129,26 @@ class HubInstanceDaemonContextService {
             }
             if (newIds.size() == 1) {
                 String chosen = newIds.iterator().next();
-                runtime.setContextId(chosen);
-                if (expected != null && !expected.equals(chosen)) {
-                    log.warn("instance {} expected contextId={} but got a unique new id={}; "
-                        + "auto-rebinding", instanceId, expected, chosen);
+                if (profileHasReclaimCapability(status, chosen)) {
+                    runtime.setContextId(chosen);
+                    if (expected != null && !expected.equals(chosen)) {
+                        log.warn("instance {} expected contextId={} but got a unique new id={}; "
+                            + "auto-rebinding", instanceId, expected, chosen);
+                    }
+                    return;
                 }
-                requireProfileReclaimCapability(status, chosen);
-                return;
-            }
-            if (newIds.size() > 1) {
+                unsupportedStatus = status;
+                unsupportedContextId = chosen;
+            } else if (newIds.size() > 1) {
                 throw HubErrorCodes.CONTEXT_ID_AMBIGUOUS.asThrowable(
                     "multiple new contextIds appeared after instance " + instanceId
                         + ": " + newIds);
             }
             sleepQuietly(properties.getRuntime().getReadinessPollMillis());
+        }
+        if (unsupportedStatus != null && unsupportedContextId != null) {
+            throw capabilityMissingAtDeadline(
+                unsupportedStatus, unsupportedContextId, startup, instanceId);
         }
         if (expected != null) {
             throw HubErrorCodes.EXTENSION_CONNECT_TIMEOUT.asThrowable(
@@ -225,14 +244,36 @@ class HubInstanceDaemonContextService {
 
     private static void requireProfileReclaimCapability(
         OpenCliDaemonStatus status, String contextId) {
-        OpenCliProfileSnapshot profile = findProfile(status, contextId);
-        if (profile == null || !hasCapability(
-            profile.getCapabilities(), OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1)) {
+        if (!profileHasReclaimCapability(status, contextId)) {
             throw HubErrorCodes.OPENCLI_CAPABILITY_MISSING.asThrowable(
                 "Browser Bridge profile " + contextId + " does not support "
                     + OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1
                     + "; upgrade the OpenCLI CLI and Browser Bridge extension");
         }
+    }
+
+    /** Reports the last observed handshake; version is diagnostic, not a capability check. */
+    private static RuntimeException capabilityMissingAtDeadline(
+        OpenCliDaemonStatus status, String contextId, long startupMillis, String instanceId) {
+        OpenCliProfileSnapshot profile = findProfile(status, contextId);
+        String version = profile == null || profile.getExtensionVersion() == null
+            || profile.getExtensionVersion().isBlank() ? "unknown" : profile.getExtensionVersion();
+        List<String> capabilities = profile == null || profile.getCapabilities() == null
+            ? List.of() : profile.getCapabilities();
+        return HubErrorCodes.OPENCLI_CAPABILITY_MISSING.asThrowable(
+            "Browser Bridge profile " + contextId + " did not advertise "
+                + OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1 + " within "
+                + startupMillis + " ms (instance=" + instanceId + ", extensionVersion=" + version
+                + ", capabilities=" + capabilities + "); upgrade the OpenCLI CLI and "
+                + "Browser Bridge extension");
+    }
+
+    private static boolean profileHasReclaimCapability(
+        OpenCliDaemonStatus status, String contextId) {
+        OpenCliProfileSnapshot profile = findProfile(status, contextId);
+        return profile != null
+            && hasCapability(profile.getCapabilities(),
+                OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1);
     }
 
     private static OpenCliProfileSnapshot findProfile(OpenCliDaemonStatus status, String contextId) {
