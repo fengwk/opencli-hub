@@ -15,6 +15,13 @@ package fun.fengwk.openclihub.core.opencli.daemon;
 public interface OpenCliDaemonClient {
 
     /**
+     * Capability the daemon and the selected Browser Bridge extension profile must both
+     * advertise before the Hub will auto-reclaim idle adapter tabs. Capability support is
+     * never inferred from a version string.
+     */
+    String CAPABILITY_ADAPTER_TAB_RECLAIM_V1 = "adapter-tab-reclaim-v1";
+
+    /**
      * Fetches and parses the current authenticated daemon snapshot.
      *
      * @throws OpenCliDaemonException when the daemon is unreachable or returns an invalid response
@@ -44,6 +51,20 @@ public interface OpenCliDaemonClient {
      * @throws OpenCliDaemonException when the daemon is unreachable or returns an invalid response
      */
     OpenCliDaemonCommandResponse bindActiveTab(String contextId, String session);
+
+    /**
+     * Asks the selected browser profile to reclaim its idle adapter tabs.
+     *
+     * <p>Issues {@code POST /command} with {@code action=reclaim-adapter-tabs},
+     * {@code surface=adapter} and no session. The daemon reports command-level failures in a
+     * successful HTTP response, so the caller must inspect {@link OpenCliDaemonCommandResponse#getOk()}
+     * and must not treat {@code ok=false} as success.
+     *
+     * @param contextId the live daemon profile context to route to
+     * @return the daemon command result; command-level failures are represented by {@code ok=false}
+     * @throws OpenCliDaemonException when the daemon is unreachable or returns an invalid response
+     */
+    OpenCliDaemonCommandResponse reclaimAdapterTabs(String contextId);
 
     /**
      * Ensures the daemon is ready. Behaviour:

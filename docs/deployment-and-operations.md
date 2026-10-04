@@ -9,6 +9,7 @@
 3. 为 Hub 分配至少 `2gb` shared memory，并验证宿主 seccomp 策略允许 `seccomp=unconfined`。Compose 文件已经声明这两个条件，不要删除。
 4. Gateway/反向代理必须提供 TLS、认证、授权、限流，并允许 `/api/instances/{id}/vnc` WebSocket Upgrade 和二进制帧透传。
 5. 为 `/data/opencli-hub`、`/var/lib/opencli` 及数据库（PostgreSQL/MySQL）备份准备受限、加密的存储位置；SQLite 备份即 data volume 快照。
+6. 实例级空闲回收要求 daemon 与每个 Browser Bridge profile 都广告 `adapter-tab-reclaim-v1`。默认 artifact lock 已成对钉住正式发布并核验的 CLI `1.8.8-fengwk.5` / extension `1.0.36`（包含 undici 高危漏洞修复），升级时必须复用原 CRX signing key；缺少能力的旧版本会明确拒绝实例启动，不降级到旧策略。
 
 Hub 容器和 Chrome 以 UID/GID `1000:1000` 运行。若改用 bind mount，宿主目录必须允许该用户读写。
 
@@ -225,9 +226,9 @@ workflow 共用该文件，因此官方 baseline 与已发布 fork Release 的�
 
 ```text
 package=@jackwener/opencli
-CLI version=1.8.8-fengwk.2
-extension version=1.0.35
-source revision=fengwk/OpenCLI@65db12b76bff83863c55560d6ea67c592390798e
+CLI version=1.8.8-fengwk.5
+extension version=1.0.36
+source revision=fengwk/OpenCLI@4f7553d29a6801e05b8c73d1551faa092a36242a
 ```
 
 升级或切换 fork 时：
@@ -240,18 +241,18 @@ source revision=fengwk/OpenCLI@65db12b76bff83863c55560d6ea67c592390798e
 4. 构建后确认镜像内 `/opt/opencli/artifact-build-info.json` 反映解析结果；smoke 会比较
    `opencli --version` 与该文件中的 `cli.version`。
 
-当前 fork Release（tag `fork-v1.8.8-fengwk.3`，CLI `1.8.8-fengwk.3` + extension `1.0.35`）：
+当前 fork Release（tag `fork-v1.8.8-fengwk.5`，CLI `1.8.8-fengwk.5` + extension `1.0.36`）：
 
 ```bash
 # scripts/docker/opencli-artifact.lock.env
 OPENCLI_PACKAGE=@jackwener/opencli
-OPENCLI_VERSION=1.8.8-fengwk.3
-OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.3/jackwener-opencli-1.8.8-fengwk.3.tgz
-OPENCLI_CLI_SHA256=7aa3043d63daba987af4e3bd9ba13dc3cfd91e1243c9d1bf9ba8271b2cd11d3e
-OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@71e193b41d0f09b1602b25fb8d4a282e65e359b5
-EXTENSION_VERSION=1.0.35
-OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.3/opencli-extension-v1.0.35.zip
-OPENCLI_EXTENSION_SHA256=91be3a318e32901d294286b477a481fdd65bf404731e89e60f7770887ebdbf2b
+OPENCLI_VERSION=1.8.8-fengwk.5
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.5/jackwener-opencli-1.8.8-fengwk.5.tgz
+OPENCLI_CLI_SHA256=8e6373bb4de1089b48a4e8767b351007256d8523664664a885e44ad8f11aaa8f
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@4f7553d29a6801e05b8c73d1551faa092a36242a
+EXTENSION_VERSION=1.0.36
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.5/opencli-extension-v1.0.36.zip
+OPENCLI_EXTENSION_SHA256=40de83bdf9ea5582733dff6671e5cd19b8b493137bf8953d68563c9ed85a4fba
 ```
 
 镜像升级不会更新已有的插件卷。升级完成、确认 CLI/extension 版本后，通过
@@ -313,13 +314,15 @@ scripts/docker/test-install-opencli.sh
     - 错峰等待消耗执行 deadline，若无法在 deadline 前启动则以 `QUEUE_WAIT_TIMEOUT` 终止且不调用 OpenCLI；
     - `EXCLUSIVE` 独占任务及不同 site 任务完全旁路错峰；
     - 可通过环境变量 `OPENCLI_HUB_PARALLEL_START_STAGGER_MIN_MILLIS` 与 `OPENCLI_HUB_PARALLEL_START_STAGGER_MAX_MILLIS` 配置；两者均设为 `0` 时禁用错峰。
-- **闲置标签页保留超时（warmTabTtlSeconds）**：
+- **实例连续空闲回收超时（warmTabTtlSeconds）**：
   - 合法范围 `[-1, 2147483647]`，默认值 `1800`（秒，即 30 分钟）；
-  - `-1` 表示永不自动回收闲置 warm tab（仅在 context 停止或生命周期终结时清理）；
-  - `0` 表示临时 adapter lease 释放后立即回收 warm tab；
-  - 正数表示 warm tab 闲置指定秒数后自动回收；
-  - 持久标签（`siteSession=PERSISTENT`）与显式 keep-tab lease 生命周期由自身机制独立保障，不受闲置 TTL 影响；
-  - `--warm-tab-ttl` 属于 Hub 受管保留参数，仅由 Hub 为浏览器命令追加在规范化的站点命令参数之后，调用方禁止在请求中直接传入或覆盖。
+  - `-1` 不自动回收；`0` 在实例空闲后的下一次巡检回收；正数要求无执行中或待处理任务，连续空闲达到指定秒数；
+  - 每次接收任务以及真实执行结束都会重置计时，排队、取消后仍在退出的任务也不能被当作空闲；实例持续有工作时，个别空闲 tab 可以保留更久；
+  - 统一回收 OpenCLI 自有 adapter 页面，包括临时、常驻、keep-tab 与换 tab 遗留页面；用户手动打开、借用或移到用户窗口的页面不关闭；
+  - 保留 Chrome、Profile、Cookie/登录数据和一个空白占位。这里的任务结束是 Hub CLI 任务生命周期结束，不是即梦等站点服务器异步生成结束；
+  - 只有 Hub 决定自动回收时机；旧 `--warm-tab-ttl` 参数和逐 tab warm alarm 策略已移除，无配置切换或回退双轨。已有 `warmTabTtlSeconds` 字段与数据直接沿用新语义，无额外数据库迁移；
+  - 扩展启动时迁移旧 warm alarm 与可验证的自有租约，随后只使用自有 tab ID 登记。旧版本已经丢失租约且没有 warm alarm 的历史孤儿页无法安全辨认，升级时应在任务停止后人工清理；不能仅凭窗口位置推断所有权，否则会误关用户页；
+  - 每秒巡检、逐实例维护，失败下次重试。维护期间提交与生命周期操作互斥；HTTP 超时 7 秒，扩展操作截止时间 5 秒。缺少 `adapter-tab-reclaim-v1` 时需成对升级 CLI/extension，不应反复重启 daemon。
 - **Canary 灰度与运维建议**：
   - 在多 Instance 生产环境中，建议采用 Canary 灰度策略：先选取 1 个非核心 Instance 将 `maxConcurrency` 从 `1` 调至 `2`，观察 Chrome 稳定性、内存占用与业务返回质量，确认稳定后再逐步推广。
 - **Chrome / shm / 渲染进程稳定性边界**：

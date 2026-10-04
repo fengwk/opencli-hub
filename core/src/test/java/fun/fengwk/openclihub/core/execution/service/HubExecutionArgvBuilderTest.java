@@ -71,12 +71,12 @@ class HubExecutionArgvBuilderTest {
     }
 
     /**
-     * When command is a browser command (browser=true), builder must inject --warm-tab-ttl
-     * on the leaf browser command after the normalized argv (site, name, business args)
-     * and before managed output / format.
+     * The former per-tab warm TTL flag is no longer injected for browser commands: the
+     * instance-level continuous-idle reclaim is now handled by the dispatcher, not through
+     * the OpenCLI argv.
      */
     @Test
-    void shouldInjectWarmTabTtlForBrowserCommand() {
+    void shouldNotInjectWarmTabTtlForBrowserCommand() {
         HubInstance instance = newInstance("ctx-b");
         instance.setWarmTabTtlSeconds(300);
         NormalizedOpenCliArgv normalized = normalizedBrowser(List.of("chatgpt", "ask", "hello"));
@@ -86,8 +86,8 @@ class HubExecutionArgvBuilderTest {
         assertThat(argv).containsExactly(
             "--profile", "ctx-b",
             "chatgpt", "ask", "hello",
-            "--warm-tab-ttl", "300",
             "--format", "json");
+        assertThat(argv).doesNotContain("--warm-tab-ttl");
     }
 
     /**

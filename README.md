@@ -37,6 +37,7 @@
 - Hub 共享一个 OpenCLI daemon，并按受控 Command Catalog 校验参数和重建 argv；不接受任意 shell/CLI 透传。
 - 单个 Instance 支持配置并发度（`maxConcurrency` 1..4，默认 1）与排队容量（`maxPending` 0..50，默认 5，0 表示不排队）；浏览器命令缺失/空白 `siteSession` 时按 `EPHEMERAL` 处理，可解析为 `EPHEMERAL` 的命令受 `maxConcurrency` 限制并行（业务级冲突由调用者负责），可解析为 `PERSISTENT` 的命令独占串行，非浏览器命令或未知 session 元数据保持独占；支持显式 `instanceId` 粘性路由；不自动 failover，也不自动重试写命令。
 - 提供 Instance 生命周期、VNC WebSocket、执行历史、资源、日志、命令黑名单/输出规则和浏览器代理设置。
+- 使用唯一的实例连续空闲 TTL 回收策略：实例无执行中或待处理任务、连续空闲达到阈值（默认 1800 秒）后，统一清理 OpenCLI 自有 adapter 页面，包含常驻和换 tab 遗留；保留登录状态、一个空白占位以及用户/借用页面。`0` 在下次空闲巡检回收，`-1` 禁用，不再使用逐 tab warm-TTL。
 - 支持通过管理端配置 OpenCLI 插件源，并调用官方 `opencli plugin install/update/list` 同步；详见 [插件维护](docs/plugins.md)。
 - 支持三种编译期数据库变体：PostgreSQL 16（默认）、MySQL 8.4 LTS、SQLite。变体通过 Spring SQL initialization 幂等应用当前 schema（schema-only，system settings 由应用懒初始化）；既有旧库提供 PostgreSQL、MySQL、SQLite 对应的结构升级迁移脚本。
 - 后端 ID 是不透明字符串：新记录使用 UUID，旧正 BIGINT ID 保留为十进制字符串。集成方不得将 ID 转为 JavaScript `Number`。
@@ -67,13 +68,15 @@ VNC TCP 只监听容器 loopback；客户端只通过同源 WebSocket `/api/inst
 | Java | 17 |
 | 前端构建 | Node.js 20 + npm lockfile |
 | Google Chrome | `150.0.7871.114-1`，仅 `linux/amd64` |
-| OpenCLI | 见 `scripts/docker/opencli-artifact.lock.env`（当前 fork `1.8.8-fengwk.2`） |
-| Browser Bridge extension | 见同一 lock（当前 fork `1.0.35`） |
+| OpenCLI | 见 `scripts/docker/opencli-artifact.lock.env`（当前已发布 pin `1.8.8-fengwk.5`） |
+| Browser Bridge extension | 见同一 lock（当前 fork `1.0.36`） |
 | PostgreSQL（默认） | `16`，`compose.yml` |
 | MySQL | `8.4` LTS，`compose.mysql.yml`；迁移脚本兼容 5.7/8.4 |
 | SQLite | 内嵌（sqlite-jdbc），`compose.sqlite.yml` |
 
 Docker 部署要求 Docker Engine 支持 BuildKit 和 Compose `build.secrets`。Compose 固定 `shm_size: 2gb` 与 `seccomp=unconfined`；上线前必须验证宿主 Docker/seccomp 策略允许 Chrome sandbox 正常运行。
+
+**空闲回收的部署前置条件**：daemon 与目标 profile 都须支持 `adapter-tab-reclaim-v1`。默认 lock 已成对钉住正式发布并核验的 CLI `1.8.8-fengwk.5` / extension `1.0.36`（`fork-v1.8.8-fengwk.5`，同时修复 undici 高危漏洞）。升级镜像时必须保留原 CRX signing key；旧依赖会明确拒绝实例启动，不回退旧逐 tab 策略。
 
 ### OpenCLI artifact lock
 
@@ -93,19 +96,19 @@ scripts/docker/opencli-artifact.lock.env
 
 1. **成对升级**：CLI 与 extension 必须来自同一 OpenCLI Release，不要只改一侧。
 2. **校验和必填**：任何远程 CLI tarball / extension zip 都必须写入对应 SHA256；构建会先校验再安装。
-3. **默认 lock 只指向已发布资产**：当前钉住已验证的 `fork-v1.8.8-fengwk.2`；不要提交未发布的本地产物 URL。
+3. **默认 lock 只指向已发布资产**：当前钉住已验证的 `fork-v1.8.8-fengwk.5`；不要提交未发布的本地产物 URL。
 4. **后续升级 fork Release 时只改 lock**，当前值为：
 
 ```bash
 # scripts/docker/opencli-artifact.lock.env
 OPENCLI_PACKAGE=@jackwener/opencli
-OPENCLI_VERSION=1.8.8-fengwk.2
-OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.2/jackwener-opencli-1.8.8-fengwk.2.tgz
-OPENCLI_CLI_SHA256=0677e32e8a05759fd892cfd4f4c14f722179f75503fee5bbf938d46df9c96636
-OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@65db12b76bff83863c55560d6ea67c592390798e
-EXTENSION_VERSION=1.0.35
-OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.2/opencli-extension-v1.0.35.zip
-OPENCLI_EXTENSION_SHA256=fbb69c9bc1d0c0502bbf4769a16f3fb2d04b0af613f5c303b11a1ed80e0ae1f8
+OPENCLI_VERSION=1.8.8-fengwk.5
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.5/jackwener-opencli-1.8.8-fengwk.5.tgz
+OPENCLI_CLI_SHA256=8e6373bb4de1089b48a4e8767b351007256d8523664664a885e44ad8f11aaa8f
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@4f7553d29a6801e05b8c73d1551faa092a36242a
+EXTENSION_VERSION=1.0.36
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.5/opencli-extension-v1.0.36.zip
+OPENCLI_EXTENSION_SHA256=40de83bdf9ea5582733dff6671e5cd19b8b493137bf8953d68563c9ed85a4fba
 ```
 
 可选 build-arg 覆盖范围（仅当前构建生效，不改仓库默认 pin）：

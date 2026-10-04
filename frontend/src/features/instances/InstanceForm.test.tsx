@@ -26,6 +26,18 @@ function renderForm(props: Partial<React.ComponentProps<typeof InstanceForm>> = 
 }
 
 describe('InstanceForm', () => {
+  it('describes instance-wide idle reclamation without persistent-tab exemptions', () => {
+    // The help must match the single policy and make borrowed-tab protection explicit.
+    renderForm()
+    expect(screen.getByRole('spinbutton', { name: '闲置标签页保留时间（秒）' })).toHaveAttribute(
+      'title', '实例无执行中或待处理任务后的连续空闲时长，-1 为不自动回收，0 为下次空闲巡检回收，默认 1800 秒',
+    )
+    expect(screen.getByText(/包括常驻、keep-tab 和换 tab 遗留页面/)).toHaveTextContent(
+      '用户手动打开或借用的标签页不回收',
+    )
+    expect(screen.queryByText(/常驻.*不受此设置影响/)).not.toBeInTheDocument()
+  })
+
   it('populates defaults for maxConcurrency (1), maxPending (5), and warmTabTtlSeconds (1800) in creation mode', async () => {
     // Verifies creation defaults: maxConcurrency defaults to 1, maxPending defaults to 5, and warmTabTtlSeconds defaults to 1800.
     renderForm()

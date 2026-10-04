@@ -20,6 +20,7 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.BooleanSupplier;
+import java.util.function.LongSupplier;
 
 /**
  * Bounded execution queue and concurrency gate for one instance.
@@ -54,6 +55,27 @@ public class HubInstanceDispatcher {
     private final ReentrantLock submitLock = new ReentrantLock();
     /** Number of accepted FutureTasks that have not reached FutureTask.done() yet. */
     private int acceptedNotTerminalCount;
+    /**
+     * Number of accepted task bodies currently executing inside their callable. Guards
+     * against counting an idle period from {@code done()} when a still-running future was
+     * cancelled (its {@code done()} fires before the body actually stops).
+     */
+    private int inFlightBodyCount;
+    /**
+     * Whether the continuous-idle window is currently open. A separate flag is required
+     * because {@link System#nanoTime()} may legitimately return negative values, so the
+     * timestamp itself cannot carry an "unset" sentinel.
+     */
+    private boolean idleWindowOpen;
+    /**
+     * Monotonic time (per {@link #nanoClock}) at which the current continuous-idle window
+     * started. Only meaningful while {@link #idleWindowOpen} is {@code true}; initialised at
+     * construction so the idle window is measured from dispatcher (runtime) registration.
+     */
+    private long idleSinceNanos;
+    /** Whether a reclaim already succeeded during the current continuous idle period. */
+    private boolean idleReclaimed;
+    private final LongSupplier nanoClock;
     private volatile boolean shutdown;
 
     public HubInstanceDispatcher(String instanceCode, int maxPending) {
@@ -78,6 +100,15 @@ public class HubInstanceDispatcher {
 
     /** Package-private test wiring for deterministic executor acceptance control. */
     HubInstanceDispatcher(String instanceCode, int maxConcurrency, int maxPending, ThreadPoolExecutor executor) {
+        this(instanceCode, maxConcurrency, maxPending, executor, System::nanoTime);
+    }
+
+    /**
+     * Package-private test wiring for deterministic idle timing: {@code nanoClock} supplies
+     * the monotonic time used by the continuous-idle window so tests never sleep.
+     */
+    HubInstanceDispatcher(String instanceCode, int maxConcurrency, int maxPending,
+                          ThreadPoolExecutor executor, LongSupplier nanoClock) {
         if (maxConcurrency <= 0) {
             throw new IllegalArgumentException("maxConcurrency must be positive");
         }
@@ -90,6 +121,9 @@ public class HubInstanceDispatcher {
         this.maxConcurrency = maxConcurrency;
         this.maxPending = maxPending;
         this.executor = executor;
+        this.nanoClock = nanoClock == null ? System::nanoTime : nanoClock;
+        this.idleWindowOpen = true;
+        this.idleSinceNanos = this.nanoClock.getAsLong();
     }
 
     public int getMaxConcurrency() {
@@ -287,18 +321,32 @@ public class HubInstanceDispatcher {
             }
             TrackedFutureTask<T> future = new TrackedFutureTask<>(
                 executionId, onQueuedDiscard,
-                new DeadlineAwareCallable<>(task, deadlineNanos, null));
+                new IdleTrackingCallable<>(
+                    new DeadlineAwareCallable<>(task, deadlineNanos, null)));
             acceptedNotTerminalCount++;
+            // A new acceptance opens a fresh busy period: the idle window is closed and a
+            // reclaim that already succeeded becomes eligible again for the next idle period.
+            // The prior window is saved so a submission the executor refuses can restore it,
+            // otherwise a rejected task would leave the instance permanently un-reclaimable.
+            boolean priorIdleWindowOpen = idleWindowOpen;
+            long priorIdleSinceNanos = idleSinceNanos;
+            boolean priorIdleReclaimed = idleReclaimed;
+            idleWindowOpen = false;
+            idleReclaimed = false;
             try {
                 executor.execute(future);
                 future.markAccepted();
             } catch (RejectedExecutionException ex) {
                 rollbackAcceptedSubmission();
+                restoreIdleWindowLocked(
+                    priorIdleWindowOpen, priorIdleSinceNanos, priorIdleReclaimed);
                 throw HubErrorCodes.INSTANCE_QUEUE_FULL.asThrowable(
                     "Instance pending queue refused the submission: "
                         + (ex.getMessage() == null ? "queue full" : ex.getMessage()));
             } catch (RuntimeException | Error ex) {
                 rollbackAcceptedSubmission();
+                restoreIdleWindowLocked(
+                    priorIdleWindowOpen, priorIdleSinceNanos, priorIdleReclaimed);
                 throw ex;
             }
             return future;
@@ -347,6 +395,70 @@ public class HubInstanceDispatcher {
 
     public int pendingCount() {
         return executor.getQueue().size();
+    }
+
+    /**
+     * Returns how long this instance has been continuously idle in nanoseconds, or
+     * {@code -1} while it is busy or the idle start is not yet known. Idle is measured from
+     * dispatcher registration and is reset by every acceptance and true task completion.
+     */
+    public long idleDurationNanos() {
+        submitLock.lock();
+        try {
+            return idleWindowOpen ? nanoClock.getAsLong() - idleSinceNanos : -1L;
+        } finally {
+            submitLock.unlock();
+        }
+    }
+
+    /**
+     * Runs {@code reclaim} only when the instance has been continuously idle for at least
+     * {@code idleNanos} (use {@code 0} to reclaim on the next eligible check). The same
+     * {@link #submitLock} held from the final busy check through the callback prevents a
+     * submission from interleaving with the reclaim.
+     *
+     * <p>At most one reclaim succeeds per continuous idle period. A failing callback does not
+     * consume the opportunity, so the next sweep retries; a new acceptance also re-arms it.
+     *
+     * @return {@code true} when the reclaim ran and completed; {@code false} when the instance
+     *         is busy, not yet idle long enough, or already reclaimed in this period
+     * @throws RuntimeException propagated from {@code reclaim} (the caller records the failure
+     *         and retries on a later sweep without changing instance state)
+     */
+    public boolean reclaimWhenIdleLongEnough(long idleNanos, Callable<Void> reclaim) {
+        if (reclaim == null) {
+            throw new IllegalArgumentException("reclaim must not be null");
+        }
+        submitLock.lock();
+        try {
+            if (shutdown) {
+                return false;
+            }
+            if (acceptedNotTerminalCount != 0
+                || inFlightBodyCount != 0
+                || executor.getActiveCount() != 0
+                || !executor.getQueue().isEmpty()) {
+                return false;
+            }
+            if (idleReclaimed) {
+                return false;
+            }
+            if (!idleWindowOpen || nanoClock.getAsLong() - idleSinceNanos < idleNanos) {
+                return false;
+            }
+            try {
+                reclaim.call();
+            } catch (RuntimeException | Error ex) {
+                throw ex;
+            } catch (Exception ex) {
+                throw HubErrorCodes.OPENCLI_EXECUTION_FAILED.asThrowable(
+                    ex, "Idle adapter tab reclaim failed");
+            }
+            idleReclaimed = true;
+            return true;
+        } finally {
+            submitLock.unlock();
+        }
     }
 
     /**
@@ -500,6 +612,61 @@ public class HubInstanceDispatcher {
         }
     }
 
+    /**
+     * Caller must hold {@link #submitLock}. Opens (or preserves) the continuous idle window
+     * once no accepted task and no executing task body remain. Called from the terminal
+     * {@code done()} path and the body-finish path so a cancelled still-running future cannot
+     * open the idle window early.
+     */
+    private void markIdleIfQuiescentLocked() {
+        if (shutdown) {
+            return;
+        }
+        if (acceptedNotTerminalCount == 0 && inFlightBodyCount == 0 && !idleWindowOpen) {
+            idleWindowOpen = true;
+            idleSinceNanos = nanoClock.getAsLong();
+        }
+    }
+
+    /**
+     * Caller must hold {@link #submitLock}. Restores a previously observed idle window after a
+     * submission rolls back (executor refused the task). Without this a rejected submission
+     * would leave the instance stuck with a closed window and never reclaim again.
+     */
+    private void restoreIdleWindowLocked(
+        boolean priorIdleWindowOpen, long priorIdleSinceNanos, boolean priorIdleReclaimed) {
+        idleWindowOpen = priorIdleWindowOpen;
+        idleSinceNanos = priorIdleSinceNanos;
+        idleReclaimed = priorIdleReclaimed;
+    }
+
+    private void onTaskBodyStarted() {
+        submitLock.lock();
+        try {
+            inFlightBodyCount++;
+            // A future cancelled before its body actually starts fires done() first, which
+            // could open an idle window that the still-about-to-run body would then wrongly
+            // accrue time against. Close it (and re-arm the once-per-period flag) until the
+            // body truly finishes.
+            idleWindowOpen = false;
+            idleReclaimed = false;
+        } finally {
+            submitLock.unlock();
+        }
+    }
+
+    private void onTaskBodyFinished() {
+        submitLock.lock();
+        try {
+            if (inFlightBodyCount > 0) {
+                inFlightBodyCount--;
+            }
+            markIdleIfQuiescentLocked();
+        } finally {
+            submitLock.unlock();
+        }
+    }
+
     private final class TrackedFutureTask<T> extends FutureTask<T> {
 
         private final String executionId;
@@ -536,6 +703,9 @@ public class HubInstanceDispatcher {
         private void markAccepted() {
             accepted = true;
             decrementWhenTerminal();
+            // A task that completed before execute() returned still has to open the idle
+            // window here, otherwise an extremely short task would never reset the timer.
+            markIdleIfQuiescentLocked();
         }
 
         @Override
@@ -544,6 +714,7 @@ public class HubInstanceDispatcher {
             try {
                 terminal = true;
                 decrementWhenTerminal();
+                markIdleIfQuiescentLocked();
             } finally {
                 submitLock.unlock();
             }
@@ -644,6 +815,32 @@ public class HubInstanceDispatcher {
                     "Queue deadline expired before task body started");
             }
             return delegate.call();
+        }
+
+    }
+
+    /**
+     * Wraps a task body so the dispatcher observes the true start and finish of execution.
+     * This matters when a running future is cancelled: {@link FutureTask#done()} fires at
+     * cancel time while the body may still be stopping, so the continuous-idle window must
+     * only open when the body actually returns (or throws).
+     */
+    private final class IdleTrackingCallable<T> implements Callable<T> {
+
+        private final Callable<T> delegate;
+
+        IdleTrackingCallable(Callable<T> delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public T call() throws Exception {
+            onTaskBodyStarted();
+            try {
+                return delegate.call();
+            } finally {
+                onTaskBodyFinished();
+            }
         }
 
     }

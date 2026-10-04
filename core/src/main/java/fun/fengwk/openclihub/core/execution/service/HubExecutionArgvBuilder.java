@@ -19,7 +19,6 @@ import org.springframework.stereotype.Component;
  * <pre>
  *   --profile &lt;contextId&gt;
  *   &lt;normalized argv (site + name + args)&gt;
- *   [--warm-tab-ttl &lt;instance value&gt;] (when command is browser)
  *   &lt;managed output argument when an output rule applies&gt;
  *   --format json
  * </pre>
@@ -34,7 +33,6 @@ import org.springframework.stereotype.Component;
 public class HubExecutionArgvBuilder {
 
     private static final String PROFILE_ARG = "--profile";
-    private static final String WARM_TAB_TTL_ARG = "--warm-tab-ttl";
     private static final String FORMAT_ARG = "--format";
     private static final String FORMAT_VALUE = "json";
 
@@ -89,10 +87,6 @@ public class HubExecutionArgvBuilder {
         command.add(PROFILE_ARG);
         command.add(instance.getContextId());
         command.addAll(normalizedArgv);
-        if (normalized.getCommand() != null && normalized.getCommand().isBrowser()) {
-            command.add(WARM_TAB_TTL_ARG);
-            command.add(String.valueOf(instance.getWarmTabTtlSeconds()));
-        }
         if (outputRule != null) {
             appendManagedOutput(command, outputRule, managedOutputRealPath);
         }

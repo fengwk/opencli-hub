@@ -12,6 +12,7 @@ import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
 import fun.fengwk.openclihub.core.opencli.catalog.DefaultOpenCliCommandCatalog;
 import fun.fengwk.openclihub.core.opencli.catalog.FileOpenCliCatalogSource;
 import fun.fengwk.openclihub.core.opencli.daemon.FakeOpenCliDaemonClient;
+import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonClient;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonCommandResponse;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliProfileSnapshot;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
@@ -35,6 +36,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
@@ -246,9 +248,7 @@ class HubInstanceLifecycleServiceTest {
         ObservingInstanceService observingService = new ObservingInstanceService();
         useInstanceService(observingService, new HubDispatchRegistry());
         String id = seedPersistedInstance("bilibili-visible-start", "ctx-visible-start");
-        OpenCliProfileSnapshot profile = new OpenCliProfileSnapshot();
-        profile.setContextId("ctx-visible-start");
-        profile.setExtensionConnected(true);
+        OpenCliProfileSnapshot profile = connectedProfile("ctx-visible-start");
         daemon.setProfiles(List.of(profile));
         AtomicBoolean observed = new AtomicBoolean();
         observingService.beforeStateUpdate = (updatedId, state) -> {
@@ -609,9 +609,7 @@ class HubInstanceLifecycleServiceTest {
         // Seed DB row directly so we can start without going through create().
         String id = seedPersistedInstance("bilibili-existing", "ctx-existing");
         // Pre-snapshot the daemon with the expected id already present (fetch #1).
-        OpenCliProfileSnapshot ps = new OpenCliProfileSnapshot();
-        ps.setContextId("ctx-existing");
-        ps.setExtensionConnected(true);
+        OpenCliProfileSnapshot ps = connectedProfile("ctx-existing");
         daemon.setProfiles(List.of(ps));
 
         HubInstance started = lifecycle.start(id);
@@ -688,9 +686,7 @@ class HubInstanceLifecycleServiceTest {
         BlockingUpdateStateService blockingService = new BlockingUpdateStateService();
         useInstanceService(blockingService, new HubDispatchRegistry());
         String id = seedPersistedInstance("bilibili-serialized", "ctx-serialized");
-        OpenCliProfileSnapshot profile = new OpenCliProfileSnapshot();
-        profile.setContextId("ctx-serialized");
-        profile.setExtensionConnected(true);
+        OpenCliProfileSnapshot profile = connectedProfile("ctx-serialized");
         daemon.setProfiles(List.of(profile));
         ExecutorService executor = Executors.newFixedThreadPool(2);
         CountDownLatch updateInvocationStarted = new CountDownLatch(1);
@@ -1432,6 +1428,359 @@ class HubInstanceLifecycleServiceTest {
     }
 
     // ---------------------------------------------------------------------------------
+    //  IDLE ADAPTER TAB RECLAIM
+    // ---------------------------------------------------------------------------------
+
+    /** A runnable, reclaim-capable instance can be reclaimed exactly once per idle period. */
+    @Test
+    void shouldReclaimIdleAdapterTabsOnceAndRecordLiveContext() {
+        daemon.addConnectedContextAfterFetch("ctx-reclaim", 2);
+        HubInstance instance = lifecycle.create(createDto("bilibili-reclaim"));
+        enableWarmTabTtl(instance.getId(), 0);
+
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId())).isTrue();
+        assertThat(daemon.reclaimContextIds()).containsExactly("ctx-reclaim");
+
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId()))
+            .as("success is recorded once per idle period")
+            .isFalse();
+        assertThat(daemon.reclaimContextIds()).hasSize(1);
+    }
+
+    /** A failed reclaim is not recorded; the next sweep retries against the same context. */
+    @Test
+    void shouldRetryIdleAdapterTabReclaimAfterFailure() {
+        daemon.addConnectedContextAfterFetch("ctx-reclaim-retry", 2);
+        HubInstance instance = lifecycle.create(createDto("bilibili-reclaim-retry"));
+        enableWarmTabTtl(instance.getId(), 0);
+
+        daemon.setReclaimResponse(reclaimResponse(false));
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId())).isFalse();
+        assertThat(daemon.reclaimContextIds()).hasSize(1);
+
+        daemon.setReclaimResponse(reclaimResponse(true));
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId())).isTrue();
+        assertThat(daemon.reclaimContextIds()).hasSize(2);
+    }
+
+    /** TTL -1 disables reclaim, and a stopped instance or a missing runtime is skipped. */
+    @Test
+    void shouldSkipIdleTabReclaimWhenDisabledStoppedOrRuntimeMissing() {
+        daemon.addConnectedContextAfterFetch("ctx-reclaim-disabled", 2);
+        HubInstance instance = lifecycle.create(createDto("bilibili-reclaim-disabled"));
+        enableWarmTabTtl(instance.getId(), -1);
+
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId())).isFalse();
+        assertThat(daemon.reclaimContextIds()).isEmpty();
+
+        lifecycle.stop(instance.getId());
+        enableWarmTabTtl(instance.getId(), 0);
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId()))
+            .as("stopped instance is skipped")
+            .isFalse();
+
+        // A RUNNING row with no live runtime (e.g. before registration) is skipped too.
+        String orphanId = seedPersistedInstance("bilibili-reclaim-nort", "ctx-reclaim-nort");
+        instanceService.updateState(orphanId, HubInstanceState.RUNNING, null);
+        assertThat(lifecycle.reclaimIdleTabs(orphanId)).isFalse();
+        assertThat(daemon.reclaimContextIds()).isEmpty();
+    }
+
+    /** Active work blocks reclaim; once it drains the idle instance is reclaimed. */
+    @Test
+    void shouldNotReclaimWhileTaskActiveThenReclaimAfterCompletion() throws Exception {
+        daemon.addConnectedContextAfterFetch("ctx-reclaim-busy", 2);
+        HubInstance instance = lifecycle.create(createDto("bilibili-reclaim-busy"));
+        enableWarmTabTtl(instance.getId(), 0);
+
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Future<?> running = dispatchRegistry.submit(
+            instanceService.get(instance.getId()),
+            "exec-reclaim-busy",
+            () -> {
+                started.countDown();
+                release.await(5, TimeUnit.SECONDS);
+                return null;
+            },
+            System.nanoTime() + TimeUnit.SECONDS.toNanos(5),
+            null);
+        assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId()))
+            .as("active task blocks reclaim")
+            .isFalse();
+        assertThat(daemon.reclaimContextIds()).isEmpty();
+
+        release.countDown();
+        assertThat(running.get(2, TimeUnit.SECONDS)).isNull();
+        assertThat(awaitDispatcherIdle(instance.getId(), 2_000L)).isTrue();
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId())).isTrue();
+        assertThat(daemon.reclaimContextIds()).containsExactly("ctx-reclaim-busy");
+    }
+
+    /** After a restart the reclaim targets the freshly registered runtime context. */
+    @Test
+    void shouldReclaimAgainstNewRuntimeContextAfterRestart() {
+        String id = seedPersistedInstance("bilibili-reclaim-restart", "ctx-reclaim-restart");
+        daemon.addConnectedContextAfterFetch("ctx-reclaim-restart", 2);
+        lifecycle.start(id);
+        enableWarmTabTtl(id, 0);
+
+        lifecycle.restart(id);
+
+        assertThat(instanceService.get(id).getState()).isEqualTo(HubInstanceState.RUNNING);
+        assertThat(lifecycle.reclaimIdleTabs(id)).isTrue();
+        assertThat(daemon.reclaimContextIds()).containsExactly("ctx-reclaim-restart");
+    }
+
+    /**
+     * While a reclaim holds the dispatcher submit lock across the whole daemon round trip, a
+     * concurrent execution submission must neither be accepted nor start its CLI body.
+     */
+    @Test
+    void shouldBlockNewExecutionSubmitUntilReclaimRoundTripCompletes() throws Exception {
+        daemon.addConnectedContextAfterFetch("ctx-reclaim-compete", 2);
+        HubInstance instance = lifecycle.create(createDto("bilibili-reclaim-compete"));
+        enableWarmTabTtl(instance.getId(), 0);
+
+        CountDownLatch reclaimEntered = new CountDownLatch(1);
+        CountDownLatch reclaimRelease = new CountDownLatch(1);
+        daemon.blockNextReclaim(reclaimEntered, reclaimRelease);
+
+        AtomicReference<Boolean> reclaimResult = new AtomicReference<>();
+        Thread reclaimThread = new Thread(
+            () -> reclaimResult.set(lifecycle.reclaimIdleTabs(instance.getId())));
+        reclaimThread.setDaemon(true);
+        reclaimThread.start();
+        assertThat(reclaimEntered.await(2, TimeUnit.SECONDS)).isTrue();
+
+        CountDownLatch cliStarted = new CountDownLatch(1);
+        CountDownLatch submitReturned = new CountDownLatch(1);
+        Thread submitThread = new Thread(() -> {
+            dispatchRegistry.submit(
+                instanceService.get(instance.getId()),
+                "exec-reclaim-compete",
+                () -> {
+                    cliStarted.countDown();
+                    return null;
+                },
+                System.nanoTime() + TimeUnit.SECONDS.toNanos(5),
+                null);
+            submitReturned.countDown();
+        });
+        submitThread.setDaemon(true);
+        submitThread.start();
+
+        // The reclaim owns the submit lock, so the submission cannot be accepted and the task
+        // body must not run until the daemon call returns.
+        assertThat(submitReturned.await(200, TimeUnit.MILLISECONDS))
+            .as("submit must wait behind the reclaim submit lock")
+            .isFalse();
+        assertThat(cliStarted.getCount())
+            .as("task body must not start before reclaim returns")
+            .isEqualTo(1);
+
+        reclaimRelease.countDown();
+        reclaimThread.join(2_000L);
+        submitThread.join(2_000L);
+        assertThat(reclaimResult.get()).isTrue();
+        assertThat(submitReturned.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(cliStarted.await(2, TimeUnit.SECONDS)).isTrue();
+    }
+
+    /**
+     * A stop must not tear down processes or change the context while a reclaim holds the
+     * per-instance lifecycle lock across the daemon round trip.
+     */
+    @Test
+    void shouldBlockStopUntilReclaimRoundTripCompletes() throws Exception {
+        daemon.addConnectedContextAfterFetch("ctx-reclaim-stop", 2);
+        HubInstance instance = lifecycle.create(createDto("bilibili-reclaim-stop"));
+        enableWarmTabTtl(instance.getId(), 0);
+        HubInstanceRuntime runtimeBefore = registry.get(instance.getId());
+
+        CountDownLatch reclaimEntered = new CountDownLatch(1);
+        CountDownLatch reclaimRelease = new CountDownLatch(1);
+        daemon.blockNextReclaim(reclaimEntered, reclaimRelease);
+        AtomicReference<Boolean> reclaimResult = new AtomicReference<>();
+        Thread reclaimThread = new Thread(
+            () -> reclaimResult.set(lifecycle.reclaimIdleTabs(instance.getId())));
+        reclaimThread.setDaemon(true);
+        reclaimThread.start();
+        assertThat(reclaimEntered.await(2, TimeUnit.SECONDS)).isTrue();
+
+        AtomicReference<Throwable> stopFailure = new AtomicReference<>();
+        Thread stopThread = new Thread(() -> {
+            try {
+                lifecycle.stop(instance.getId());
+            } catch (Throwable ex) {
+                stopFailure.set(ex);
+            }
+        });
+        stopThread.setDaemon(true);
+        stopThread.start();
+
+        stopThread.join(200L);
+        assertThat(stopThread.isAlive())
+            .as("stop must wait behind the reclaim lifecycle lock")
+            .isTrue();
+        assertThat(instanceService.get(instance.getId()).getState())
+            .isEqualTo(HubInstanceState.RUNNING);
+        assertThat(registry.get(instance.getId())).isSameAs(runtimeBefore);
+        assertThat(registry.get(instance.getId()).getContextId()).isEqualTo("ctx-reclaim-stop");
+
+        reclaimRelease.countDown();
+        reclaimThread.join(2_000L);
+        stopThread.join(2_000L);
+        assertThat(reclaimResult.get()).isTrue();
+        assertThat(stopFailure.get()).isNull();
+        assertThat(instanceService.get(instance.getId()).getState())
+            .isEqualTo(HubInstanceState.STOPPED);
+        assertThat(registry.get(instance.getId())).isNull();
+    }
+
+    /**
+     * A restart must not stop/re-register the runtime while a reclaim holds the lifecycle lock,
+     * and once released it replaces the runtime with the same live context.
+     */
+    @Test
+    void shouldBlockRestartUntilReclaimRoundTripCompletes() throws Exception {
+        daemon.addConnectedContextAfterFetch("ctx-reclaim-restart2", 2);
+        HubInstance instance = lifecycle.create(createDto("bilibili-reclaim-restart2"));
+        enableWarmTabTtl(instance.getId(), 0);
+        HubInstanceRuntime runtimeBefore = registry.get(instance.getId());
+
+        CountDownLatch reclaimEntered = new CountDownLatch(1);
+        CountDownLatch reclaimRelease = new CountDownLatch(1);
+        daemon.blockNextReclaim(reclaimEntered, reclaimRelease);
+        AtomicReference<Boolean> reclaimResult = new AtomicReference<>();
+        Thread reclaimThread = new Thread(
+            () -> reclaimResult.set(lifecycle.reclaimIdleTabs(instance.getId())));
+        reclaimThread.setDaemon(true);
+        reclaimThread.start();
+        assertThat(reclaimEntered.await(2, TimeUnit.SECONDS)).isTrue();
+
+        AtomicReference<Throwable> restartFailure = new AtomicReference<>();
+        Thread restartThread = new Thread(() -> {
+            try {
+                lifecycle.restart(instance.getId());
+            } catch (Throwable ex) {
+                restartFailure.set(ex);
+            }
+        });
+        restartThread.setDaemon(true);
+        restartThread.start();
+
+        restartThread.join(200L);
+        assertThat(restartThread.isAlive())
+            .as("restart must wait behind the reclaim lifecycle lock")
+            .isTrue();
+        assertThat(instanceService.get(instance.getId()).getState())
+            .isEqualTo(HubInstanceState.RUNNING);
+        assertThat(registry.get(instance.getId()))
+            .as("runtime must not be torn down before reclaim returns")
+            .isSameAs(runtimeBefore);
+
+        reclaimRelease.countDown();
+        reclaimThread.join(2_000L);
+        restartThread.join(2_000L);
+        assertThat(reclaimResult.get()).isTrue();
+        assertThat(restartFailure.get()).isNull();
+        assertThat(instanceService.get(instance.getId()).getState())
+            .isEqualTo(HubInstanceState.RUNNING);
+        HubInstanceRuntime runtimeAfter = registry.get(instance.getId());
+        assertThat(runtimeAfter).isNotNull();
+        assertThat(runtimeAfter).isNotSameAs(runtimeBefore);
+        assertThat(runtimeAfter.getContextId()).isEqualTo("ctx-reclaim-restart2");
+    }
+
+    /** Editing the TTL (including a long threshold or -1) re-evaluates without a new task. */
+    @Test
+    void shouldReclaimAfterTtlConfigChangeWithoutNewTask() {
+        daemon.addConnectedContextAfterFetch("ctx-reclaim-config", 2);
+        HubInstance instance = lifecycle.create(createDto("bilibili-reclaim-config"));
+        assertThat(instance.getWarmTabTtlSeconds()).isEqualTo(1800);
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId()))
+            .as("default 1800s threshold is not yet met")
+            .isFalse();
+
+        enableWarmTabTtl(instance.getId(), -1);
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId())).isFalse();
+        assertThat(daemon.reclaimContextIds()).isEmpty();
+
+        enableWarmTabTtl(instance.getId(), 0);
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId()))
+            .as("TTL 0 reclaims after the config update without a new task")
+            .isTrue();
+        assertThat(daemon.reclaimContextIds()).containsExactly("ctx-reclaim-config");
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId())).isFalse();
+    }
+
+    /** Missing, stale and deleted runtime/row states must all skip the reclaim. */
+    @Test
+    void shouldSkipReclaimWhenContextMissingStaleOrRuntimeDeleted() {
+        daemon.addConnectedContextAfterFetch("ctx-reclaim-bad", 2);
+        HubInstance instance = lifecycle.create(createDto("bilibili-reclaim-bad"));
+        enableWarmTabTtl(instance.getId(), 0);
+
+        HubInstanceRuntime runtime = registry.get(instance.getId());
+        String goodContext = runtime.getContextId();
+        runtime.setContextId(null);
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId()))
+            .as("missing live context")
+            .isFalse();
+        runtime.setContextId("ctx-stale-other");
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId()))
+            .as("stale live context")
+            .isFalse();
+        assertThat(daemon.reclaimContextIds()).isEmpty();
+        runtime.setContextId(goodContext);
+
+        registry.unregister(instance.getId());
+        assertThat(lifecycle.reclaimIdleTabs(instance.getId()))
+            .as("runtime missing while the row stays RUNNING")
+            .isFalse();
+        assertThat(daemon.reclaimContextIds()).isEmpty();
+
+        String deletedId = instance.getId();
+        instanceService.deleteById(deletedId);
+        assertThat(lifecycle.reclaimIdleTabs(deletedId))
+            .as("deleted row")
+            .isFalse();
+    }
+
+    /** A daemon without the reclaim capability must refuse to start rather than silently no-op. */
+    @Test
+    void shouldFailStartWhenDaemonLacksReclaimCapability() {
+        var noCapability = FakeOpenCliDaemonClient.empty();
+        noCapability.setCapabilities(List.of());
+        daemon.enqueue(noCapability);
+
+        assertThatThrownBy(() -> lifecycle.create(createDto("bilibili-nocap")))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.OPENCLI_CAPABILITY_MISSING));
+        assertThat(registry.list()).isEmpty();
+    }
+
+    /** The selected profile must advertise the capability as well, even if the daemon does. */
+    @Test
+    void shouldFailStartWhenSelectedProfileLacksReclaimCapability() {
+        String id = seedPersistedInstance("bilibili-profile-nocap", "ctx-profile-nocap");
+        OpenCliProfileSnapshot profile = new OpenCliProfileSnapshot();
+        profile.setContextId("ctx-profile-nocap");
+        profile.setExtensionConnected(true);
+        profile.setCapabilities(List.of());
+        daemon.setProfiles(List.of(profile));
+
+        assertThatThrownBy(() -> lifecycle.start(id))
+            .isInstanceOf(ThrowableConventionErrorCode.class)
+            .extracting("code")
+            .isEqualTo(prefixed(HubErrorCodes.OPENCLI_CAPABILITY_MISSING));
+    }
+
+    // ---------------------------------------------------------------------------------
     //  HELPERS
     // ---------------------------------------------------------------------------------
 
@@ -1453,6 +1802,34 @@ class HubInstanceLifecycleServiceTest {
         dto.setProxyMode(instance.getProxyMode());
         dto.setProxyServer(instance.getProxyServer());
         return dto;
+    }
+
+    /** Updates only the instance continuous-idle reclaim TTL through the normal editable path. */
+    private void enableWarmTabTtl(String instanceId, int ttlSeconds) {
+        HubInstance current = instanceService.get(instanceId);
+        HubInstanceUpdateDTO dto = updateDto(current, current.getMaxPending());
+        dto.setWarmTabTtlSeconds(ttlSeconds);
+        lifecycle.update(instanceId, dto);
+    }
+
+    private static OpenCliDaemonCommandResponse reclaimResponse(boolean ok) {
+        OpenCliDaemonCommandResponse response = new OpenCliDaemonCommandResponse();
+        response.setId("test-reclaim");
+        response.setOk(ok);
+        return response;
+    }
+
+    private boolean awaitDispatcherIdle(String instanceId, long timeoutMillis)
+        throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while (System.nanoTime() < deadline) {
+            HubInstanceRuntimeSnapshot snapshot = dispatchRegistry.getSnapshot(instanceId);
+            if (snapshot.isIdle()) {
+                return true;
+            }
+            Thread.sleep(5L);
+        }
+        return dispatchRegistry.getSnapshot(instanceId).isIdle();
     }
 
     private void useInstanceService(InMemoryHubInstanceService service,
@@ -1484,6 +1861,7 @@ class HubInstanceLifecycleServiceTest {
         profile.setContextId(contextId);
         profile.setExtensionConnected(true);
         profile.setExtensionVersion("v1.0.22");
+        profile.setCapabilities(List.of(OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1));
         return profile;
     }
 

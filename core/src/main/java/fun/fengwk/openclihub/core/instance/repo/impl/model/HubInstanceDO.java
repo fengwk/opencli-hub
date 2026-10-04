@@ -23,6 +23,7 @@ public class HubInstanceDO {
     private Integer maxPending;
     private Integer maxConcurrency;
     private Integer priority;
+    /** Instance continuous-idle reclaim TTL in seconds (persisted column, no schema migration). */
     private Integer warmTabTtlSeconds;
     private String proxyMode;
     private String proxyServer;

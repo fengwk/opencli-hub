@@ -243,6 +243,71 @@ class HttpOpenCliDaemonClientTest {
     }
 
     @Test
+    void shouldPostReclaimAdapterTabsWithDeadlineAuthAndRouting() throws Exception {
+        server.setCommandBody("{\"id\":\"unused\",\"ok\":true,"
+            + "\"data\":{\"closedTabs\":2,\"resetTabs\":1}}");
+        long before = System.currentTimeMillis();
+
+        OpenCliDaemonCommandResponse response = client.reclaimAdapterTabs("ctx-reclaim");
+
+        long after = System.currentTimeMillis();
+        assertThat(response.getOk()).isTrue();
+        assertThat(server.lastMethodAndPath()).isEqualTo("POST /command");
+        assertThat(server.lastHeaders()).contains("x-opencli: 1");
+        assertThat(server.lastHeaders())
+            .anyMatch(h -> h.startsWith("content-type: application/json"));
+        var request = new ObjectMapper().readTree(server.lastBody());
+        assertThat(request.get("id").asText()).isNotBlank();
+        assertThat(request.get("action").asText()).isEqualTo("reclaim-adapter-tabs");
+        assertThat(request.get("contextId").asText()).isEqualTo("ctx-reclaim");
+        assertThat(request.get("surface").asText()).isEqualTo("adapter");
+        assertThat(request.has("session")).as("reclaim carries no session").isFalse();
+        assertThat(request.get("timeout").asInt()).isEqualTo(5);
+        assertThat(request.get("deadlineAt").asLong())
+            .isBetween(before + 5000L, after + 5000L);
+    }
+
+    /** A command-level {@code ok=false} must be surfaced, never converted into success. */
+    @Test
+    void shouldReturnCommandLevelReclaimFailureFromSuccessfulHttpResponse() {
+        server.setCommandBody("{\"id\":\"unused\",\"ok\":false,"
+            + "\"errorCode\":\"reclaim_failed\",\"error\":\"No adapter tab\","
+            + "\"errorHint\":\"Retry later\"}");
+
+        OpenCliDaemonCommandResponse response = client.reclaimAdapterTabs("ctx-reclaim");
+
+        assertThat(response.getOk()).isFalse();
+        assertThat(response.getErrorCode()).isEqualTo("reclaim_failed");
+        assertThat(response.getError()).isEqualTo("No adapter tab");
+        assertThat(response.getErrorHint()).isEqualTo("Retry later");
+    }
+
+    @Test
+    void shouldThrowWhenReclaimCommandResponseBodyIsInvalid() {
+        server.setCommandBody("{\"ok\":true}");
+
+        assertThatThrownBy(() -> client.reclaimAdapterTabs("ctx-reclaim"))
+            .isInstanceOf(OpenCliDaemonException.class)
+            .hasMessageContaining("invalid reclaim response");
+    }
+
+    @Test
+    void shouldThrowWhenReclaimCommandIsNonTwoXx() {
+        server.setCommandStatusCode(503);
+
+        assertThatThrownBy(() -> client.reclaimAdapterTabs("ctx-reclaim"))
+            .isInstanceOf(OpenCliDaemonException.class)
+            .hasMessageContaining("HTTP 503");
+    }
+
+    @Test
+    void shouldRejectBlankContextIdInReclaimCommand() {
+        assertThatThrownBy(() -> client.reclaimAdapterTabs(" "))
+            .isInstanceOf(OpenCliDaemonException.class)
+            .hasMessageContaining("contextId is required");
+    }
+
+    @Test
     void shouldThrowWhenStatusIsNonTwoXx() {
         server.setStatusCode(500);
         assertThatThrownBy(() -> client.fetchStatus())

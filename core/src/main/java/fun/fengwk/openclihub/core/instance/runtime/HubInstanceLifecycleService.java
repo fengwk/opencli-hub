@@ -15,6 +15,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -195,6 +196,63 @@ public class HubInstanceLifecycleService implements HubInstanceLifecycleServiceC
     public int clearPendingQueue(String instanceId) {
         loadInstance(instanceId);
         return dispatchRegistry.clearPending(instanceId);
+    }
+
+    /**
+     * Attempts one idle adapter tab reclaim for the instance.
+     *
+     * <p>Runs under the per-instance lifecycle lock so it cannot overlap {@code stop} /
+     * {@code restart} / {@code delete}, and delegates the final busy check and the whole
+     * daemon round trip to the dispatcher's submit lock so a new execution cannot be accepted
+     * between the check and the reclaim. Deleted, not-RUNNING, missing-runtime,
+     * missing/stale-context and TTL&nbsp;{@code -1} instances are skipped. Failures are logged
+     * and reported as {@code false} without changing instance state, so the next sweep retries
+     * and other instances keep being processed.
+     *
+     * @return {@code true} when a reclaim succeeded this round
+     */
+    public boolean reclaimIdleTabs(String instanceId) {
+        ReentrantLock lock = registry.lifecycleLock(instanceId);
+        lock.lock();
+        try {
+            HubInstance instance;
+            try {
+                instance = instanceService.get(instanceId);
+            } catch (RuntimeException ex) {
+                // Deleted between the sweep listing and the lock acquisition.
+                return false;
+            }
+            if (instance == null || !instance.isRunning()) {
+                return false;
+            }
+            int ttlSeconds = instance.getWarmTabTtlSeconds();
+            if (ttlSeconds < 0) {
+                return false;
+            }
+            HubInstanceRuntime runtime = registry.get(instanceId);
+            if (runtime == null) {
+                return false;
+            }
+            String contextId = runtime.getContextId();
+            if (contextId == null || contextId.isBlank()
+                || instance.getContextId() == null
+                || !instance.getContextId().equals(contextId)) {
+                return false;
+            }
+            long idleNanos = TimeUnit.SECONDS.toNanos(ttlSeconds);
+            try {
+                return dispatchRegistry.reclaimWhenIdleLongEnough(instance, idleNanos, () -> {
+                    daemonContext.reclaimAdapterTabs(contextId);
+                    return null;
+                });
+            } catch (RuntimeException ex) {
+                log.warn("Idle adapter tab reclaim failed for instance {}: {}",
+                    instanceId, ex.getMessage());
+                return false;
+            }
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**

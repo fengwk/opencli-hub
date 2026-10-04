@@ -6,9 +6,11 @@ import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonClient;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonCommandResponse;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonException;
 import fun.fengwk.openclihub.core.opencli.daemon.OpenCliDaemonStatus;
+import fun.fengwk.openclihub.core.opencli.daemon.OpenCliProfileSnapshot;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -61,18 +63,22 @@ class HubInstanceDaemonContextService {
      */
     Set<String> ensureDaemonReady() {
         try {
+            OpenCliDaemonStatus status;
             if (registry.list().isEmpty()) {
                 daemonClient.ensureRunning();
-                return snapshotContextIds();
+                status = daemonClient.fetchStatus();
+            } else {
+                status = daemonClient.fetchStatus();
+                if (!hasValidDaemonPid(status)) {
+                    throw new OpenCliDaemonException(
+                        "OpenCLI daemon is not ready; refusing to restart the shared daemon "
+                            + "while another browser instance is running");
+                }
             }
-
-            OpenCliDaemonStatus status = daemonClient.fetchStatus();
-            if (!hasValidDaemonPid(status)) {
-                throw new OpenCliDaemonException(
-                    "OpenCLI daemon is not ready; refusing to restart the shared daemon "
-                        + "while another browser instance is running");
-            }
-            return new HashSet<>(status.connectedContextIds());
+            // Start is refused when the daemon cannot reclaim idle tabs: otherwise the UI
+            // would show a new TTL configuration that can never take effect.
+            requireDaemonReclaimCapability(status);
+            return status == null ? Set.of() : new HashSet<>(status.connectedContextIds());
         } catch (OpenCliDaemonException ex) {
             throw HubErrorCodes.INSTANCE_START_FAILED.asThrowable(
                 ex, "failed to ensure OpenCLI daemon: " + ex.getMessage());
@@ -93,9 +99,11 @@ class HubInstanceDaemonContextService {
         String expected = instance.getContextId();
         while (System.currentTimeMillis() < deadline) {
             runtimeStarter.ensureProcessesAlive(runtime);
-            Set<String> now = snapshotContextIds();
+            OpenCliDaemonStatus status = fetchStatusOrFail();
+            Set<String> now = status == null ? Set.of() : new HashSet<>(status.connectedContextIds());
             if (expected != null && now.contains(expected)) {
                 runtime.setContextId(expected);
+                requireProfileReclaimCapability(status, expected);
                 return;
             }
             Set<String> newIds = new HashSet<>(now);
@@ -113,6 +121,7 @@ class HubInstanceDaemonContextService {
                     log.warn("instance {} expected contextId={} but got a unique new id={}; "
                         + "auto-rebinding", instanceId, expected, chosen);
                 }
+                requireProfileReclaimCapability(status, chosen);
                 return;
             }
             if (newIds.size() > 1) {
@@ -151,6 +160,27 @@ class HubInstanceDaemonContextService {
         }
     }
 
+    /**
+     * Reclaims idle adapter tabs for the given connected profile. Both the daemon and the
+     * selected extension profile must advertise {@code adapter-tab-reclaim-v1}; a command
+     * response with {@code ok=false} is a failure (never treated as success) so the caller
+     * retries on a later sweep. Transport failures propagate as runtime exceptions.
+     */
+    void reclaimAdapterTabs(String contextId) {
+        OpenCliDaemonStatus status = fetchStatusForOperation("reclaim idle adapter tabs");
+        requireDaemonReclaimCapability(status);
+        if (!isConnectedProfile(status, contextId)) {
+            throw HubErrorCodes.INSTANCE_CONTEXT_NOT_CONNECTED.asThrowable(
+                "instance context is not connected to the OpenCLI daemon: " + contextId);
+        }
+        requireProfileReclaimCapability(status, contextId);
+        OpenCliDaemonCommandResponse response = daemonClient.reclaimAdapterTabs(contextId);
+        if (response == null || !Boolean.TRUE.equals(response.getOk())) {
+            throw HubErrorCodes.OPENCLI_EXECUTION_FAILED.asThrowable(
+                reclaimFailureMessage(response));
+        }
+    }
+
     private void requireConnectedDaemonProfile(String contextId) {
         OpenCliDaemonStatus status;
         try {
@@ -165,14 +195,60 @@ class HubInstanceDaemonContextService {
         }
     }
 
-    private Set<String> snapshotContextIds() {
+    private OpenCliDaemonStatus fetchStatusOrFail() {
         try {
-            OpenCliDaemonStatus status = daemonClient.fetchStatus();
-            return status == null ? Set.of() : new HashSet<>(status.connectedContextIds());
+            return daemonClient.fetchStatus();
         } catch (OpenCliDaemonException ex) {
             throw HubErrorCodes.INSTANCE_START_FAILED.asThrowable(
                 ex, "daemon status fetch failed: " + ex.getMessage());
         }
+    }
+
+    private OpenCliDaemonStatus fetchStatusForOperation(String operation) {
+        try {
+            return daemonClient.fetchStatus();
+        } catch (OpenCliDaemonException ex) {
+            throw HubErrorCodes.OPENCLI_EXECUTION_FAILED.asThrowable(
+                ex, "failed to fetch OpenCLI daemon status for " + operation + ": " + ex.getMessage());
+        }
+    }
+
+    private static void requireDaemonReclaimCapability(OpenCliDaemonStatus status) {
+        if (!hasCapability(status == null ? null : status.getCapabilities(),
+            OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1)) {
+            throw HubErrorCodes.OPENCLI_CAPABILITY_MISSING.asThrowable(
+                "OpenCLI daemon does not support "
+                    + OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1
+                    + "; upgrade the OpenCLI CLI and Browser Bridge extension");
+        }
+    }
+
+    private static void requireProfileReclaimCapability(
+        OpenCliDaemonStatus status, String contextId) {
+        OpenCliProfileSnapshot profile = findProfile(status, contextId);
+        if (profile == null || !hasCapability(
+            profile.getCapabilities(), OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1)) {
+            throw HubErrorCodes.OPENCLI_CAPABILITY_MISSING.asThrowable(
+                "Browser Bridge profile " + contextId + " does not support "
+                    + OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1
+                    + "; upgrade the OpenCLI CLI and Browser Bridge extension");
+        }
+    }
+
+    private static OpenCliProfileSnapshot findProfile(OpenCliDaemonStatus status, String contextId) {
+        if (status == null || status.getProfiles() == null) {
+            return null;
+        }
+        for (OpenCliProfileSnapshot profile : status.getProfiles()) {
+            if (profile != null && contextId.equals(profile.getContextId())) {
+                return profile;
+            }
+        }
+        return null;
+    }
+
+    private static boolean hasCapability(List<String> capabilities, String capability) {
+        return capabilities != null && capabilities.contains(capability);
     }
 
     private Set<String> activeBoundContextIds() {
@@ -217,6 +293,22 @@ class HubInstanceDaemonContextService {
             message.append(" Hint: ").append(response.getErrorHint());
         }
         return HubErrorCodes.INSTANCE_TAB_BIND_FAILED.asThrowable(message.toString());
+    }
+
+    private static String reclaimFailureMessage(OpenCliDaemonCommandResponse response) {
+        StringBuilder message = new StringBuilder("OpenCLI daemon rejected idle adapter tab reclaim");
+        if (response != null && response.getErrorCode() != null
+            && !response.getErrorCode().isBlank()) {
+            message.append(" [").append(response.getErrorCode()).append(']');
+        }
+        if (response != null && response.getError() != null && !response.getError().isBlank()) {
+            message.append(": ").append(response.getError());
+        }
+        if (response != null && response.getErrorHint() != null
+            && !response.getErrorHint().isBlank()) {
+            message.append(" Hint: ").append(response.getErrorHint());
+        }
+        return message.toString();
     }
 
     private static void sleepQuietly(long millis) {

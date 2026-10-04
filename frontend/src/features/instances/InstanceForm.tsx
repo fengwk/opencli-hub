@@ -103,7 +103,7 @@ export function InstanceForm({
     }
     const parsedWarmTabTtlSeconds = Number(warmTabTtlSeconds)
     if (!warmTabTtlSeconds.trim() || !Number.isInteger(parsedWarmTabTtlSeconds) || parsedWarmTabTtlSeconds < minimumWarmTabTtlSeconds || parsedWarmTabTtlSeconds > maximumWarmTabTtlSeconds) {
-      setValidationError(`闲置标签页保留时间必须是 ${minimumWarmTabTtlSeconds} 到 ${maximumWarmTabTtlSeconds} 之间的整数秒（-1 为不自动回收，0 为立即回收，默认 1800 秒）。`)
+      setValidationError(`闲置标签页保留时间必须是 ${minimumWarmTabTtlSeconds} 到 ${maximumWarmTabTtlSeconds} 之间的整数秒（-1 为不自动回收，0 为实例空闲后下次巡检回收，默认 1800 秒）。`)
       return
     }
     const normalizedProxyServer = proxyServer.trim()
@@ -205,14 +205,14 @@ export function InstanceForm({
           value={warmTabTtlSeconds}
           required
           disabled={busy}
-          title="临时适配器标签页释放后的空闲保持时长，-1 为不自动回收，0 为立即回收，默认 1800 秒"
+          title="实例无执行中或待处理任务后的连续空闲时长，-1 为不自动回收，0 为下次空闲巡检回收，默认 1800 秒"
           onChange={(event) => {
             setWarmTabTtlSeconds(event.target.value)
             setValidationError(null)
           }}
         />
       </label>
-      <p className="form-help">临时适配器标签页释放后的空闲保持时长。-1 表示不自动回收，0 表示立即回收，正整数为保留的空闲秒数（默认 1800 秒）。常驻站点标签以及通过 keep-tab 保持的租约不受此设置影响。</p>
+      <p className="form-help">实例无执行中或待处理任务，连续空闲达到此时长后，统一回收 OpenCLI 自有适配器标签页，包括常驻、keep-tab 和换 tab 遗留页面。-1 表示不自动回收，0 表示下次空闲巡检回收，正整数为空闲秒数（默认 1800 秒）。保留登录状态和一个空白占位；用户手动打开或借用的标签页不回收。</p>
       <label>
         代理模式
         <select

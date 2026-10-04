@@ -131,6 +131,11 @@ class OpenCliSessionLeaseRecoveryServiceTest {
             }
 
             @Override
+            public OpenCliDaemonCommandResponse reclaimAdapterTabs(String contextId) {
+                throw new AssertionError("reclaim must not be called");
+            }
+
+            @Override
             public void ensureRunning() {
                 throw new AssertionError("ensureRunning must not be called");
             }

@@ -34,6 +34,8 @@ public enum HubErrorCodes implements DomainConventionErrorCodeEnumAdapter {
     CONTEXT_ID_AMBIGUOUS(HttpStatus.CONFLICT),
     CONTEXT_ID_CONFLICT(HttpStatus.CONFLICT),
     EXTENSION_CONNECT_TIMEOUT(HttpStatus.REQUEST_TIMEOUT),
+    /** The daemon or the selected extension profile does not advertise a required capability. */
+    OPENCLI_CAPABILITY_MISSING(HttpStatus.BAD_REQUEST),
     NO_INSTANCE_AVAILABLE(HttpStatus.BAD_REQUEST),
 
     SETTINGS_ARGUMENT_INVALID(HttpStatus.BAD_REQUEST),

@@ -56,8 +56,8 @@
 | 数据库 | 编译期三变体：PostgreSQL 16（默认）、MySQL 8.4 LTS、SQLite；H2 仅测试（Maven `test` scope） |
 | SQL | MyBatis Auto Mapper 生成常规 SQL；每个变体通过 Spring SQL initialization 幂等初始化当前 schema（schema-only，无 data SQL，system settings 由应用懒初始化）；旧 MySQL schema 手工迁移 |
 | 浏览器 | 正式 `google-chrome-stable`，非 Chromium/Chrome for Testing |
-| extension | 由 artifact lock 固定，当前 fork 1.0.35；构建期打包固定签名 CRX3，运行时通过 Linux managed policy + loopback update server 强制安装 |
-| OpenCLI | 由 artifact lock 固定，当前 fork 1.8.8-fengwk.2；Hub 通过 `ProcessBuilder` 调用，不在 Hub 内修改 CLI |
+| extension | 由 artifact lock 固定，当前 fork 1.0.36；构建期打包固定签名 CRX3，运行时通过 Linux managed policy + loopback update server 强制安装 |
+| OpenCLI | 由 artifact lock 固定，当前 fork 1.8.8-fengwk.5；Hub 通过 `ProcessBuilder` 调用，不在 Hub 内修改 CLI |
 | daemon | 单容器共享一个 OpenCLI daemon |
 | Instance 创建 | 同步创建，成功后才插入数据库；失败清理全部残留 |
 | Instance 创建完成 | Chrome 保持运行，数据库状态为 `RUNNING` |
@@ -409,11 +409,24 @@ public enum HubInstanceState {
 
 `websites` 表示管理员确认该 Instance 可以参与这些网站的路由，不表示 OpenCLI 理论上支持的站点。
 
-`warmTabTtlSeconds`：每个 Instance 的闲置标签页回收超时秒数（合法范围 `[-1, 2147483647]`，默认 `1800`）：
-- `-1`：永不自动回收闲置标签页；
-- `0`：临时 adapter lease 释放后立即回收；
-- `>0`：闲置指定秒数后自动回收；
-- 仅作用于已释放的临时 adapter 闲置标签页（released ephemeral adapter tabs）；持久会话标签（`siteSession=PERSISTENT`）与显式 keep-tab lease 生命周期由各自独立机制保障，不受此超时影响。
+`warmTabTtlSeconds`：每个 Instance 的**连续空闲回收超时**（合法范围 `[-1, 2147483647]`，默认 `1800` 秒）。字段名与数据库列保留以兼容已有数据，不代表继续采用逐 tab warm-TTL：
+- `-1`：不自动回收；
+- `0`：实例空闲后，下次巡检统一回收；
+- `>0`：无已接收未终态任务、无执行中任务且无待处理任务，连续空闲指定秒数后统一回收；
+- 回收范围包括 OpenCLI 自有的临时、常驻、keep-tab 以及换 tab 遗留的 adapter 页面；借用、用户手动打开和 browser surface 页面不回收；
+- 保留 Chrome 实例、Profile、Cookie、登录数据和一个 `about:blank` 占位；不通过页面内容判断业务是否还在生成。
+
+Hub 是唯一自动回收决策者，不再向命令传递 `--warm-tab-ttl`，OpenCLI 也不再支持该选项或逐 tab warm alarm 策略。扩展只登记自有 adapter tab ID，供显式统一清理使用；一般 lease 的空闲释放只解除 adapter 租约、保留页面，不启动另一条回收策略。
+
+Dispatcher 使用单调时钟记录空闲起点，接收任务及真实任务结束都会更新，避免巡检之间的短任务被遗漏。取消 Future 不等于任务体已退出。成功回收后，本空闲周期不重复执行；失败保持可重试。每秒巡检一次，逐实例执行，实际触发时间还受前序实例维护耗时影响。
+
+回收持有 Instance lifecycle lock 与 Dispatcher `submitLock`，从最终空闲检查到完整 HTTP 往返都阻止新任务提交及 stop/restart 交错。调用 daemon `POST /command`：
+
+```json
+{"id":"<uuid>","action":"reclaim-adapter-tabs","contextId":"<live-context>","surface":"adapter","deadlineAt":1234567890000,"timeout":5}
+```
+
+`deadlineAt` 为调用时刻加 5 秒，Hub HTTP 超时为 7 秒。成功响应为 `{id,ok:true,data:{closedTabs,resetTabs}}`。daemon 和目标 profile 的 `/status` capabilities 都必须包含 `adapter-tab-reclaim-v1`（profile capability 来自扩展 hello）；缺失时拒绝启动并提示成对升级，无旧策略 fallback。daemon/扩展额外保护在途浏览器命令和写租约，并在破坏性操作前校验截止时间，避免超时清理迟到关闭新任务页面。
 
 ### 8.2 HubExecution
 
@@ -831,7 +844,6 @@ command.addAll(request.getArgv());
 
 ```text
 --profile
---warm-tab-ttl
 -f / --format
 --site-session
 --keep-tab
@@ -1046,7 +1058,7 @@ sequenceDiagram
 正式 Google Chrome stable 不依赖 unpacked extension 的命令行加载。Release 镜像采用构建期签名和 managed policy：
 
 ```text
-OpenCLI Browser Bridge extension 1.0.35
+OpenCLI Browser Bridge extension 1.0.36
 -> 构建阶段校验固定版本 release asset
 -> BuildKit secret 仅在构建阶段提供受保护的 stable signing key
 -> 使用 google-chrome-stable --pack-extension 生成 CRX3
@@ -1506,7 +1518,6 @@ process.destroy()
 opencli
 --profile <contextId>
 <normalized argv>
-[--warm-tab-ttl <seconds>] (仅浏览器命令且 normalized.getCommand().isBrowser() 时追加，取自 Instance.warmTabTtlSeconds)
 <managed output argument if any>
 --format json
 ```

@@ -27,6 +27,11 @@ public class HubInstance {
     private int maxPending;
     private int maxConcurrency = 1;
     private int priority;
+    /**
+     * Instance continuous-idle TTL in seconds before the Hub reclaims idle adapter tabs:
+     * {@code -1} disables reclaim, {@code 0} reclaims on the next sweep, a positive value is
+     * the required continuous idle time. Default {@code 1800}.
+     */
     private int warmTabTtlSeconds = DEFAULT_WARM_TAB_TTL_SECONDS;
     private HubProxyMode proxyMode = HubProxyMode.INHERIT;
     private String proxyServer;

@@ -2,6 +2,8 @@ package fun.fengwk.openclihub.core.opencli.daemon;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -30,6 +32,12 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
     private OpenCliDaemonCommandResponse bindResponse = defaultBindResponse();
     private final List<String> bindContextIds = new ArrayList<>();
     private final List<String> bindSessions = new ArrayList<>();
+    private OpenCliDaemonCommandResponse reclaimResponse = defaultReclaimResponse();
+    private RuntimeException reclaimFailure;
+    private final List<String> reclaimContextIds = new ArrayList<>();
+    /** One-shot gate: when set, reclaimAdapterTabs signals entry then waits for release. */
+    private volatile CountDownLatch reclaimBlockEntered;
+    private volatile CountDownLatch reclaimBlockRelease;
     /** When set, the daemon exposes the named context on the SECOND fetch and clears it after. */
     private String firstWinsContextId;
     private boolean firstWinsFired = false;
@@ -116,6 +124,52 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
         return bindResponse;
     }
 
+    @Override
+    public OpenCliDaemonCommandResponse reclaimAdapterTabs(String contextId) {
+        reclaimContextIds.add(contextId);
+        CountDownLatch entered = reclaimBlockEntered;
+        if (entered != null) {
+            reclaimBlockEntered = null;
+            CountDownLatch release = reclaimBlockRelease;
+            reclaimBlockRelease = null;
+            entered.countDown();
+            try {
+                if (release != null) {
+                    release.await(5, TimeUnit.SECONDS);
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        if (reclaimFailure != null) {
+            throw reclaimFailure;
+        }
+        return reclaimResponse;
+    }
+
+    /**
+     * Makes the next reclaim call block inside the fake daemon: {@code entered} is counted
+     * down when the call starts and the call does not return until {@code release} is counted
+     * down (bounded to 5s). Used to prove lifecycle/dispatch mutual exclusion across the whole
+     * reclaim round trip.
+     */
+    public void blockNextReclaim(CountDownLatch entered, CountDownLatch release) {
+        this.reclaimBlockEntered = entered;
+        this.reclaimBlockRelease = release;
+    }
+
+    public void setReclaimResponse(OpenCliDaemonCommandResponse response) {
+        this.reclaimResponse = response == null ? defaultReclaimResponse() : response;
+    }
+
+    public void failReclaimWith(RuntimeException failure) {
+        this.reclaimFailure = failure;
+    }
+
+    public List<String> reclaimContextIds() {
+        return List.copyOf(reclaimContextIds);
+    }
+
     public void setBindResponse(OpenCliDaemonCommandResponse response) {
         this.bindResponse = response == null ? defaultBindResponse() : response;
     }
@@ -168,6 +222,8 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
         ps.setContextId(contextId);
         ps.setExtensionConnected(true);
         ps.setExtensionVersion("v1.0.22");
+        ps.setCapabilities(new ArrayList<>(List.of(
+            OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1)));
         profiles.add(ps);
         snapshot.setProfiles(profiles);
         nextStatus.set(snapshot);
@@ -204,7 +260,9 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
         OpenCliDaemonStatus status = new OpenCliDaemonStatus();
         status.setPid(0L);
         status.setProfiles(List.of());
-        status.setCapabilities(List.of());
+        // Advertise the reclaim capability by default so ordinary lifecycle scenarios stay
+        // valid; tests that exercise a missing capability build a status without it.
+        status.setCapabilities(List.of(OpenCliDaemonClient.CAPABILITY_ADAPTER_TAB_RECLAIM_V1));
         status.setSessionLeases(List.of());
         return status;
     }
@@ -221,6 +279,13 @@ public class FakeOpenCliDaemonClient implements OpenCliDaemonClient {
     private static OpenCliDaemonCommandResponse defaultBindResponse() {
         OpenCliDaemonCommandResponse response = new OpenCliDaemonCommandResponse();
         response.setId("fake-bind");
+        response.setOk(true);
+        return response;
+    }
+
+    private static OpenCliDaemonCommandResponse defaultReclaimResponse() {
+        OpenCliDaemonCommandResponse response = new OpenCliDaemonCommandResponse();
+        response.setId("fake-reclaim");
         response.setOk(true);
         return response;
     }

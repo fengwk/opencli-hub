@@ -12,6 +12,9 @@
 
 ### 变更
 
+- 标签页自动回收统一为 Instance 连续空闲策略（复用 `warmTabTtlSeconds`，默认 1800 秒，0 下一次空闲巡检回收，-1 禁用），覆盖常驻、keep-tab 和替换遗留 adapter 页面；任务接收/真实结束精确重置计时，清理期间阻止提交和生命周期交错，保留用户/借用页面、登录数据和空白占位。
+- 删除逐 tab warm-TTL 参数注入和旧回收策略，不保留 fallback。要求 daemon 与目标 extension profile 都支持 `adapter-tab-reclaim-v1`，缺失时提示成对升级并拒绝实例启动。
+- 成对升级 artifact lock 至已正式发布并核验的 `fork-v1.8.8-fengwk.5`（CLI `1.8.8-fengwk.5` / extension `1.0.36`），启用实例级回收能力，并包含 undici `7.30.0` 高危漏洞修复；资产 URL、SHA256、source revision 与 Release build-info 对齐。
 - 成对升级 OpenCLI artifact lock 至已发布的 `fork-v1.8.8-fengwk.2`：CLI `1.8.8-fengwk.2` / Browser Bridge extension `1.0.35`，支持非侵入式 HTTP SSE 增量捕获；更新已安装的 `my-opencli` 插件仍需在管理页手动同步。
 - Instance 支持配置并发度 `maxConcurrency`（1..4，默认 1，升级后旧行保持 1）与排队容量 `maxPending`（0..50，默认 5，0 表示无排队缓冲，满时立即 429 `INSTANCE_QUEUE_FULL`）；总承载容量为 `maxConcurrency + maxPending`。浏览器命令缺失/空白 `siteSession` 时按 `EPHEMERAL` 处理，可解析为 `EPHEMERAL` 的命令受 `maxConcurrency` 限制并行（业务级冲突由调用者负责），可解析为 `PERSISTENT` 的命令独占串行；非浏览器命令或无法解析的未知 session 元数据 fail-safe 独占。
 - 客户端行为变化（详见根 README「客户端行为变化」表）：`POST /api/opencli/execute` 返回 HTTP 202 + PENDING DTO，需轮询 `waitSeconds`（最大 120）或取消；本地文件必须上传后仅用 `/resources/...` 虚拟路径（绝对路径、`~`、`file://`、Windows drive path、显式 traversal 及相对 OpenCLI workdir 实际存在的文件/目录拒绝）；Execution 列表按 `queued_at DESC, id DESC`；cancel/clear-queue 丢弃的任务持久化 CANCELLED；时间戳统一 UTC LocalDateTime（`gmt_*` 列名保留兼容）。

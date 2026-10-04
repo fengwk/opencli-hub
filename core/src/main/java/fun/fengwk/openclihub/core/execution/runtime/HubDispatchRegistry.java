@@ -110,6 +110,21 @@ public class HubDispatchRegistry {
         return dispatcher.executeWhenIdle(task);
     }
 
+    /**
+     * Runs {@code reclaim} only when the instance has been continuously idle for at least
+     * {@code idleNanos}. The dispatcher holds its submit lock from the final busy check
+     * through the callback so a submission cannot interleave with the reclaim. Returns
+     * {@code false} when no dispatcher is registered or the instance is not eligible.
+     */
+    public boolean reclaimWhenIdleLongEnough(HubInstance instance, long idleNanos,
+                                             Callable<Void> reclaim) {
+        HubInstanceDispatcher dispatcher = dispatchers.get(instance.getId());
+        if (dispatcher == null) {
+            return false;
+        }
+        return dispatcher.reclaimWhenIdleLongEnough(idleNanos, reclaim);
+    }
+
     public HubInstanceRuntimeSnapshot getSnapshot(String instanceId) {
         HubInstanceDispatcher dispatcher = dispatchers.get(instanceId);
         if (dispatcher == null) {

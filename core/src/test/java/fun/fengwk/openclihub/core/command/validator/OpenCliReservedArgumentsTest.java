@@ -16,7 +16,6 @@ class OpenCliReservedArgumentsTest {
     void shouldRecognizeAllLongReservedNames() {
         for (String name : new String[] {
             "--profile", "--format", "--site-session", "--keep-tab",
-            "--warm-tab-ttl",
             "--window", "--trace", "--verbose", "--help", "--version",
         }) {
             assertThat(OpenCliReservedArguments.isReserved(name))
@@ -38,7 +37,6 @@ class OpenCliReservedArgumentsTest {
     void shouldRecognizeInlineValueReservedNames() {
         assertThat(OpenCliReservedArguments.isReserved("--format=json")).isTrue();
         assertThat(OpenCliReservedArguments.isReserved("--profile=foo")).isTrue();
-        assertThat(OpenCliReservedArguments.isReserved("--warm-tab-ttl=60")).isTrue();
         assertThat(OpenCliReservedArguments.isReserved("-f=json")).isTrue();
     }
 
@@ -47,6 +45,10 @@ class OpenCliReservedArgumentsTest {
         assertThat(OpenCliReservedArguments.isReserved("--limit")).isFalse();
         assertThat(OpenCliReservedArguments.isReserved("--prompt")).isFalse();
         assertThat(OpenCliReservedArguments.isReserved("bilibili")).isFalse();
+        // The per-tab warm TTL flag was removed from the Hub transport and must no longer be
+        // reserved; callers passing it are handled by the normal OpenCLI argument validation.
+        assertThat(OpenCliReservedArguments.isReserved("--warm-tab-ttl")).isFalse();
+        assertThat(OpenCliReservedArguments.isReserved("--warm-tab-ttl=60")).isFalse();
         assertThat(OpenCliReservedArguments.isReserved(null)).isFalse();
     }
 

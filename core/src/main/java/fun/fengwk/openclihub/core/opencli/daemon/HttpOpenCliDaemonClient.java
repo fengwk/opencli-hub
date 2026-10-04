@@ -32,6 +32,17 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
     /** Bounded timeout for CAS recovery so a stalled daemon cannot block Hub cleanup. */
     static final Duration DEFAULT_RECOVERY_TIMEOUT = Duration.ofSeconds(7);
 
+    /**
+     * Hub-side HTTP timeout for idle adapter tab reclaim. Deliberately larger than the
+     * extension-side operation deadline (5s) so a command that did start is not aborted
+     * prematurely; a timeout is treated as failure and retried on the next sweep.
+     */
+    static final Duration DEFAULT_RECLAIM_TIMEOUT = Duration.ofSeconds(7);
+
+    /** Extension-side command deadline and timeout advertised to the daemon (millis / seconds). */
+    static final long RECLAIM_DEADLINE_MILLIS = 5000L;
+    static final int RECLAIM_TIMEOUT_SECONDS = 5;
+
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final OpenCliHubProperties properties;
@@ -153,6 +164,12 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
             }
             if (status.getProfiles() == null) {
                 status.setProfiles(java.util.List.of());
+            } else {
+                for (OpenCliProfileSnapshot profile : status.getProfiles()) {
+                    if (profile != null && profile.getCapabilities() == null) {
+                        profile.setCapabilities(java.util.List.of());
+                    }
+                }
             }
             if (status.getCapabilities() == null) {
                 status.setCapabilities(java.util.List.of());
@@ -212,23 +229,52 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
         if (session == null || session.isBlank()) {
             throw new OpenCliDaemonException("bind active tab session is required");
         }
-        String commandId = UUID.randomUUID().toString();
         Map<String, Object> command = new LinkedHashMap<>();
-        command.put("id", commandId);
+        command.put("id", UUID.randomUUID().toString());
         command.put("action", "bind");
         command.put("session", session);
         command.put("surface", "adapter");
         command.put("siteSession", "persistent");
         command.put("contextId", contextId);
+        return postCommand(
+            command, requestTimeout, "daemon /command returned an invalid bind response body");
+    }
 
+    @Override
+    public OpenCliDaemonCommandResponse reclaimAdapterTabs(String contextId) {
+        if (contextId == null || contextId.isBlank()) {
+            throw new OpenCliDaemonException("reclaim adapter tabs contextId is required");
+        }
+        Map<String, Object> command = new LinkedHashMap<>();
+        command.put("id", UUID.randomUUID().toString());
+        command.put("action", "reclaim-adapter-tabs");
+        command.put("contextId", contextId);
+        command.put("surface", "adapter");
+        // The extension operates against its own clock; give it a bounded deadline and a
+        // matching timeout so a single reclaim cannot stall the Hub sweep thread unbounded.
+        command.put("deadlineAt", System.currentTimeMillis() + RECLAIM_DEADLINE_MILLIS);
+        command.put("timeout", RECLAIM_TIMEOUT_SECONDS);
+        return postCommand(
+            command, DEFAULT_RECLAIM_TIMEOUT,
+            "daemon /command returned an invalid reclaim response body");
+    }
+
+    /**
+     * Shared {@code POST /command} transport: serializes the command, sends it with the
+     * mandatory daemon header, rejects non-2xx transports, and validates that the echoed id
+     * matches the request. Command-level failures are returned to the caller as
+     * {@code ok=false} rather than being converted into a transport error.
+     */
+    private OpenCliDaemonCommandResponse postCommand(
+        Map<String, Object> command, Duration timeout, String invalidMessage) {
         String body;
         try {
             body = objectMapper.writeValueAsString(command);
         } catch (IOException ex) {
-            throw new OpenCliDaemonException("failed to serialize daemon bind active tab request", ex);
+            throw new OpenCliDaemonException("failed to serialize daemon command request", ex);
         }
         HttpRequest request = HttpRequest.newBuilder(baseUri.resolve("/command"))
-            .timeout(requestTimeout)
+            .timeout(timeout)
             .header(X_OPEN_CLI_HEADER, X_OPEN_CLI_VALUE)
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
@@ -242,9 +288,8 @@ public class HttpOpenCliDaemonClient implements OpenCliDaemonClient {
         try {
             OpenCliDaemonCommandResponse parsed = objectMapper.readValue(
                 response.body(), OpenCliDaemonCommandResponse.class);
-            if (!isValidCommandResponse(parsed, commandId)) {
-                throw new OpenCliDaemonException(
-                    "daemon /command returned an invalid bind response body");
+            if (!isValidCommandResponse(parsed, String.valueOf(command.get("id")))) {
+                throw new OpenCliDaemonException(invalidMessage);
             }
             return parsed;
         } catch (IOException ex) {
