@@ -192,7 +192,8 @@ opencli plugin install github:fengwk/my-opencli/chatgpt-agent
 
 仓库已发布 `v0.1.62`（五个子插件统一版本，包含新增的 `douyin-ext` 插件）；`chatgpt-agent` 所需的 `.3` composer 修复与 SSE 能力在当前 Hub 钉住的 CLI `2.0.2-fengwk.2` / Browser Bridge `1.0.37` 中已包含。
 - **清单加载前置条件**：全量非分页元数据加载需依赖 CLI 的 `opencli list --manifest -f json`（要求 CLI 版本为 `2.0.2-fengwk.2` 及以上）。
-- **受管输出自动收集**：`douyin-ext` 插件中的主输出目录 `--op` 及兼容别名 `--output` 由 Hub 通过受管输出规则（`HubManagedOutputArguments`）自动识别并接管收集到执行资源组中（自动识别优先注入主输出参数 `--op`，兼容别名同样受 Hub 托管并禁止调用方传入），无需配置专用数据库 seed。
+- **受管输出自动收集**：`douyin-ext` 插件中的自有命令仅使用 `--op` 作为输出目录参数，由 Hub 通过受管输出规则（`HubManagedOutputArguments`）自动识别并注入资源目录，API 调用方不传；不写兼容别名。
+- **输出规则升级注意**：若管理员曾显式给这几个命令配置 `output` 规则，需改为 `op` 或删除规则使用自动识别；本 repo 无对应 SQL seed，不新增自动迁移或兼容逻辑。
 - **插件卷需主动更新**：先升级 Hub 镜像并确认两者版本，再在 `/plugins` 对已配置的源执行“安装/更新已选子插件”，最后核对已安装版本和命令目录。镜像升级**不会自动更新持久卷中的插件**（`/var/lib/opencli` 卷仍保持之前安装的插件版本）。当前 OpenCLI plugin installer 尚不支持 `#tag` / `#commit` pin；远程首次安装和后续 update 仍使用仓库默认分支，`plugins.lock.json` 会记录实际安装的 commit。
 
 ## 6. 故障排查

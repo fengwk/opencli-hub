@@ -47,29 +47,6 @@ class HubManagedOutputArgumentsTest {
         assertThat(HubManagedOutputArguments.shouldHideFromPublicCatalog(command.getArgs().get(0), null)).isFalse();
     }
 
-    /**
-     * 当命令同时包含主输出参数 op 与兼容参数 output 时，自动规则应选择第一个声明的受管参数（op），
-     * 同时公开目录应将 op 与 output 两个输出参数全部隐藏。
-     */
-    @Test
-    void shouldPickFirstManagedArgAsSyntheticRuleAndHideAllManagedArgs() {
-        OpenCliCommand command = new OpenCliCommand();
-        command.setCommandKey("douyin/download");
-        command.setArgs(List.of(
-            arg("keyword", "Search keyword"),
-            arg("op", "Output directory"),
-            arg("output", "输出目录")));
-        HubCommandOutputRule rule = HubManagedOutputArguments.syntheticRule(command);
-        assertThat(rule).isNotNull();
-        assertThat(rule.getArgumentName()).isEqualTo("op");
-        assertThat(rule.getTargetType()).isEqualTo(HubCommandOutputTargetType.DIRECTORY);
-
-        // All managed output args must be hidden from public catalog
-        assertThat(HubManagedOutputArguments.shouldHideFromPublicCatalog(command.getArgs().get(0), rule)).isFalse();
-        assertThat(HubManagedOutputArguments.shouldHideFromPublicCatalog(command.getArgs().get(1), rule)).isTrue();
-        assertThat(HubManagedOutputArguments.shouldHideFromPublicCatalog(command.getArgs().get(2), rule)).isTrue();
-    }
-
     private static OpenCliCommandArg arg(String name, String help) {
         OpenCliCommandArg arg = new OpenCliCommandArg();
         arg.setName(name);
