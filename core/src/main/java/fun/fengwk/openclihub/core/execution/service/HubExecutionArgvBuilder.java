@@ -1,5 +1,8 @@
 package fun.fengwk.openclihub.core.execution.service;
 
+import fun.fengwk.openclihub.core.command.catalog.OpenCliCommand;
+import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandArg;
+import fun.fengwk.openclihub.core.command.service.HubManagedOutputArguments;
 import fun.fengwk.openclihub.core.command.service.model.HubCommandOutputRule;
 import fun.fengwk.openclihub.core.command.validator.NormalizedOpenCliArgv;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
@@ -46,23 +49,38 @@ public class HubExecutionArgvBuilder {
     }
 
     /**
-     * Reject the request when the caller supplied the argument managed by an output rule:
-     * the Hub owns that argument and must append it itself, otherwise OpenCLI may receive
+     * Reject the request when the caller supplied any argument managed by an output rule
+     * or recognized as a Hub-managed output argument on the current command: the Hub owns
+     * these arguments and must append the effective one itself, otherwise OpenCLI may receive
      * a duplicate flag and the Output rule's contract is broken.
      */
     public void assertNoCallerOutputArgument(NormalizedOpenCliArgv normalized,
                                              HubCommandOutputRule outputRule) {
-        if (outputRule == null || normalized == null) {
-            return;
-        }
-        String managedName = outputRule.getArgumentName();
-        if (managedName == null || managedName.isBlank()) {
+        if (normalized == null) {
             return;
         }
         Map<String, List<String>> namedValues = normalized.getNamedValues();
-        if (namedValues.containsKey(managedName)) {
+        if (namedValues == null || namedValues.isEmpty()) {
+            return;
+        }
+
+        if (outputRule != null && outputRule.getArgumentName() != null
+            && !outputRule.getArgumentName().isBlank()
+            && namedValues.containsKey(outputRule.getArgumentName())) {
             throw HubErrorCodes.OPENCLI_RESOURCE_OUTPUT_ARGUMENT_MANAGED.asThrowable(
-                "Caller supplied a Hub-managed output argument: --" + managedName);
+                "Caller supplied a Hub-managed output argument: --" + outputRule.getArgumentName());
+        }
+
+        OpenCliCommand command = normalized.getCommand();
+        if (command != null && command.getArgs() != null) {
+            for (OpenCliCommandArg arg : command.getArgs()) {
+                if (arg != null && arg.getName() != null && !arg.getName().isBlank()
+                    && HubManagedOutputArguments.isManagedOutputArg(arg)
+                    && namedValues.containsKey(arg.getName())) {
+                    throw HubErrorCodes.OPENCLI_RESOURCE_OUTPUT_ARGUMENT_MANAGED.asThrowable(
+                        "Caller supplied a Hub-managed output argument: --" + arg.getName());
+                }
+            }
         }
     }
 
