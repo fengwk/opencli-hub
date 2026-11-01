@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Production catalog source: shells out to the pinned OpenCLI {@code list -f json} binary
+ * Production catalog source: shells out to the pinned OpenCLI {@code list --manifest -f json} binary
  * and exposes its stdout as the manifest stream.
  *
  * <p>The implementation uses {@link ProcessBuilder} directly, never {@code bash -c},
@@ -52,6 +52,7 @@ public class ProcessBuilderOpenCliCatalogSource implements OpenCliCatalogSource 
             List<String> command = List.of(
                 properties.getOpencli().getBinary(),
                 "list",
+                "--manifest",
                 "-f",
                 "json");
             ProcessBuilder builder = new ProcessBuilder(command);
@@ -76,7 +77,7 @@ public class ProcessBuilderOpenCliCatalogSource implements OpenCliCatalogSource 
             int exit = process.exitValue();
             if (exit != 0) {
                 String detail = firstNonBlank(decode(stderr), decode(stdout));
-                throw new IOException("`opencli list -f json` exited with code " + exit
+                throw new IOException("`opencli list --manifest -f json` exited with code " + exit
                     + (detail.isBlank() ? "" : ": " + abbreviate(detail)));
             }
             return new ByteArrayInputStream(stdout);
@@ -91,12 +92,12 @@ public class ProcessBuilderOpenCliCatalogSource implements OpenCliCatalogSource 
     }
 
     private IOException processTimeoutException() {
-        return new IOException("Timed out waiting for `opencli list -f json` process to exit after "
+        return new IOException("Timed out waiting for `opencli list --manifest -f json` process to exit after "
             + timeoutMillis + " ms");
     }
 
     private IOException outputTimeoutException() {
-        return new IOException("Timed out: `opencli list -f json` process exited but output did not reach EOF within "
+        return new IOException("Timed out: `opencli list --manifest -f json` process exited but output did not reach EOF within "
             + timeoutMillis + " ms");
     }
 
@@ -138,9 +139,9 @@ public class ProcessBuilderOpenCliCatalogSource implements OpenCliCatalogSource 
             if (cause instanceof IOException ioException) {
                 throw ioException;
             }
-            throw new IOException("Failed to capture `opencli list -f json` output", cause);
+            throw new IOException("Failed to capture `opencli list --manifest -f json` output", cause);
         } catch (CancellationException ex) {
-            throw new IOException("Failed to capture `opencli list -f json` output", ex);
+            throw new IOException("Failed to capture `opencli list --manifest -f json` output", ex);
         }
     }
 

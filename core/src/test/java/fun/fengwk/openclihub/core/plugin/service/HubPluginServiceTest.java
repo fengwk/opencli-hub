@@ -199,6 +199,82 @@ class HubPluginServiceTest {
             .hasMessageContaining("Failed to parse opencli plugin list JSON");
     }
 
+    @Test
+    void shouldUnwrapOpenCli2InstalledPluginSuccessEnvelope() {
+        OpenCliPluginCli pluginCli = mock(OpenCliPluginCli.class);
+        HubPluginService service = new HubPluginService(
+            mock(HubPluginSourceRepository.class),
+            pluginCli,
+            mock(OpenCliCommandCatalog.class), java.time.Clock.systemUTC());
+        when(pluginCli.run(List.of("list", "-f", "json"))).thenReturn(new OpenCliPluginCli.CliResult(
+            0,
+            """
+            {
+              "ok": true,
+              "data": [
+                {
+                  "name": "chatgpt-agent",
+                  "version": "0.1.2",
+                  "description": "Protocol stream",
+                  "commands": ["ask"]
+                }
+              ]
+            }
+            """,
+            ""));
+
+        var installed = service.listInstalled();
+
+        assertThat(installed).hasSize(1);
+        assertThat(installed.get(0).getName()).isEqualTo("chatgpt-agent");
+        assertThat(installed.get(0).getRaw()).isEqualTo("chatgpt-agent @0.1.2 — Protocol stream (ask)");
+    }
+
+    @Test
+    void shouldRejectOpenCli2InstalledPluginFailureEnvelope() {
+        OpenCliPluginCli pluginCli = mock(OpenCliPluginCli.class);
+        HubPluginService service = new HubPluginService(
+            mock(HubPluginSourceRepository.class),
+            pluginCli,
+            mock(OpenCliCommandCatalog.class), java.time.Clock.systemUTC());
+        when(pluginCli.run(List.of("list", "-f", "json"))).thenReturn(new OpenCliPluginCli.CliResult(
+            0,
+            """
+            {
+              "ok": false,
+              "error": {
+                "code": "PLUGIN_ERROR",
+                "message": "failed to list plugins"
+              }
+            }
+            """,
+            ""));
+
+        assertThatThrownBy(service::listInstalled)
+            .hasMessageContaining("Failed to parse opencli plugin list JSON");
+    }
+
+    @Test
+    void shouldRejectOpenCli2InstalledPluginMalformedEnvelopeData() {
+        OpenCliPluginCli pluginCli = mock(OpenCliPluginCli.class);
+        HubPluginService service = new HubPluginService(
+            mock(HubPluginSourceRepository.class),
+            pluginCli,
+            mock(OpenCliCommandCatalog.class), java.time.Clock.systemUTC());
+        when(pluginCli.run(List.of("list", "-f", "json"))).thenReturn(new OpenCliPluginCli.CliResult(
+            0,
+            """
+            {
+              "ok": true,
+              "data": "not-an-array"
+            }
+            """,
+            ""));
+
+        assertThatThrownBy(service::listInstalled)
+            .hasMessageContaining("Failed to parse opencli plugin list JSON");
+    }
+
 
     /** Empty desiredPlugins must still refresh installed plugins via official update, not install-skip. */
     @Test

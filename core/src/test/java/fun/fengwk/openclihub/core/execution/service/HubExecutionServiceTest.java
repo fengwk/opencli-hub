@@ -358,6 +358,122 @@ class HubExecutionServiceTest {
     }
 
     @Test
+    void shouldKeepRawBusinessJsonOutputWithoutUnwrapping() {
+        // Business JSON with ok:true or ok:false but no data/error fields must not be treated as envelope
+        String rawWithOkTrue = "{\"ok\":true,\"count\":10,\"items\":[\"a\",\"b\"]}";
+        executor.setBehavior(() -> FakeOpenCliExecutor.Behaviour.successJson(rawWithOkTrue));
+
+        HubExecutionDTO result = service.execute(request(instance.getId(), 1_000L));
+
+        assertThat(result.getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
+        assertThat(result.getExitCode()).isZero();
+        assertThat(result.getStdout()).isEqualTo(rawWithOkTrue);
+
+        String rawWithOkFalse = "{\"ok\":false,\"total\":0}";
+        executor.setBehavior(() -> FakeOpenCliExecutor.Behaviour.successJson(rawWithOkFalse));
+
+        HubExecutionDTO result2 = service.execute(request(instance.getId(), 1_000L));
+
+        assertThat(result2.getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
+        assertThat(result2.getExitCode()).isZero();
+        assertThat(result2.getStdout()).isEqualTo(rawWithOkFalse);
+    }
+
+    @Test
+    void shouldUnwrapOpenCli2SuccessEnvelopeAndPreserveNestedBusinessOkFalse() {
+        String cli2Output = """
+            {
+              "ok": true,
+              "data": {
+                "ok": false,
+                "msg": "business negative",
+                "items": [1, 2, 3]
+              }
+            }
+            """;
+        executor.setBehavior(() -> FakeOpenCliExecutor.Behaviour.successJson(cli2Output));
+
+        HubExecutionDTO result = service.execute(request(instance.getId(), 1_000L));
+
+        assertThat(result.getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
+        assertThat(result.getExitCode()).isZero();
+        // data payload unwrapped and written to stdout; nested ok:false must not cause failure
+        assertThat(result.getStdout()).isEqualTo("{\"ok\":false,\"msg\":\"business negative\",\"items\":[1,2,3]}");
+    }
+
+    @Test
+    void shouldUnwrapOpenCli2SuccessEnvelopeWithNullData() {
+        String cli2NullData = "{\"ok\": true, \"data\": null}";
+        executor.setBehavior(() -> FakeOpenCliExecutor.Behaviour.successJson(cli2NullData));
+
+        HubExecutionDTO result = service.execute(request(instance.getId(), 1_000L));
+
+        assertThat(result.getStatus()).isEqualTo(HubExecutionStatus.SUCCEEDED);
+        assertThat(result.getExitCode()).isZero();
+        assertThat(result.getStdout()).isEqualTo("null");
+    }
+
+    @Test
+    void shouldRejectOpenCliSuccessEnvelopeMissingData() {
+        // A malformed success envelope must not become a successful null payload.
+        String stdout = "{\"ok\":true,\"error\":{\"message\":\"malformed\"}}";
+        executor.setBehavior(() -> FakeOpenCliExecutor.Behaviour.successJson(stdout));
+
+        HubExecutionDTO result = service.execute(request(instance.getId(), 1_000L));
+
+        assertThat(result.getStatus()).isEqualTo(HubExecutionStatus.FAILED);
+        assertThat(result.getErrorMessage()).contains("missing data");
+        assertThat(result.getStdout()).isEqualTo(stdout);
+    }
+
+    @Test
+    void shouldHandleOpenCli2FailureEnvelopeWithNonZeroExitCodeAndPreserveStdoutDiagnostics() {
+        String failureStdout = """
+            {
+              "ok": false,
+              "error": {
+                "code": "API_RATE_LIMIT",
+                "message": "Exceeded requests",
+                "exitCode": 1
+              }
+            }
+            """;
+        executor.setBehavior(() -> FakeOpenCliExecutor.Behaviour.failure(1, failureStdout, "process failed"));
+
+        HubExecutionDTO result = service.execute(request(instance.getId(), 1_000L));
+
+        assertThat(result.getStatus()).isEqualTo(HubExecutionStatus.FAILED);
+        assertThat(result.getExitCode()).isEqualTo(1);
+        assertThat(result.getErrorMessage()).contains("OpenCLI exited with code 1");
+        assertThat(result.getErrorMessage()).contains("API_RATE_LIMIT: Exceeded requests");
+        // Failure stdout must be preserved for diagnostics
+        assertThat(result.getStdout()).isEqualTo(failureStdout);
+    }
+
+    @Test
+    void shouldHandleOpenCli2FailureEnvelopeWithZeroExitCode() {
+        String failureStdout = """
+            {
+              "ok": false,
+              "error": {
+                "code": "PLUGIN_CRASH",
+                "message": "uncaught rejection",
+                "exitCode": 3
+              }
+            }
+            """;
+        // Exit code from process is 0, but envelope says ok:false
+        executor.setBehavior(() -> FakeOpenCliExecutor.Behaviour.successJson(failureStdout));
+
+        HubExecutionDTO result = service.execute(request(instance.getId(), 1_000L));
+
+        assertThat(result.getStatus()).isEqualTo(HubExecutionStatus.FAILED);
+        assertThat(result.getExitCode()).isEqualTo(3);
+        assertThat(result.getErrorMessage()).isEqualTo("PLUGIN_CRASH: uncaught rejection");
+        assertThat(result.getStdout()).isEqualTo(failureStdout);
+    }
+
+    @Test
     void shouldTimeOutInQueueWithoutRunningOrStartingOpenCli() throws Exception {
         CountDownLatch active = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);

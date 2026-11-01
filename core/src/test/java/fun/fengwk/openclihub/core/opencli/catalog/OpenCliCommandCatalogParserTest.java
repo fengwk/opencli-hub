@@ -161,4 +161,89 @@ class OpenCliCommandCatalogParserTest {
             .hasValueSatisfying(c -> assertThat(c.getSiteSession()).isNull());
     }
 
+    @Test
+    void shouldParseEnvelopeSuccessWithOver25CommandsAndRepeatableLifecycleFields() {
+        StringBuilder json = new StringBuilder("{\"ok\": true, \"data\": [");
+        for (int i = 1; i <= 30; i++) {
+            if (i > 1) {
+                json.append(",");
+            }
+            json.append(String.format("""
+                {
+                  "site": "site%d",
+                  "name": "cmd%d",
+                  "browser": true,
+                  "description": "Command %d",
+                  "lifecycle": "post-run",
+                  "args": [
+                    {
+                      "name": "arg%d",
+                      "type": "string",
+                      "repeatable": true
+                    }
+                  ]
+                }
+                """, i, i, i, i));
+        }
+        json.append("]}");
+
+        OpenCliCommandIndex index = parser.parse(json.toString());
+        // Verify full catalog (>25) is parsed without truncation
+        assertThat(index.size()).isEqualTo(30);
+        // Verify first and last entries exist
+        assertThat(index.findByKey("site1/cmd1")).isPresent();
+        assertThat(index.findByKey("site30/cmd30")).isPresent();
+        // Verify arguments survived despite repeatable and lifecycle fields
+        OpenCliCommand first = index.findByKey("site1/cmd1").orElseThrow();
+        assertThat(first.getArgs()).hasSize(1);
+        assertThat(first.getArgs().get(0).getName()).isEqualTo("arg1");
+    }
+
+    @Test
+    void shouldRejectEnvelopeFailure() {
+        String failureJson = """
+            {
+              "ok": false,
+              "error": {
+                "code": "REGISTRY_ERROR",
+                "message": "Failed to load manifest"
+              }
+            }
+            """;
+        assertThatThrownBy(() -> parser.parse(failureJson))
+            .isInstanceOf(OpenCliCatalogParseException.class)
+            .hasMessageContaining("REGISTRY_ERROR: Failed to load manifest");
+    }
+
+    @Test
+    void shouldRejectMalformedEnvelopeSuchAsPaginatedListSummary() {
+        // Normal list returns a summary object under data instead of full manifest array
+        String paginatedSummary = """
+            {
+              "ok": true,
+              "data": {
+                "commands": [
+                  {"command": "bilibili hot", "description": "Hot", "access": "read"}
+                ],
+                "total": 100,
+                "nextOffset": 25
+              }
+            }
+            """;
+        assertThatThrownBy(() -> parser.parse(paginatedSummary))
+            .isInstanceOf(OpenCliCatalogParseException.class)
+            .hasMessageContaining("Expected 'data' to be a JSON array");
+    }
+
+    @Test
+    void shouldRejectMalformedEnvelopeMissingOkOrNotBoolean() {
+        String missingOk = "{\"data\": [{\"site\": \"a\", \"name\": \"b\", \"browser\": true, \"args\": []}]}";
+        assertThatThrownBy(() -> parser.parse(missingOk))
+            .isInstanceOf(OpenCliCatalogParseException.class);
+
+        String okString = "{\"ok\": \"true\", \"data\": [{\"site\": \"a\", \"name\": \"b\", \"browser\": true, \"args\": []}]}";
+        assertThatThrownBy(() -> parser.parse(okString))
+            .isInstanceOf(OpenCliCatalogParseException.class);
+    }
+
 }

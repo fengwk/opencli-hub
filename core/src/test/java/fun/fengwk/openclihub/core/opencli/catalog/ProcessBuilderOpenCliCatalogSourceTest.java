@@ -55,6 +55,27 @@ class ProcessBuilderOpenCliCatalogSourceTest {
     }
 
     @Test
+    void shouldInvokeOpenCliWithListManifestJsonArgv() throws Exception {
+        // Assert that the spawned process receives exactly: ["list", "--manifest", "-f", "json"]
+        Path argsFile = tempDir.resolve("args.txt");
+        Path binary = executable("record-argv.sh", """
+            #!/bin/sh
+            printf '%%s\\n' "$@" > "%s"
+            printf '[{"name":"demo"}]'
+            """.formatted(argsFile));
+        ProcessBuilderOpenCliCatalogSource source = new ProcessBuilderOpenCliCatalogSource(
+            properties(binary), 2000L);
+
+        try (var inputStream = source.open()) {
+            assertEquals("[{\"name\":\"demo\"}]",
+                new String(inputStream.readAllBytes(), StandardCharsets.UTF_8));
+        }
+
+        List<String> actualArgs = Files.readAllLines(argsFile, StandardCharsets.UTF_8);
+        assertEquals(List.of("list", "--manifest", "-f", "json"), actualArgs);
+    }
+
+    @Test
     void shouldKeepStderrOutOfSuccessfulJsonOutput() throws Exception {
         // Plugin discovery may emit diagnostics (including non-UTF-8 bytes) on stderr;
         // catalog JSON must remain a stdout-only protocol.

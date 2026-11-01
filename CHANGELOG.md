@@ -12,6 +12,8 @@
 
 ### 变更
 
+- 成对升级 OpenCLI artifact lock 至已正式发布并核验的 `fork-v2.0.2-fengwk.2`（CLI `2.0.2-fengwk.2` / extension `1.0.37`）：全面支持 OpenCLI 2 统一 JSON 封套（`{ok: true, data: ...}` / `{ok: false, error: ...}`），自动解包顶层成功数据并保留失败错误诊断与原始 stdout；通过 `opencli list --manifest -f json` 全量加载包含 `repeatable` 与 `lifecycle` 业务元数据的命令目录；支持已装插件列表解包；自动接管 `douyin-ext` 受管 `--output` 目录并归档至资源组。
+
 - 标签页自动回收统一为 Instance 连续空闲策略（复用 `warmTabTtlSeconds`，默认 1800 秒，0 下一次空闲巡检回收，-1 禁用），覆盖常驻、keep-tab 和替换遗留 adapter 页面；任务接收/真实结束精确重置计时，清理期间阻止提交和生命周期交错，保留用户/借用页面、登录数据和空白占位。
 - 删除逐 tab warm-TTL 参数注入和旧回收策略，不保留 fallback。要求 daemon 与目标 extension profile 都支持 `adapter-tab-reclaim-v1`，缺失时提示成对升级并拒绝实例启动。
 - 成对升级 artifact lock 至已正式发布并核验的 `fork-v1.8.8-fengwk.5`（CLI `1.8.8-fengwk.5` / extension `1.0.36`），启用实例级回收能力，并包含 undici `7.30.0` 高危漏洞修复；资产 URL、SHA256、source revision 与 Release build-info 对齐。

@@ -1,11 +1,13 @@
 package fun.fengwk.openclihub.core.opencli.catalog;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommand;
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandArg;
+import fun.fengwk.openclihub.core.opencli.json.OpenCliJsonOutput;
 import fun.fengwk.openclihub.share.model.command.HubCommandAccess;
 import fun.fengwk.openclihub.share.model.execution.SiteSessionMode;
 import java.io.IOException;
@@ -57,13 +59,14 @@ public class OpenCliCommandCatalogParser {
         if (json == null || json.isBlank()) {
             throw new OpenCliCatalogParseException("Catalog JSON must not be blank");
         }
-        List<OpenCliManifestEntry> entries;
         try {
-            entries = objectMapper.readValue(json, new TypeReference<>() { });
-        } catch (JsonProcessingException ex) {
+            JsonNode root = objectMapper.readTree(json);
+            return parseJsonNode(root);
+        } catch (OpenCliCatalogParseException ex) {
+            throw ex;
+        } catch (Exception ex) {
             throw new OpenCliCatalogParseException("Failed to parse cli-manifest.json", ex);
         }
-        return parse(entries);
     }
 
     /**
@@ -76,12 +79,25 @@ public class OpenCliCommandCatalogParser {
         if (in == null) {
             throw new OpenCliCatalogParseException("Catalog input stream must not be null");
         }
-        List<OpenCliManifestEntry> entries;
         try {
-            entries = objectMapper.readValue(in, new TypeReference<>() { });
-        } catch (IOException ex) {
+            JsonNode root = objectMapper.readTree(in);
+            return parseJsonNode(root);
+        } catch (OpenCliCatalogParseException ex) {
+            throw ex;
+        } catch (Exception ex) {
             throw new OpenCliCatalogParseException("Failed to parse cli-manifest.json stream", ex);
         }
+    }
+
+    private OpenCliCommandIndex parseJsonNode(JsonNode root) {
+        ArrayNode entriesNode;
+        try {
+            entriesNode = OpenCliJsonOutput.unwrapDataArray(root);
+        } catch (IllegalArgumentException ex) {
+            throw new OpenCliCatalogParseException("Failed to parse cli-manifest: " + ex.getMessage(), ex);
+        }
+        List<OpenCliManifestEntry> entries = objectMapper.convertValue(
+            entriesNode, new TypeReference<List<OpenCliManifestEntry>>() { });
         return parse(entries);
     }
 

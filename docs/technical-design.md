@@ -56,8 +56,8 @@
 | 数据库 | 编译期三变体：PostgreSQL 16（默认）、MySQL 8.4 LTS、SQLite；H2 仅测试（Maven `test` scope） |
 | SQL | MyBatis Auto Mapper 生成常规 SQL；每个变体通过 Spring SQL initialization 幂等初始化当前 schema（schema-only，无 data SQL，system settings 由应用懒初始化）；旧 MySQL schema 手工迁移 |
 | 浏览器 | 正式 `google-chrome-stable`，非 Chromium/Chrome for Testing |
-| extension | 由 artifact lock 固定，当前 fork 1.0.36；构建期打包固定签名 CRX3，运行时通过 Linux managed policy + loopback update server 强制安装 |
-| OpenCLI | 由 artifact lock 固定，当前 fork 1.8.8-fengwk.5；Hub 通过 `ProcessBuilder` 调用，不在 Hub 内修改 CLI |
+| extension | 由 artifact lock 固定，当前 fork 1.0.37；构建期打包固定签名 CRX3，运行时通过 Linux managed policy + loopback update server 强制安装 |
+| OpenCLI | 由 artifact lock 固定，当前 fork 2.0.2-fengwk.2；Hub 通过 `ProcessBuilder` 调用，不在 Hub 内修改 CLI |
 | daemon | 单容器共享一个 OpenCLI daemon |
 | Instance 创建 | 同步创建，成功后才插入数据库；失败清理全部残留 |
 | Instance 创建完成 | Chrome 保持运行，数据库状态为 `RUNNING` |
@@ -748,11 +748,13 @@ Repository 不负责：
 
 ### 11.1 加载
 
-应用启动时执行：
+应用启动或插件维护重载时执行：
 
 ```bash
-opencli list -f json
+opencli list --manifest -f json
 ```
+
+OpenCLI 2 采用 `--manifest` 全量无分页导出当前 registry 含 plugins 的完整元数据，输出 `{ok: true, data: [...]}`。Hub 严格解包顶层 `data` 数组，拒绝普通分页 list summary（普通 list 默认分页每页 25 条且缺失完整参数元数据，不能直接消费）；同时保持对测试及历史 raw 数组 fixture 的兼容。
 
 解析并加载：
 
@@ -1058,7 +1060,7 @@ sequenceDiagram
 正式 Google Chrome stable 不依赖 unpacked extension 的命令行加载。Release 镜像采用构建期签名和 managed policy：
 
 ```text
-OpenCLI Browser Bridge extension 1.0.36
+OpenCLI Browser Bridge extension 1.0.37
 -> 构建阶段校验固定版本 release asset
 -> BuildKit secret 仅在构建阶段提供受保护的 stable signing key
 -> 使用 google-chrome-stable --pack-extension 生成 CRX3
@@ -1526,9 +1528,12 @@ opencli
 
 ### 22.5 输出处理
 
-- exitCode=0 且 stdout 可解析为 JSON：`SUCCEEDED`；
+- **成功封套与解包**：OpenCLI 2 命令执行 `--format json` 成功时统一输出 `{ok: true, data: [payload]}`。Hub 识别顶层布尔 `ok: true` 封套后解包其 `data` 写回 stdout，以对齐历史业务 payload API；只解包最外层，payload 内部的业务 `ok: false` 不会被递归解包；若 `data` 为 null 写回 `"null"`；
+- **raw 业务 JSON 兼容**：若 stdout 为未封套的 raw JSON（包括含有普通 `ok` 字段但无 `data`/`error` 的业务对象），保持原样 stdout；
+- **错误封套与诊断**：当命令执行失败或返回错误封套 `{ok: false, error: {code, message, exitCode, ...}}` 时，Hub 提取 `error.code` / `error.message` / `error.exitCode` 设置 exitCode 与 errorMessage，不吞掉已有非 0 exitCode 的 errorMessage；原始失败 stdout 完整保留用于排查诊断；
+- exitCode=0 且 stdout 可解析为有效 JSON（或成功解包）：`SUCCEEDED`；
 - exitCode!=0：`FAILED`；
-- exitCode=0 但 JSON 无法解析：`FAILED`，错误 `OPENCLI_INVALID_JSON_OUTPUT`；
+- exitCode=0 但 stdout 无法解析为 JSON：`FAILED`，错误 `OPENCLI_INVALID_JSON_OUTPUT`；
 - stdout/stderr 默认分别最多捕获 1,048,576 个字符，可通过 `OPENCLI_HUB_MAX_CAPTURE_CHARS` 调整，超出后截断并记录是否截断；
 - 资源列表来自 execution resource group 扫描。
 

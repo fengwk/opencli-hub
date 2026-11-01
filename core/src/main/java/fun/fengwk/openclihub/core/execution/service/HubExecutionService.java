@@ -1,5 +1,6 @@
 package fun.fengwk.openclihub.core.execution.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import fun.fengwk.convention4j.api.code.ThrowableConventionErrorCode;
 import fun.fengwk.convention4j.api.page.Page;
@@ -19,6 +20,7 @@ import fun.fengwk.openclihub.core.execution.runtime.HubExecutionConcurrencyMode;
 import fun.fengwk.openclihub.core.execution.service.converter.HubExecutionConverter;
 import fun.fengwk.openclihub.core.execution.service.model.HubExecution;
 import fun.fengwk.openclihub.core.instance.service.model.HubInstance;
+import fun.fengwk.openclihub.core.opencli.json.OpenCliJsonOutput;
 import fun.fengwk.openclihub.core.property.OpenCliHubProperties;
 import fun.fengwk.openclihub.core.resource.model.HubExecutionResourceGroup;
 import fun.fengwk.openclihub.share.constant.HubErrorCodes;
@@ -553,18 +555,68 @@ public class HubExecutionService {
             }
             return;
         }
+
+        String rawStdout = result.getStdout();
+        JsonNode json = null;
+        if (rawStdout != null && !rawStdout.isBlank()) {
+            try {
+                json = objectMapper.readTree(rawStdout);
+            } catch (Exception ignored) {
+                // Non-JSON output
+            }
+        }
+
+        // OpenCLI 2 envelope detection: object with boolean `ok` and either `data` or `error`.
+        boolean isEnvelope = json != null && OpenCliJsonOutput.isEnvelope(json);
+
+        if (isEnvelope) {
+            boolean ok = json.get("ok").asBoolean();
+            if (ok && result.getExitCode() == 0) {
+                // Success: unwrap data and write back to stdout. Do not recursively unwrap.
+                JsonNode dataNode = json.get("data");
+                if (dataNode == null) {
+                    result.setExitCode(1);
+                    result.setErrorMessage(HubErrorCodes.OPENCLI_INVALID_JSON_OUTPUT.getCode()
+                        + ": OpenCLI success envelope is missing data");
+                    return;
+                }
+                result.setStdout(dataNode.toString());
+                return;
+            } else {
+                // Failure envelope: extract error diagnostics, update exitCode/errorMessage,
+                // do not swallow existing exit!=0 errorMessage, preserve raw stdout for diagnostics.
+                String cliError = OpenCliJsonOutput.extractErrorMessage(json);
+                Integer cliExitCode = OpenCliJsonOutput.extractExitCode(json);
+
+                if (result.getExitCode() == 0) {
+                    result.setExitCode(cliExitCode != null && cliExitCode != 0 ? cliExitCode : 1);
+                }
+
+                String existingError = result.getErrorMessage();
+                if (existingError == null || existingError.isBlank()) {
+                    result.setErrorMessage(!cliError.isBlank()
+                        ? cliError : "OpenCLI exited with code " + result.getExitCode());
+                } else if (!cliError.isBlank() && !existingError.contains(cliError)) {
+                    if (existingError.equals("OpenCLI exited with code " + result.getExitCode())) {
+                        result.setErrorMessage(existingError + ": " + cliError);
+                    } else {
+                        result.setErrorMessage(existingError + "; " + cliError);
+                    }
+                }
+                return;
+            }
+        }
+
+        // Not an envelope (raw business JSON or non-JSON output)
         if (result.getExitCode() != 0) {
             if (result.getErrorMessage() == null || result.getErrorMessage().isBlank()) {
                 result.setErrorMessage("OpenCLI exited with code " + result.getExitCode());
             }
             return;
         }
-        try {
-            var json = objectMapper.readTree(result.getStdout());
-            if (json == null || json.isMissingNode()) {
-                throw new IllegalArgumentException("empty JSON output");
-            }
-        } catch (Exception ex) {
+
+        // exitCode == 0 but not valid JSON (e.g. invalid JSON syntax or empty stdout)
+        if (json == null || json.isMissingNode()) {
             result.setExitCode(1);
             result.setErrorMessage(HubErrorCodes.OPENCLI_INVALID_JSON_OUTPUT.getCode()
                 + ": stdout is not valid JSON");

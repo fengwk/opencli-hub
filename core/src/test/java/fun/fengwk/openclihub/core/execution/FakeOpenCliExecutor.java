@@ -155,7 +155,11 @@ public class FakeOpenCliExecutor implements OpenCliExecutor {
         }
 
         public static Behaviour failure(int exitCode, String stderr) {
-            return new Behaviour(exitCode, "", stderr, false, 0L, null);
+            return failure(exitCode, "", stderr);
+        }
+
+        public static Behaviour failure(int exitCode, String stdout, String stderr) {
+            return new Behaviour(exitCode, stdout, stderr, false, 0L, null);
         }
 
         public static Behaviour invalidJson(String stdout) {

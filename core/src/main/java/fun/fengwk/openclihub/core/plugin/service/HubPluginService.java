@@ -2,7 +2,9 @@ package fun.fengwk.openclihub.core.plugin.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import fun.fengwk.openclihub.core.command.catalog.OpenCliCommandCatalog;
+import fun.fengwk.openclihub.core.opencli.json.OpenCliJsonOutput;
 import fun.fengwk.openclihub.core.plugin.cli.OpenCliPluginCli;
 import fun.fengwk.openclihub.core.plugin.repo.HubPluginSourceRepository;
 import fun.fengwk.openclihub.core.plugin.service.model.HubPluginSource;
@@ -319,10 +321,8 @@ public class HubPluginService {
             return List.of();
         }
         try {
-            JsonNode plugins = JSON_MAPPER.readTree(list.stdout());
-            if (plugins == null || !plugins.isArray()) {
-                throw new IllegalArgumentException("expected JSON array");
-            }
+            JsonNode root = JSON_MAPPER.readTree(list.stdout());
+            ArrayNode plugins = OpenCliJsonOutput.unwrapDataArray(root);
             List<HubInstalledPluginDTO> result = new ArrayList<>();
             for (JsonNode plugin : plugins) {
                 String name = text(plugin, "name");

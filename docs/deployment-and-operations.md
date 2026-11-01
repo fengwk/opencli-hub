@@ -9,7 +9,7 @@
 3. 为 Hub 分配至少 `2gb` shared memory，并验证宿主 seccomp 策略允许 `seccomp=unconfined`。Compose 文件已经声明这两个条件，不要删除。
 4. Gateway/反向代理必须提供 TLS、认证、授权、限流，并允许 `/api/instances/{id}/vnc` WebSocket Upgrade 和二进制帧透传。
 5. 为 `/data/opencli-hub`、`/var/lib/opencli` 及数据库（PostgreSQL/MySQL）备份准备受限、加密的存储位置；SQLite 备份即 data volume 快照。
-6. 实例级空闲回收要求 daemon 与每个 Browser Bridge profile 都广告 `adapter-tab-reclaim-v1`。默认 artifact lock 已成对钉住正式发布并核验的 CLI `1.8.8-fengwk.5` / extension `1.0.36`（包含 undici 高危漏洞修复），升级时必须复用原 CRX signing key；缺少能力的旧版本会明确拒绝实例启动，不降级到旧策略。
+6. 实例级空闲回收要求 daemon 与每个 Browser Bridge profile 都广告 `adapter-tab-reclaim-v1`。成对固定已正式发布并核验的 CLI `2.0.2-fengwk.2` / extension `1.0.37`；升级时必须复用原 CRX signing key；缺少能力的旧版本会明确拒绝实例启动，不降级到旧策略。
 
 Hub 容器和 Chrome 以 UID/GID `1000:1000` 运行。若改用 bind mount，宿主目录必须允许该用户读写。
 
@@ -61,7 +61,7 @@ Dockerfile 将其作为 BuildKit secret `opencli_extension_signing_key` 挂载�
 
 ### GitHub 自动构建并发布镜像
 
-推送 `docker` 分支会触发 `.github/workflows/docker-publish.yml`，按数据库矩阵
+推送 `main` 分支会触发 `.github/workflows/docker-publish.yml`，按数据库矩阵
 `postgresql` / `mysql` / `sqlite` 分别构建 `linux/amd64` 镜像并推送以下 Docker Hub tag：
 
 ```text
@@ -222,14 +222,19 @@ workflow 共用该文件，因此官方 baseline 与已发布 fork Release 的�
 最终镜像设置 `OPENCLI_DISABLE_UPDATE_CHECK=1`，关闭 OpenCLI 运行时 updater 提示与联网版本检查。
 无论官方 baseline 还是 fork CLI，升级路径都是改 lock 后重建镜像，而不是容器内自动更新。
 
-当前仓库默认钉住已发布并重新下载验证的 fork Release：
+当前仓库已完成 OpenCLI 2 输出契约兼容，默认钉住已发布并验证的 fork Release：
 
 ```text
 package=@jackwener/opencli
-CLI version=1.8.8-fengwk.5
-extension version=1.0.36
-source revision=fengwk/OpenCLI@4f7553d29a6801e05b8c73d1551faa092a36242a
+CLI version=2.0.2-fengwk.2
+extension version=1.0.37
+source revision=fengwk/OpenCLI@0742649b37549ad5e51967f510078b83531167a5
 ```
+
+OpenCLI 2 输出契约兼容性说明：
+- **目录元数据**：Catalog 加载使用 `opencli list --manifest -f json`，全量无分页导出当前 registry 含 plugins 的完整参数元数据；同时兼容旧版 raw 数组 fixture，严格解包 `ok: true` 数组并拒绝普通分页 summary（避免仅返回前 25 项与缺失 args）。
+- **命令输出与错误**：命令执行 `--format json` 输出 `{ok:true, data:[payload]}`，Hub 自动解包顶层 `data` 并写回 stdout 以对齐历史业务 payload API，不递归解包；当执行失败或返回错误封套 `{ok:false, error:{code, message, ...}}` 时，Hub 提取错误码与错误信息且保留退出码非 0 已有的错误信息，原始 stdout 保持不变作为错误诊断。
+- **插件列表**：`opencli plugin list -f json` 输出 `{ok:true, data:[...]}` 自动解包，同时兼容旧版 raw 数组与官方空列表提示文本。
 
 升级或切换 fork 时：
 
@@ -241,22 +246,22 @@ source revision=fengwk/OpenCLI@4f7553d29a6801e05b8c73d1551faa092a36242a
 4. 构建后确认镜像内 `/opt/opencli/artifact-build-info.json` 反映解析结果；smoke 会比较
    `opencli --version` 与该文件中的 `cli.version`。
 
-当前 fork Release（tag `fork-v1.8.8-fengwk.5`，CLI `1.8.8-fengwk.5` + extension `1.0.36`）：
+当前 fork Release（tag `fork-v2.0.2-fengwk.2`，CLI `2.0.2-fengwk.2` + extension `1.0.37`）：
 
 ```bash
 # scripts/docker/opencli-artifact.lock.env
 OPENCLI_PACKAGE=@jackwener/opencli
-OPENCLI_VERSION=1.8.8-fengwk.5
-OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.5/jackwener-opencli-1.8.8-fengwk.5.tgz
-OPENCLI_CLI_SHA256=8e6373bb4de1089b48a4e8767b351007256d8523664664a885e44ad8f11aaa8f
-OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@4f7553d29a6801e05b8c73d1551faa092a36242a
-EXTENSION_VERSION=1.0.36
-OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v1.8.8-fengwk.5/opencli-extension-v1.0.36.zip
-OPENCLI_EXTENSION_SHA256=40de83bdf9ea5582733dff6671e5cd19b8b493137bf8953d68563c9ed85a4fba
+OPENCLI_VERSION=2.0.2-fengwk.2
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.2/jackwener-opencli-2.0.2-fengwk.2.tgz
+OPENCLI_CLI_SHA256=cf1ca862477a87bcfafd7683c3bebf4d12604379ba952686ac239bb1a9de9d3d
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@0742649b37549ad5e51967f510078b83531167a5
+EXTENSION_VERSION=1.0.37
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.2/opencli-extension-v1.0.37.zip
+OPENCLI_EXTENSION_SHA256=ce7fe60b17df684bacd4f8194f47e06a3fcb9c90a55402a2bd4eba084929bd5d
 ```
 
 镜像升级不会更新已有的插件卷。升级完成、确认 CLI/extension 版本后，通过
-[`/plugins` 的插件维护流程](plugins.md) 将 `my-opencli` 更新至 `0.1.57`；
+[`/plugins` 的插件维护流程](plugins.md) 将 `my-opencli` 更新至已发布的 `0.1.62`（五插件统一版本）；
 `chatgpt-agent` 需要这一对版本才能捕获 HTTP SSE 回合。
 
 可选 build-arg 仅覆盖**单次构建**，不改变仓库默认 pin：

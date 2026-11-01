@@ -77,7 +77,7 @@ Hub 配置的 `desiredPlugins` 是**子插件名**（如 `crm`），不是任意
 | DELETE | `/api/plugins/sources/{id}` | 删除**配置**（默认不卸载已装插件） |
 | POST | `/api/plugins/sources/{id}/sync` | 同步该源（空 desiredPlugins 时仅 install；已装会 skip） |
 | POST | `/api/plugins/sources/{id}/update-installed` | 仅更新已装插件（`opencli plugin update`） |
-| GET | `/api/plugins/installed` | 包装 `opencli plugin list -f json`，仅返回真实插件条目 |
+| GET | `/api/plugins/installed` | 包装 `opencli plugin list -f json`（OpenCLI 2 输出 `{ok: true, data: [...]}` 解包，兼容旧版 raw 数组与空列表文本），仅返回真实插件条目 |
 | POST | `/api/plugins/reload-catalog` | 仅刷新 Hub Command Catalog |
 
 管理端页面：`/plugins`。
@@ -190,12 +190,10 @@ opencli plugin install github:fengwk/my-opencli/chatgpt-agent
 `chatgpt-agent`，并在该 Instance 的 Chrome Profile 中完成 ChatGPT 登录，才能执行
 `chatgpt-agent/*` 命令。
 
-仓库版本为 `v0.1.57`（四个子插件统一版本）；`chatgpt-agent` 所需的 `.3` composer 修复
-与 SSE 能力已包含在当前 Hub 钉住的 CLI `1.8.8-fengwk.5` / Browser Bridge `1.0.36` 中。先升级 Hub 镜像并确认两者版本，
-再在 `/plugins` 对已配置的源执行“安装/更新已选子插件”，最后核对已安装版本和命令目录。
-镜像升级不会自动更新持久卷中的插件。当前 OpenCLI plugin installer 尚不支持
-`#tag` / `#commit` pin；远程首次安装和后续 update 仍使用仓库默认分支，
-`plugins.lock.json` 会记录实际安装的 commit。
+仓库已发布 `v0.1.62`（五个子插件统一版本，包含新增的 `douyin-ext` 插件）；`chatgpt-agent` 所需的 `.3` composer 修复与 SSE 能力在当前 Hub 钉住的 CLI `2.0.2-fengwk.2` / Browser Bridge `1.0.37` 中已包含。
+- **清单加载前置条件**：全量非分页元数据加载需依赖 CLI 的 `opencli list --manifest -f json`（要求 CLI 版本为 `2.0.2-fengwk.2` 及以上）。
+- **受管输出自动收集**：`douyin-ext` 插件中的 `--output` 选项由 Hub 通过受管输出规则（`HubManagedOutputArguments`）自动识别并接管收集到执行资源组中，无需配置专用数据库 seed。
+- **插件卷需主动更新**：先升级 Hub 镜像并确认两者版本，再在 `/plugins` 对已配置的源执行“安装/更新已选子插件”，最后核对已安装版本和命令目录。镜像升级**不会自动更新持久卷中的插件**（`/var/lib/opencli` 卷仍保持之前安装的插件版本）。当前 OpenCLI plugin installer 尚不支持 `#tag` / `#commit` pin；远程首次安装和后续 update 仍使用仓库默认分支，`plugins.lock.json` 会记录实际安装的 commit。
 
 ## 6. 故障排查
 
