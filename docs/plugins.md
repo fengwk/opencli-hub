@@ -190,7 +190,7 @@ opencli plugin install github:fengwk/my-opencli/chatgpt-agent
 `chatgpt-agent`，并在该 Instance 的 Chrome Profile 中完成 ChatGPT 登录，才能执行
 `chatgpt-agent/*` 命令。
 
-仓库已发布 `v0.1.62`（五个子插件统一版本，包含新增的 `douyin-ext` 插件）；`chatgpt-agent` 所需的 `.3` composer 修复与 SSE 能力在当前 Hub 钉住的 CLI `2.0.2-fengwk.2` / Browser Bridge `1.0.37` 中已包含。
+仓库已发布 `v0.1.63`（五个子插件统一版本，抖音与即梦下载命令统一使用 `--op`）；`chatgpt-agent` 所需的 `.3` composer 修复与 SSE 能力在当前 Hub 钉住的 CLI `2.0.2-fengwk.2` / Browser Bridge `1.0.37` 中已包含。
 - **清单加载前置条件**：全量非分页元数据加载需依赖 CLI 的 `opencli list --manifest -f json`（要求 CLI 版本为 `2.0.2-fengwk.2` 及以上）。
 - **受管输出自动收集**：`douyin-ext download`、`jimeng-agent status` 与 `jimeng-agent canvas-v0-download` 仅使用 `--op` 作为输出目录参数。Hub 通过 `HubManagedOutputArguments` 自动识别并注入执行资源目录，API 调用方不得传入该参数。
 - **输出规则升级注意**：若上述命令已有管理员显式配置的 `output` 规则，升级插件时需将规则的参数名改为 `op`，或删除旧规则以使用自动识别。
