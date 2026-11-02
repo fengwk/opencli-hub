@@ -76,7 +76,7 @@ Hub 配置的 `desiredPlugins` 是**子插件名**（如 `crm`），不是任意
 | PUT | `/api/plugins/sources/{id}` | 更新源 |
 | DELETE | `/api/plugins/sources/{id}` | 删除**配置**（默认不卸载已装插件） |
 | POST | `/api/plugins/sources/{id}/sync` | 同步该源（空 desiredPlugins 时仅 install；已装会 skip） |
-| POST | `/api/plugins/sources/{id}/update-installed` | 仅更新已装插件（`opencli plugin update`） |
+| POST | `/api/plugins/sources/{id}/update-installed` | 仅更新已装插件，不补装；desiredPlugins 非空时更新该列表，空时更新全部已装插件 |
 | GET | `/api/plugins/installed` | 包装 `opencli plugin list -f json`（OpenCLI 2 输出 `{ok: true, data: [...]}` 解包，兼容旧版 raw 数组与空列表文本），仅返回真实插件条目 |
 | POST | `/api/plugins/reload-catalog` | 仅刷新 Hub Command Catalog |
 
@@ -111,6 +111,17 @@ desired 非空:
 ```
 
 同步是全局互斥的（同一时刻只允许一个 sync）。
+
+### 已安装插件升级
+
+对已经安装的插件，在 `/plugins` 使用独立的“更新已安装”按钮，或调用
+`POST /api/plugins/sources/{id}/update-installed`。`desiredPlugins` 非空时更新该列表；
+为空时更新全部已安装插件，均不会补装缺失插件。维护前确认执行中和排队中的任务均已结束。
+
+空 `desiredPlugins` 的“安装默认集合”只走 install，已装插件可能被 skip，不能据此判断版本已升级。
+更新成功后 Hub 会自动刷新 Catalog；再用 `GET /api/plugins/installed` 核对真实版本，
+并用 `GET /api/opencli/commands?website=chatgpt-agent` 等接口核对命令目录。
+单独“刷新命令目录”不会拉取或升级插件代码，源的历史 `SUCCEEDED` 状态也不代表已跟上最新发布。
 
 ## 4. 运维注意
 
@@ -190,11 +201,12 @@ opencli plugin install github:fengwk/my-opencli/chatgpt-agent
 `chatgpt-agent`，并在该 Instance 的 Chrome Profile 中完成 ChatGPT 登录，才能执行
 `chatgpt-agent/*` 命令。
 
-仓库已发布 `v0.1.63`（五个子插件统一版本，抖音与即梦下载命令统一使用 `--op`）；`chatgpt-agent` 所需的 `.3` composer 修复与 SSE 能力在当前 Hub 钉住的 CLI `2.0.2-fengwk.2` / Browser Bridge `1.0.37` 中已包含。
+当前插件基线为已发布的 [`my-opencli v0.1.65`](https://github.com/fengwk/my-opencli/releases/tag/v0.1.65)（五个子插件统一版本）。该版本修复 ChatGPT 新版 composer 上传、resource-row 文件下载、下载等待竞态和生成图片画廊导出，按协议 message ID 隔离本轮图片，并保留 v0.1.64 的抖音游标分页与既有 `--op` 输出契约。当前 Hub 钉住的正式 CLI `2.0.2-fengwk.2` / Browser Bridge `1.0.37` 已包含所需的 composer 与 SSE 能力，无需切换实验扩展。
+- **Gemini 限制**：v0.1.65 仅同步其版本号，仍保留旧 StreamGenerate collector；新版 `/v1/processSession` WebChannel 尚未适配。实测网站返回 `400 FAILED_PRECONDITION`，成功响应结构未确认，本次不发布实验性的 HTTP-stream 宿主改动或 extension `1.0.38`。
 - **清单加载前置条件**：全量非分页元数据加载需依赖 CLI 的 `opencli list --manifest -f json`（要求 CLI 版本为 `2.0.2-fengwk.2` 及以上）。
 - **受管输出自动收集**：`douyin-ext download`、`jimeng-agent status` 与 `jimeng-agent canvas-v0-download` 仅使用 `--op` 作为输出目录参数。Hub 通过 `HubManagedOutputArguments` 自动识别并注入执行资源目录，API 调用方不得传入该参数。
 - **输出规则升级注意**：若上述命令已有管理员显式配置的 `output` 规则，升级插件时需将规则的参数名改为 `op`，或删除旧规则以使用自动识别。
-- **插件卷需主动更新**：先升级 Hub 镜像并确认两者版本，再在 `/plugins` 对已配置的源执行“安装/更新已选子插件”，最后核对已安装版本和命令目录。镜像升级**不会自动更新持久卷中的插件**（`/var/lib/opencli` 卷仍保持之前安装的插件版本）。当前 OpenCLI plugin installer 尚不支持 `#tag` / `#commit` pin；远程首次安装和后续 update 仍使用仓库默认分支，`plugins.lock.json` 会记录实际安装的 commit。
+- **插件卷需主动更新**：先确认 CLI/extension 满足所需的正式配套版本（已满足时无需重建镜像或重启实例），再在 `/plugins` 对已配置的源执行“更新已安装”，最后核对已安装版本和命令目录。首次安装或需要补装子插件时才使用“安装默认集合”/“安装/更新已选子插件”。镜像升级**不会自动更新持久卷中的插件**（`/var/lib/opencli` 卷仍保持之前安装的插件版本）。当前 OpenCLI plugin installer 尚不支持 `#tag` / `#commit` pin；远程首次安装和后续 update 仍使用仓库默认分支，`plugins.lock.json` 会记录实际安装的 commit。
 
 ## 6. 故障排查
 

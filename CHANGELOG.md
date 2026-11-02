@@ -12,6 +12,8 @@
 
 ### 变更
 
+- 插件兼容说明对齐已发布的 `my-opencli v0.1.65`（五插件统一版本），包含 ChatGPT 新版 composer 上传、resource-row 文件下载与本轮生成图片导出修复，保留抖音游标分页和 `--op` 输出契约。明确已装插件应执行“更新已安装”，空 desiredPlugins 的 install-skip 与 Catalog 刷新均不等价于代码升级；更新后核对真实版本和命令目录。正式宿主 pin 保持 CLI `2.0.2-fengwk.2` / extension `1.0.37`，Gemini WebChannel 与实验 extension `1.0.38` 不在本次发布范围。
+
 - 成对升级 OpenCLI artifact lock 至已正式发布并核验的 `fork-v2.0.2-fengwk.2`（CLI `2.0.2-fengwk.2` / extension `1.0.37`）：全面支持 OpenCLI 2 统一 JSON 封套（`{ok: true, data: ...}` / `{ok: false, error: ...}`），自动解包顶层成功数据并保留失败错误诊断与原始 stdout；通过 `opencli list --manifest -f json` 全量加载包含 `repeatable` 与 `lifecycle` 业务元数据的命令目录；支持已装插件列表解包；自动接管 `douyin-ext` 受管 `--output` 目录并归档至资源组。
 
 - 标签页自动回收统一为 Instance 连续空闲策略（复用 `warmTabTtlSeconds`，默认 1800 秒，0 下一次空闲巡检回收，-1 禁用），覆盖常驻、keep-tab 和替换遗留 adapter 页面；任务接收/真实结束精确重置计时，清理期间阻止提交和生命周期交错，保留用户/借用页面、登录数据和空白占位。

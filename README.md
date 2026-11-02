@@ -39,6 +39,7 @@
 - 提供 Instance 生命周期、VNC WebSocket、执行历史、资源、日志、命令黑名单/输出规则和浏览器代理设置。
 - 使用唯一的实例连续空闲 TTL 回收策略：实例无执行中或待处理任务、连续空闲达到阈值（默认 1800 秒）后，统一清理 OpenCLI 自有 adapter 页面，包含常驻和换 tab 遗留；保留登录状态、一个空白占位以及用户/借用页面。`0` 在下次空闲巡检回收，`-1` 禁用，不再使用逐 tab warm-TTL。
 - 支持通过管理端配置 OpenCLI 插件源，并调用官方 `opencli plugin install/update/list` 同步；详见 [插件维护](docs/plugins.md)。
+- 当前插件兼容基线为已发布的 `my-opencli v0.1.65`（五插件统一版本，包含 ChatGPT 新版上传/文件下载/图片导出修复）。已有插件需在管理页主动“更新已安装”，镜像发布不会自动更新插件卷；Gemini 新协议适配仍延期，正式 CLI/扩展 pin 保持不变。
 - 支持三种编译期数据库变体：PostgreSQL 16（默认）、MySQL 8.4 LTS、SQLite。变体通过 Spring SQL initialization 幂等应用当前 schema（schema-only，system settings 由应用懒初始化）；既有旧库提供 PostgreSQL、MySQL、SQLite 对应的结构升级迁移脚本。
 - 后端 ID 是不透明字符串：新记录使用 UUID，旧正 BIGINT ID 保留为十进制字符串。集成方不得将 ID 转为 JavaScript `Number`。
 

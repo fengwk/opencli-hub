@@ -260,9 +260,15 @@ OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v
 OPENCLI_EXTENSION_SHA256=ce7fe60b17df684bacd4f8194f47e06a3fcb9c90a55402a2bd4eba084929bd5d
 ```
 
-镜像升级不会更新已有的插件卷。升级完成、确认 CLI/extension 版本后，通过
-[`/plugins` 的插件维护流程](plugins.md) 将 `my-opencli` 更新至已发布的 `0.1.62`（五插件统一版本）；
-`chatgpt-agent` 需要这一对版本才能捕获 HTTP SSE 回合。
+镜像升级不会更新已有的插件卷。确认 CLI/extension 满足上述正式配套版本后，通过
+[`/plugins` 的插件维护流程](plugins.md) 执行“更新已安装”，将五个 `my-opencli` 插件同步至已发布的
+[`v0.1.65`](https://github.com/fengwk/my-opencli/releases/tag/v0.1.65)。该版本包含 ChatGPT 新版上传、文件下载和生成图片导出修复；
+已满足宿主版本时，不需要为这次插件升级重建镜像或重启 Chrome。
+维护前确认没有执行中/排队任务，更新成功后核对 `/api/plugins/installed` 的真实版本与命令目录；
+空 `desiredPlugins` 的“安装默认集合”可能跳过已装插件，单独刷新 Catalog 也不会升级代码。
+
+Gemini 新版 `processSession` WebChannel 适配仍延期；本次不将实验 extension `1.0.38` 写入默认
+artifact lock，也不把插件版本号同步当作 Gemini 新协议已验证。
 
 可选 build-arg 仅覆盖**单次构建**，不改变仓库默认 pin：
 
