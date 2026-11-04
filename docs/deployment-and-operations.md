@@ -9,7 +9,7 @@
 3. 为 Hub 分配至少 `2gb` shared memory，并验证宿主 seccomp 策略允许 `seccomp=unconfined`。Compose 文件已经声明这两个条件，不要删除。
 4. Gateway/反向代理必须提供 TLS、认证、授权、限流，并允许 `/api/instances/{id}/vnc` WebSocket Upgrade 和二进制帧透传。
 5. 为 `/data/opencli-hub`、`/var/lib/opencli` 及数据库（PostgreSQL/MySQL）备份准备受限、加密的存储位置；SQLite 备份即 data volume 快照。
-6. 实例级空闲回收要求 daemon 与每个 Browser Bridge profile 都广告 `adapter-tab-reclaim-v1`。成对固定已正式发布并核验的 CLI `2.0.2-fengwk.3` / extension `1.0.38`；升级时必须复用原 CRX signing key；缺少能力的旧版本会明确拒绝实例启动，不降级到旧策略。
+6. 实例级空闲回收要求 daemon 与每个 Browser Bridge profile 都广告 `adapter-tab-reclaim-v1`。成对固定已正式发布并核验的 CLI `2.0.2-fengwk.4` / extension `1.0.39`；升级时必须复用原 CRX signing key；缺少能力的旧版本会明确拒绝实例启动，不降级到旧策略。
 
 Hub 容器和 Chrome 以 UID/GID `1000:1000` 运行。若改用 bind mount，宿主目录必须允许该用户读写。
 
@@ -226,9 +226,9 @@ workflow 共用该文件，因此官方 baseline 与已发布 fork Release 的�
 
 ```text
 package=@jackwener/opencli
-CLI version=2.0.2-fengwk.3
-extension version=1.0.38
-source revision=fengwk/OpenCLI@66f9670c9186011d76dbc0d1bb41d446f784507b
+CLI version=2.0.2-fengwk.4
+extension version=1.0.39
+source revision=fengwk/OpenCLI@8fa0c432760f655fd399ba3db63d16f1ab357677
 ```
 
 OpenCLI 2 输出契约兼容性说明：
@@ -246,18 +246,18 @@ OpenCLI 2 输出契约兼容性说明：
 4. 构建后确认镜像内 `/opt/opencli/artifact-build-info.json` 反映解析结果；smoke 会比较
    `opencli --version` 与该文件中的 `cli.version`。
 
-当前 fork Release（tag `fork-v2.0.2-fengwk.3`，CLI `2.0.2-fengwk.3` + extension `1.0.38`）：
+当前 fork Release（tag `fork-v2.0.2-fengwk.4`，CLI `2.0.2-fengwk.4` + extension `1.0.39`）：
 
 ```bash
 # scripts/docker/opencli-artifact.lock.env
 OPENCLI_PACKAGE=@jackwener/opencli
-OPENCLI_VERSION=2.0.2-fengwk.3
-OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.3/jackwener-opencli-2.0.2-fengwk.3.tgz
-OPENCLI_CLI_SHA256=9614e5ba2bcc1080599e97046945dd9c1602da96ffc5f7f4c75ccbec54348930
-OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@66f9670c9186011d76dbc0d1bb41d446f784507b
-EXTENSION_VERSION=1.0.38
-OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.3/opencli-extension-v1.0.38.zip
-OPENCLI_EXTENSION_SHA256=0798e3fedec35f2e42386a9b8e31bc4e12063d707d435468175bbfc441dd2f63
+OPENCLI_VERSION=2.0.2-fengwk.4
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.4/jackwener-opencli-2.0.2-fengwk.4.tgz
+OPENCLI_CLI_SHA256=a18542d5db6cad4688c7d87b2825758b48e74cb6dada54e73309cb451bb5f88c
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@8fa0c432760f655fd399ba3db63d16f1ab357677
+EXTENSION_VERSION=1.0.39
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.4/opencli-extension-v1.0.39.zip
+OPENCLI_EXTENSION_SHA256=114b2d6c7cd204622d2c681e30bfdb873e24fda6e51a53077e01dbd63678c55c
 ```
 
 镜像升级不会更新已有的插件卷。确认 CLI/extension 满足上述正式配套版本后，通过
@@ -267,7 +267,7 @@ OPENCLI_EXTENSION_SHA256=0798e3fedec35f2e42386a9b8e31bc4e12063d707d435468175bbfc
 维护前确认没有执行中/排队任务，更新成功后核对 `/api/plugins/installed` 的真实版本与命令目录；
 空 `desiredPlugins` 的“安装默认集合”可能跳过已装插件，单独刷新 Catalog 也不会升级代码。
 
-Gemini 新版 `processSession` WebChannel 适配仍延期；本次正式 Bridge `1.0.38` 只修复 idle 标签恢复，
+Gemini 新版 `processSession` WebChannel 适配仍延期；本次正式 Bridge `1.0.39` 只修复 idle 标签恢复，
 不包含实验性 WebChannel 适配，也不把插件版本号同步当作 Gemini 新协议已验证。
 
 可选 build-arg 仅覆盖**单次构建**，不改变仓库默认 pin：

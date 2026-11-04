@@ -69,15 +69,15 @@ VNC TCP 只监听容器 loopback；客户端只通过同源 WebSocket `/api/inst
 | Java | 17 |
 | 前端构建 | Node.js 20 + npm lockfile |
 | Google Chrome | `150.0.7871.114-1`，仅 `linux/amd64` |
-| OpenCLI | 见 `scripts/docker/opencli-artifact.lock.env`（当前已发布 pin `2.0.2-fengwk.3`） |
-| Browser Bridge extension | 见同一 lock（当前已发布 fork `1.0.38`） |
+| OpenCLI | 见 `scripts/docker/opencli-artifact.lock.env`（当前已发布 pin `2.0.2-fengwk.4`） |
+| Browser Bridge extension | 见同一 lock（当前已发布 fork `1.0.39`） |
 | PostgreSQL（默认） | `16`，`compose.yml` |
 | MySQL | `8.4` LTS，`compose.mysql.yml`；迁移脚本兼容 5.7/8.4 |
 | SQLite | 内嵌（sqlite-jdbc），`compose.sqlite.yml` |
 
 Docker 部署要求 Docker Engine 支持 BuildKit 和 Compose `build.secrets`。Compose 固定 `shm_size: 2gb` 与 `seccomp=unconfined`；上线前必须验证宿主 Docker/seccomp 策略允许 Chrome sandbox 正常运行。
 
-**空闲回收的部署前置条件**：daemon 与目标 profile 都须支持 `adapter-tab-reclaim-v1`。默认 lock 成对钉住正式发布并核验的 CLI `2.0.2-fengwk.3` / extension `1.0.38`，包含 idle 占位标签恢复和租约写回修复。升级镜像时必须保留原 CRX signing key；旧依赖会明确拒绝实例启动，不回退旧逐 tab 策略。
+**空闲回收的部署前置条件**：daemon 与目标 profile 都须支持 `adapter-tab-reclaim-v1`。默认 lock 成对钉住正式发布并核验的 CLI `2.0.2-fengwk.4` / extension `1.0.39`，在原窗口/组用新空白标签接替 idle 扩展目标，并正确写回租约。升级镜像时必须保留原 CRX signing key；旧依赖会明确拒绝实例启动，不回退旧逐 tab 策略。
 
 ### OpenCLI artifact lock
 
@@ -97,19 +97,19 @@ scripts/docker/opencli-artifact.lock.env
 
 1. **成对升级**：CLI 与 extension 必须来自同一 OpenCLI Release，不要只改一侧。
 2. **校验和必填**：任何远程 CLI tarball / extension zip 都必须写入对应 SHA256；构建会先校验再安装。
-3. **默认 lock 只指向已发布资产**：当前钉住已验证的正式发布 `fork-v2.0.2-fengwk.3`；不要提交未发布的本地产物 URL。
+3. **默认 lock 只指向已发布资产**：当前钉住已验证的正式发布 `fork-v2.0.2-fengwk.4`；不要提交未发布的本地产物 URL。
 4. **后续升级 fork Release 时只改 lock**，当前值为：
 
 ```bash
 # scripts/docker/opencli-artifact.lock.env
 OPENCLI_PACKAGE=@jackwener/opencli
-OPENCLI_VERSION=2.0.2-fengwk.3
-OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.3/jackwener-opencli-2.0.2-fengwk.3.tgz
-OPENCLI_CLI_SHA256=9614e5ba2bcc1080599e97046945dd9c1602da96ffc5f7f4c75ccbec54348930
-OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@66f9670c9186011d76dbc0d1bb41d446f784507b
-EXTENSION_VERSION=1.0.38
-OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.3/opencli-extension-v1.0.38.zip
-OPENCLI_EXTENSION_SHA256=0798e3fedec35f2e42386a9b8e31bc4e12063d707d435468175bbfc441dd2f63
+OPENCLI_VERSION=2.0.2-fengwk.4
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.4/jackwener-opencli-2.0.2-fengwk.4.tgz
+OPENCLI_CLI_SHA256=a18542d5db6cad4688c7d87b2825758b48e74cb6dada54e73309cb451bb5f88c
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@8fa0c432760f655fd399ba3db63d16f1ab357677
+EXTENSION_VERSION=1.0.39
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.4/opencli-extension-v1.0.39.zip
+OPENCLI_EXTENSION_SHA256=114b2d6c7cd204622d2c681e30bfdb873e24fda6e51a53077e01dbd63678c55c
 ```
 
 可选 build-arg 覆盖范围（仅当前构建生效，不改仓库默认 pin）：
