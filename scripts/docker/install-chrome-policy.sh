@@ -2,8 +2,9 @@
 #
 # install-chrome-policy.sh
 #
-# 运行时（容器内）：把 OpenCLI Browser Bridge extension 通过
-# ExtensionInstallForcelist/ExtensionSettings 强制安装到 google-chrome-stable。
+# 运行时（容器内）：生成 OpenCLI Browser Bridge 的 managed Chrome policy：
+#   - ExtensionInstallForcelist/ExtensionSettings 强制安装扩展；
+#   - URLBlocklist 默认阻止所有导航，URLAllowlist 只放行浏览器自动化所需协议。
 #
 # Chrome enterprise policy 路径：
 #   /etc/opt/chrome/policies/managed/*.json
@@ -21,6 +22,11 @@
 #   4. 从 codebase 下载 .crx；
 #   5. 校验 CRX3 header 内 RSA 公钥哈希是否等于该 extension ID；
 #   6. 验证通过则静默安装。
+#
+# URL 策略：URLBlocklist=["*"] 覆盖任意 scheme，URLAllowlist 优先；仅放行
+# http(s)、about、data、blob、filesystem、ws(s)，不开放 file:、mailto: 或其他
+# native/custom scheme。Chrome 147+ 的 "*" 不覆盖内部 chrome:// 和
+# chrome-extension:// 页面，因此 Bridge 页面无需额外放行。
 #
 # 验证是否成功需检查 Chrome managed policy 和 extension 状态。
 
@@ -48,6 +54,19 @@ POLICY_FILE="${POLICY_DIR}/opencli-hub-extension.json"
 # 不允许用户禁用/卸载。update_url 保留供 ExtensionSettings 决定后续更新路径。
 cat > "${POLICY_FILE}.tmp" <<EOF
 {
+  "URLBlocklist": [
+    "*"
+  ],
+  "URLAllowlist": [
+    "http://*",
+    "https://*",
+    "about:*",
+    "data:*",
+    "blob:*",
+    "filesystem:*",
+    "ws://*",
+    "wss://*"
+  ],
   "ExtensionInstallForcelist": [
     "${EXT_ID};${UPDATE_BASE_URL}/updates.xml"
   ],

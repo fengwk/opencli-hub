@@ -288,7 +288,10 @@ artifact lock，也不把插件版本号同步当作 Gemini 新协议已验证�
 ```bash
 scripts/docker/validate-opencli-artifact-lock.sh
 scripts/docker/test-install-opencli.sh
+scripts/docker/test-install-chrome-policy.sh
 ```
+
+镜像构建生成的 `/etc/opt/chrome/policies/managed/opencli-hub-extension.json` 同时承载 Bridge 强制安装和 URL 导航策略：`URLBlocklist` 默认阻止任意 scheme，`URLAllowlist` 仅放行 `http(s)`、`about`、`data`、`blob`、`filesystem`、`ws(s)` 等浏览器自动化所需协议，不开放 `file:`、`mailto:` 或自定义外部协议。该策略位于容器镜像内，作用于该容器启动的所有 Hub Chrome Profile，不修改宿主 Chrome；Chrome 147+ 的通配符不覆盖内部 `chrome://` / `chrome-extension://` 页面，Bridge 扩展页面不受影响。URLBlocklist 限制的是 URL/导航加载，不是完整网络过滤，不能替代 Gateway、代理和容器出站控制。
 
 #### 6.2.1 旧 Profile 的扩展更新与能力就绪
 

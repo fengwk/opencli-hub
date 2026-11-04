@@ -81,6 +81,7 @@ jobs:
           find scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
           scripts/docker/validate-opencli-artifact-lock.sh
           scripts/docker/test-install-opencli.sh
+          scripts/docker/test-install-chrome-policy.sh
           git diff --check
       - name: Reject private key material and retired extension identity
         shell: bash
