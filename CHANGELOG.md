@@ -12,6 +12,10 @@
 
 ### 变更
 
+- 成对固定已发布并校验的 `fork-v2.0.2-fengwk.3`（CLI `2.0.2-fengwk.3` / Bridge `1.0.38`），修复 idle 标签首个 CDP 操作及替代标签租约写回；内置 Douyin 详情缺失统计返回 `null`。
+- 镜像内 Chrome 默认阻止外部协议导航，只放行正常网页及浏览器自动化必需协议，避免网页唤起外部程序确认弹窗；保留 Bridge 强制安装与内部页面。
+- 插件维护基线更新为 `my-opencli v0.1.67`，补齐主页元数据；持久插件卷仍须显式更新。Gemini WebChannel 不在本次修复范围。
+
 - 插件兼容说明对齐已发布的 `my-opencli v0.1.65`（五插件统一版本），包含 ChatGPT 新版 composer 上传、resource-row 文件下载与本轮生成图片导出修复，保留抖音游标分页和 `--op` 输出契约。明确已装插件应执行“更新已安装”，空 desiredPlugins 的 install-skip 与 Catalog 刷新均不等价于代码升级；更新后核对真实版本和命令目录。正式宿主 pin 保持 CLI `2.0.2-fengwk.2` / extension `1.0.37`，Gemini WebChannel 与实验 extension `1.0.38` 不在本次发布范围。
 
 - 成对升级 OpenCLI artifact lock 至已正式发布并核验的 `fork-v2.0.2-fengwk.2`（CLI `2.0.2-fengwk.2` / extension `1.0.37`）：全面支持 OpenCLI 2 统一 JSON 封套（`{ok: true, data: ...}` / `{ok: false, error: ...}`），自动解包顶层成功数据并保留失败错误诊断与原始 stdout；通过 `opencli list --manifest -f json` 全量加载包含 `repeatable` 与 `lifecycle` 业务元数据的命令目录；支持已装插件列表解包；自动接管 `douyin-ext` 受管 `--output` 目录并归档至资源组。

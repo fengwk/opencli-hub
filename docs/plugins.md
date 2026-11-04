@@ -201,8 +201,8 @@ opencli plugin install github:fengwk/my-opencli/chatgpt-agent
 `chatgpt-agent`，并在该 Instance 的 Chrome Profile 中完成 ChatGPT 登录，才能执行
 `chatgpt-agent/*` 命令。
 
-当前插件基线为已发布的 [`my-opencli v0.1.65`](https://github.com/fengwk/my-opencli/releases/tag/v0.1.65)（五个子插件统一版本）。该版本修复 ChatGPT 新版 composer 上传、resource-row 文件下载、下载等待竞态和生成图片画廊导出，按协议 message ID 隔离本轮图片，并保留 v0.1.64 的抖音游标分页与既有 `--op` 输出契约。当前 Hub 钉住的正式 CLI `2.0.2-fengwk.2` / Browser Bridge `1.0.37` 已包含所需的 composer 与 SSE 能力，无需切换实验扩展。
-- **Gemini 限制**：v0.1.65 仅同步其版本号，仍保留旧 StreamGenerate collector；新版 `/v1/processSession` WebChannel 尚未适配。实测网站返回 `400 FAILED_PRECONDITION`，成功响应结构未确认，本次不发布实验性的 HTTP-stream 宿主改动或 extension `1.0.38`。
+当前插件基线为已发布的 [`my-opencli v0.1.67`](https://github.com/fengwk/my-opencli/releases/tag/v0.1.67)（五个子插件统一版本）。该版本在同一次主页请求中补齐 Douyin 评论、收藏、分享、发布时间等元数据，缺失/非法统计返回 `null`，保留真实 `0`；继续保留游标分页、UTF-8 文件名修复及既有 `--op` 输出契约。当前 Hub 钉住的正式 CLI `2.0.2-fengwk.3` / Browser Bridge `1.0.38` 修复 idle 标签恢复和租约写回，同时保留先前 composer 与 SSE 能力。
+- **Gemini 限制**：仍保留旧 StreamGenerate collector；新版 `/v1/processSession` WebChannel 尚未适配。历史实测网站返回 `400 FAILED_PRECONDITION`，成功响应结构未确认；本次正式 Bridge `1.0.38` 不包含实验性的 WebChannel 适配。
 - **清单加载前置条件**：全量非分页元数据加载需依赖 CLI 的 `opencli list --manifest -f json`（要求 CLI 版本为 `2.0.2-fengwk.2` 及以上）。
 - **受管输出自动收集**：`douyin-ext download`、`jimeng-agent status` 与 `jimeng-agent canvas-v0-download` 仅使用 `--op` 作为输出目录参数。Hub 通过 `HubManagedOutputArguments` 自动识别并注入执行资源目录，API 调用方不得传入该参数。
 - **输出规则升级注意**：若上述命令已有管理员显式配置的 `output` 规则，升级插件时需将规则的参数名改为 `op`，或删除旧规则以使用自动识别。
