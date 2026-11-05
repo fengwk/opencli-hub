@@ -6,6 +6,7 @@
 
 ### 新增
 
+- 资源 GET/HEAD 支持单段 HTTP Range 与内容 SHA256 强 ETag：正确返回 `200/206/416`、`Accept-Ranges`、`Content-Range`，通过 `If-Range` 防止拼接已变化的资源；读取期间检测文件变化并在所有结束/失败路径释放读租约。搭配客户端保留的本地断点可续传，不涉及数据库迁移或 OpenCLI/插件升级。
 - 新增 `scripts/migrate-postgresql-instance-concurrency.sql`、`scripts/migrate-mysql-instance-concurrency.sql`、`scripts/migrate-sqlite-instance-concurrency.sh`：为 PostgreSQL 16、MySQL 5.7/8.4 与 SQLite 旧数据库补齐 `hub_instance.max_concurrency`（默认 1，合法范围 1..4，旧行保持 1 串行行为，均可安全重复执行或无损退出）。
 - 新增 `scripts/migrate-mysql-instance-state-changed-at-immutable.sql`：移除 `hub_instance.state_changed_at` 的 `ON UPDATE`（MySQL 5.7/8.4 兼容、可重复执行；既有已漂移值不可恢复，不伪造历史时间）。
 - 文档对齐三种编译期数据库变体（PostgreSQL 16 默认 / MySQL 8.4 LTS / SQLite）、三库标准升级停机迁移步骤（停服务→备份→迁移→升级应用→验证）、Canary 灰度与 Chrome/shm 稳定性边界、H2 生产退役指引与发布镜像 tag 矩阵。
