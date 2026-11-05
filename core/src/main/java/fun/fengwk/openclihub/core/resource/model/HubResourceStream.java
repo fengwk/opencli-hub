@@ -12,8 +12,7 @@ import java.util.Objects;
  * Result of opening a resource for streaming. The stream is owned by the caller and must be
  * closed via {@link #close()} (typically through try-with-resources) so the underlying
  * {@link fun.fengwk.openclihub.core.resource.service.HubResourceLease} is released in the
- * same step. The {@link Path realPath} is included so callers can stream via
- * {@link java.nio.file.Files#newInputStream} or implement HTTP range support.
+ * same step. The size and ETag are computed from the opened file before streaming.
  *
  * @author fengwk
  */
@@ -24,16 +23,18 @@ public final class HubResourceStream implements AutoCloseable {
     private final String fileName;
     private final String mimeType;
     private final long size;
+    private final String etag;
     private final HubResourceSource source;
     private final InputStream inputStream;
     private final AutoCloseable lease;
 
-    public HubResourceStream(Path realPath, String fileName, String mimeType, long size,
+    public HubResourceStream(Path realPath, String fileName, String mimeType, long size, String etag,
                              HubResourceSource source, InputStream inputStream, AutoCloseable lease) {
         this.realPath = Objects.requireNonNull(realPath, "realPath");
         this.fileName = Objects.requireNonNull(fileName, "fileName");
         this.mimeType = Objects.requireNonNull(mimeType, "mimeType");
         this.size = size;
+        this.etag = Objects.requireNonNull(etag, "etag");
         this.source = source;
         this.inputStream = Objects.requireNonNull(inputStream, "inputStream");
         this.lease = Objects.requireNonNull(lease, "lease");
@@ -41,12 +42,12 @@ public final class HubResourceStream implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
-        IOException inputFailure = null;
+        Throwable inputFailure = null;
         Throwable leaseFailure = null;
         try {
             inputStream.close();
-        } catch (IOException ex) {
-            inputFailure = ex;
+        } catch (Throwable t) {
+            inputFailure = t;
         }
         try {
             lease.close();
@@ -59,7 +60,16 @@ public final class HubResourceStream implements AutoCloseable {
             if (leaseFailure != null) {
                 inputFailure.addSuppressed(leaseFailure);
             }
-            throw inputFailure;
+            if (inputFailure instanceof IOException io) {
+                throw io;
+            }
+            if (inputFailure instanceof RuntimeException re) {
+                throw re;
+            }
+            if (inputFailure instanceof Error err) {
+                throw err;
+            }
+            throw new IOException("Failed to close resource input", inputFailure);
         }
         if (leaseFailure != null) {
             if (leaseFailure instanceof IOException io) {

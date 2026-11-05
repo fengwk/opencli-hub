@@ -21,6 +21,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.Serial;
+import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -28,11 +31,14 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -193,22 +199,63 @@ public class HubResourceService {
             throw HubErrorCodes.RESOURCE_PATH_INVALID.asThrowable();
         }
         HubResourceLease lease = leaseManager.acquire(real, "read");
-        InputStream stream;
+        SeekableByteChannel channel = null;
         try {
-            stream = Files.newInputStream(real, LinkOption.NOFOLLOW_LINKS);
-        } catch (IOException ex) {
-            lease.close();
-            throw HubErrorCodes.RESOURCE_NOT_FOUND.asThrowable(ex);
+            // Size, hash and subsequent reads all use the same no-follow file handle.
+            // This prevents pathname replacement from redirecting the transfer, but does
+            // not prevent another process from modifying that open file in place.
+            channel = Files.newByteChannel(real, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+            long size = channel.size();
+            MessageDigest digest = sha256();
+            ByteBuffer buffer = ByteBuffer.allocate(8192);
+            long hashed = 0;
+            int read;
+            while ((read = channel.read(buffer)) != -1) {
+                if (read > size - hashed) {
+                    throw new IOException("Resource size changed while hashing");
+                }
+                hashed += read;
+                buffer.flip();
+                digest.update(buffer);
+                buffer.clear();
+            }
+            if (hashed != size || channel.size() != size) {
+                throw new IOException("Resource size changed while hashing");
+            }
+            channel.position(0);
+            String etag = "\"sha256-" + HexFormat.of().formatHex(digest.digest()) + "\"";
+            String mime = HubResourceMimeTypes.probe(real);
+            return new HubResourceStream(real, real.getFileName().toString(), mime, size, etag,
+                HubResourcePaths.detectSource(resolved.getGroup()), Channels.newInputStream(channel), lease);
+        } catch (IOException | RuntimeException | Error ex) {
+            if (channel != null) {
+                try {
+                    channel.close();
+                } catch (Throwable closeFailure) {
+                    ex.addSuppressed(closeFailure);
+                }
+            }
+            try {
+                lease.close();
+            } catch (Throwable closeFailure) {
+                ex.addSuppressed(closeFailure);
+            }
+            if (ex instanceof IOException io) {
+                throw HubErrorCodes.RESOURCE_NOT_FOUND.asThrowable(io);
+            }
+            if (ex instanceof RuntimeException re) {
+                throw re;
+            }
+            throw (Error) ex;
         }
-        long size;
+    }
+
+    private static MessageDigest sha256() {
         try {
-            size = Files.size(real);
-        } catch (IOException ex) {
-            size = 0L;
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is unavailable", ex);
         }
-        String mime = HubResourceMimeTypes.probe(real);
-        return new HubResourceStream(real, real.getFileName().toString(), mime, size,
-            HubResourcePaths.detectSource(resolved.getGroup()), stream, lease);
     }
 
     /** Convenience for tests: existence check by virtual path. */

@@ -12,18 +12,28 @@ import fun.fengwk.openclihub.share.model.resource.HubResourceDateSummaryDTO;
 import fun.fengwk.openclihub.share.model.resource.HubResourceItemDTO;
 import fun.fengwk.openclihub.share.model.resource.HubResourceSource;
 import fun.fengwk.openclihub.share.model.resource.HubResourceUploadResultDTO;
+import jakarta.servlet.http.HttpServletRequest;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.context.request.NativeWebRequest;
+import org.springframework.web.context.request.async.CallableProcessingInterceptor;
+import org.springframework.web.context.request.async.WebAsyncUtils;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -104,7 +114,8 @@ public class HubResourceController {
         @PathVariable String date,
         @PathVariable String group,
         @PathVariable String path,
-        @RequestParam(defaultValue = "false") boolean inline) {
+        @RequestParam(defaultValue = "false") boolean inline,
+        HttpServletRequest request) throws IOException {
         HubResourceStream resource;
         try {
             resource = resourceService.openForRead(virtualPath(date, group, path));
@@ -112,25 +123,65 @@ public class HubResourceController {
             throw new ResponseStatusException(
                 HttpStatusCode.valueOf(ex.getStatus()), ex.getMessage(), ex);
         }
+        ResourceCloser closer = new ResourceCloser(resource);
         try {
-            StreamingResponseBody body = outputStream -> {
-                try (resource) {
-                    resource.getInputStream().transferTo(outputStream);
-                }
-            };
+            boolean head = "HEAD".equals(request.getMethod());
+            List<String> ifRange = Collections.list(request.getHeaders(HttpHeaders.IF_RANGE));
+            ByteRange range = null;
+            if (!head && (ifRange.isEmpty()
+                || (ifRange.size() == 1 && resource.getEtag().equals(ifRange.get(0).trim())))) {
+                range = parseRange(Collections.list(request.getHeaders(HttpHeaders.RANGE)), resource.getSize());
+            }
+            boolean invalidRange = ByteRange.INVALID.equals(range);
             ContentDisposition disposition = (inline
                 ? ContentDisposition.inline()
                 : ContentDisposition.attachment())
                 .filename(resource.getFileName(), StandardCharsets.UTF_8)
                 .build();
-            return ResponseEntity.ok()
+            long start = range == null || invalidRange ? 0 : range.start();
+            long length = range == null ? resource.getSize()
+                : invalidRange ? 0 : range.end() - start + 1;
+            ResponseEntity.BodyBuilder response = ResponseEntity.status(invalidRange
+                    ? HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE
+                    : range == null ? HttpStatus.OK : HttpStatus.PARTIAL_CONTENT)
                 .contentType(MediaType.parseMediaType(resource.getMimeType()))
-                .contentLength(resource.getSize())
-                .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-                .body(body);
-        } catch (RuntimeException | Error ex) {
+                .contentLength(length)
+                .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                .header(HttpHeaders.ETAG, resource.getEtag())
+                .header(HttpHeaders.CACHE_CONTROL, "no-transform")
+                .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString());
+            if (invalidRange) {
+                response.header(HttpHeaders.CONTENT_RANGE, "bytes */" + resource.getSize());
+            } else if (range != null) {
+                response.header(HttpHeaders.CONTENT_RANGE,
+                    "bytes " + start + "-" + range.end() + "/" + resource.getSize());
+            }
+            if (head || invalidRange) {
+                ResponseEntity<StreamingResponseBody> result = response.build();
+                closer.close();
+                return result;
+            }
+            if (!request.isAsyncSupported()) {
+                throw new IllegalStateException("Async resource streaming is not supported");
+            }
+            StreamingResponseBody body = outputStream -> {
+                try (closer) {
+                    copyRange(resource.getInputStream(), outputStream, start, length);
+                }
+            };
+            // A queued task may be rejected or time out before its body ever runs.
+            WebAsyncUtils.getAsyncManager(request).registerCallableInterceptor(closer,
+                new CallableProcessingInterceptor() {
+                    @Override
+                    public <T> void afterCompletion(NativeWebRequest webRequest, Callable<T> task)
+                        throws IOException {
+                        closer.close();
+                    }
+                });
+            return response.body(body);
+        } catch (IOException | RuntimeException | Error ex) {
             try {
-                resource.close();
+                closer.close();
             } catch (Throwable closeFailure) {
                 ex.addSuppressed(closeFailure);
             }
@@ -164,6 +215,104 @@ public class HubResourceController {
     private static String virtualPath(String date, String group, String path) {
         String relativePath = path.startsWith("/") ? path.substring(1) : path;
         return "/resources/" + date + "/" + group + "/" + relativePath;
+    }
+
+    private record ByteRange(long start, long end) {
+        private static final ByteRange INVALID = new ByteRange(-1, -1);
+    }
+
+    private static final class ResourceCloser implements AutoCloseable {
+        private final HubResourceStream resource;
+        private final AtomicBoolean closed = new AtomicBoolean();
+
+        private ResourceCloser(HubResourceStream resource) {
+            this.resource = resource;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (closed.compareAndSet(false, true)) {
+                resource.close();
+            }
+        }
+    }
+
+    /** Null means no usable byte-range unit; INVALID means a byte range must be rejected. */
+    private static ByteRange parseRange(List<String> headers, long size) {
+        if (headers.isEmpty()) {
+            return null;
+        }
+        boolean hasBytesUnit = headers.stream().anyMatch(header -> {
+            String value = header.trim();
+            int equals = value.indexOf('=');
+            String unit = equals < 0 ? value : value.substring(0, equals).trim();
+            return unit.equalsIgnoreCase("bytes");
+        });
+        if (!hasBytesUnit) {
+            return null;
+        }
+        if (headers.size() != 1 || size == 0) {
+            return ByteRange.INVALID;
+        }
+        String value = headers.get(0).trim();
+        int equals = value.indexOf('=');
+        if (equals < 0 || !value.substring(0, equals).equalsIgnoreCase("bytes")) {
+            return ByteRange.INVALID;
+        }
+        String spec = value.substring(equals + 1);
+        int dash = spec.indexOf('-');
+        if (dash < 0 || spec.indexOf('-', dash + 1) >= 0) {
+            return ByteRange.INVALID;
+        }
+        String first = spec.substring(0, dash);
+        String last = spec.substring(dash + 1);
+        if (first.isEmpty() && last.isEmpty()) {
+            return ByteRange.INVALID;
+        }
+        long firstNumber = first.isEmpty() ? -1 : parseDecimal(first);
+        long lastNumber = last.isEmpty() ? -1 : parseDecimal(last);
+        if ((!first.isEmpty() && firstNumber < 0) || (!last.isEmpty() && lastNumber < 0)) {
+            return ByteRange.INVALID;
+        }
+        if (first.isEmpty()) {
+            if (lastNumber == 0) {
+                return ByteRange.INVALID;
+            }
+            return new ByteRange(size - Math.min(size, lastNumber), size - 1);
+        }
+        if (firstNumber >= size || (!last.isEmpty() && lastNumber < firstNumber)) {
+            return ByteRange.INVALID;
+        }
+        return new ByteRange(firstNumber, last.isEmpty() ? size - 1 : Math.min(lastNumber, size - 1));
+    }
+
+    /** Parse digits without overflow; values above Long.MAX_VALUE are safely saturated. */
+    private static long parseDecimal(String value) {
+        long result = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c < '0' || c > '9') {
+                return -1;
+            }
+            int digit = c - '0';
+            result = result > (Long.MAX_VALUE - digit) / 10 ? Long.MAX_VALUE : result * 10 + digit;
+        }
+        return result;
+    }
+
+    private static void copyRange(InputStream input, OutputStream output, long start, long length)
+        throws IOException {
+        input.skipNBytes(start);
+        byte[] buffer = new byte[8192];
+        long remaining = length;
+        while (remaining > 0) {
+            int read = input.read(buffer, 0, (int) Math.min(buffer.length, remaining));
+            if (read < 0) {
+                throw new EOFException("Resource ended before the promised length");
+            }
+            output.write(buffer, 0, read);
+            remaining -= read;
+        }
     }
 
     private static void closeAll(List<InputStream> streams) {

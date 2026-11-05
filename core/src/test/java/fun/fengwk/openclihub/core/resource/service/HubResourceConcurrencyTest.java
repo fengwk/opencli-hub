@@ -38,6 +38,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -325,6 +326,7 @@ class HubResourceConcurrencyTest {
             "data".getBytes(StandardCharsets.UTF_8)), "primary close failed");
         HubResourceStream stream = new HubResourceStream(
             real, "failing.txt", "text/plain", 4L,
+            "\"sha256-3a6eb0790f39ac87c94f3856b2dd2c5d110e6811602261a9a923d3bb23adc8b7\"",
             HubResourceSource.UPLOAD, failing, throwingLease);
         try {
             stream.close();
@@ -334,6 +336,25 @@ class HubResourceConcurrencyTest {
             assertThat(ex.getSuppressed()).hasSize(1);
             assertThat(ex.getSuppressed()[0]).isInstanceOf(IllegalStateException.class);
         }
+    }
+
+    /** Even an unchecked close failure must not prevent the read lease being released. */
+    @Test
+    void shouldReleaseLeaseWhenInputCloseThrowsUnchecked() {
+        AtomicBoolean released = new AtomicBoolean();
+        InputStream failing = new ByteArrayInputStream(new byte[0]) {
+            @Override
+            public void close() {
+                throw new IllegalStateException("input close failed");
+            }
+        };
+        HubResourceStream stream = new HubResourceStream(
+            Path.of("/tmp/empty.txt"), "empty.txt", "text/plain", 0,
+            "\"sha256-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"",
+            HubResourceSource.UPLOAD, failing, () -> released.set(true));
+        assertThatThrownBy(stream::close)
+            .isInstanceOf(IllegalStateException.class).hasMessage("input close failed");
+        assertThat(released).isTrue();
     }
 
     // -- H4b: pagination overflow ---------------------------------------------------------

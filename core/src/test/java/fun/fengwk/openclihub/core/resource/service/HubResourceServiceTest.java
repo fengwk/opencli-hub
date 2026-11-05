@@ -12,6 +12,8 @@ import fun.fengwk.openclihub.share.model.resource.HubResourceItemDTO;
 import fun.fengwk.openclihub.share.model.resource.HubResourceSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
@@ -19,20 +21,30 @@ import org.springframework.test.context.TestPropertySource;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * Drives the file-system Resource Center across the full MVP loop. Each test uses a fresh
@@ -129,6 +141,88 @@ class HubResourceServiceTest {
         assertThat(leaseManager.heldPathCount()).isZero();
         resourceService.deleteResource(reportVp);
         assertThat(resourceService.exists(reportVp)).isFalse();
+    }
+
+    /** Hash, size and stream all refer to the opened file, not a later same-size replacement. */
+    @Test
+    void shouldHashOpenedBytesAndDistinguishSameSizeReplacement() throws IOException {
+        HubResourceService.UploadResult uploaded = resourceService.upload(HubResourceUploadRequest.builder()
+            .date("2026-07-12").items(List.of(uploadItem("hello.txt", "hello"))).build());
+        String virtualPath = uploaded.getItems().get(0).getResourcePath();
+        Path real = resourceService.resolve(virtualPath).getRealPath();
+        try (HubResourceStream original = resourceService.openForRead(virtualPath)) {
+            assertThat(original.getSize()).isEqualTo(5);
+            assertThat(original.getEtag()).isEqualTo(
+                "\"sha256-2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\"");
+            Path replacement = real.resolveSibling("replacement.tmp");
+            Files.writeString(replacement, "world");
+            Files.move(replacement, real, StandardCopyOption.REPLACE_EXISTING);
+            try (HubResourceStream current = resourceService.openForRead(virtualPath)) {
+                assertThat(current.getSize()).isEqualTo(5);
+                assertThat(current.getEtag()).isEqualTo(
+                    "\"sha256-486ea46224d1bb4fb680f34f7c9ad96a8f24ec88be73ea8e5a6c65260e9cb8a7\"");
+                assertThat(current.getInputStream().readAllBytes()).isEqualTo("world".getBytes(StandardCharsets.UTF_8));
+            }
+            assertThat(original.getInputStream().readAllBytes()).isEqualTo("hello".getBytes(StandardCharsets.UTF_8));
+            assertThat(leaseManager.heldPathCount()).isEqualTo(1);
+        }
+        assertThat(leaseManager.heldPathCount()).isZero();
+    }
+
+    /** Probes whether an in-place write can change the bytes after the validator is computed. */
+    @Test
+    void shouldKeepValidatorConsistentAfterInPlaceWrite() throws Exception {
+        HubResourceService.UploadResult uploaded = resourceService.upload(HubResourceUploadRequest.builder()
+            .date("2026-07-12").items(List.of(uploadItem("mutable.txt", "hello"))).build());
+        String virtualPath = uploaded.getItems().get(0).getResourcePath();
+        Path real = resourceService.resolve(virtualPath).getRealPath();
+        try (HubResourceStream stream = resourceService.openForRead(virtualPath)) {
+            Files.writeString(real, "world");
+            byte[] served = stream.getInputStream().readAllBytes();
+            String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(served));
+            assertThat(stream.getEtag()).isEqualTo("\"sha256-" + digest + "\"");
+        }
+    }
+
+    /** Empty files still get their real size and the well-known SHA-256 of zero bytes. */
+    @Test
+    void shouldHashEmptyResource() throws IOException {
+        HubResourceService.UploadResult uploaded = resourceService.upload(HubResourceUploadRequest.builder()
+            .date("2026-07-12").items(List.of(uploadItem("empty.txt", ""))).build());
+        try (HubResourceStream stream = resourceService.openForRead(uploaded.getItems().get(0).getResourcePath())) {
+            assertThat(stream.getSize()).isZero();
+            assertThat(stream.getEtag()).isEqualTo(
+                "\"sha256-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"");
+            assertThat(stream.getInputStream().readAllBytes()).isEmpty();
+        }
+        assertThat(leaseManager.heldPathCount()).isZero();
+    }
+
+    /** Size and hash IO errors fail closed and release both the opened handle and read lease. */
+    @Test
+    void shouldCloseHandleAndLeaseWhenMetadataCannotBeRead() throws IOException {
+        HubResourceService.UploadResult uploaded = resourceService.upload(HubResourceUploadRequest.builder()
+            .date("2026-07-12").items(List.of(uploadItem("hello.txt", "hello"))).build());
+        String virtualPath = uploaded.getItems().get(0).getResourcePath();
+        Path real = resourceService.resolve(virtualPath).getRealPath();
+        for (boolean failSize : List.of(true, false)) {
+            SeekableByteChannel channel = Mockito.mock(SeekableByteChannel.class);
+            if (failSize) {
+                when(channel.size()).thenThrow(new IOException("size failed"));
+            } else {
+                when(channel.size()).thenReturn(5L);
+                when(channel.read(any(ByteBuffer.class))).thenThrow(new IOException("hash failed"));
+            }
+            try (MockedStatic<Files> files = Mockito.mockStatic(Files.class, Mockito.CALLS_REAL_METHODS)) {
+                files.when(() -> Files.newByteChannel(real, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))
+                    .thenReturn(channel);
+                assertThatThrownBy(() -> resourceService.openForRead(virtualPath))
+                    .isInstanceOf(ThrowableConventionErrorCode.class)
+                    .hasRootCauseMessage(failSize ? "size failed" : "hash failed");
+            }
+            verify(channel).close();
+            assertThat(leaseManager.heldPathCount()).isZero();
+        }
     }
 
     /**

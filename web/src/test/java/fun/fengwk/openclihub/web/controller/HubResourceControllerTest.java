@@ -1,6 +1,7 @@
 package fun.fengwk.openclihub.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.verify;
@@ -8,6 +9,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -24,23 +26,38 @@ import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.resource.HubResourceDateSummaryDTO;
 import fun.fengwk.openclihub.share.model.resource.HubResourceItemDTO;
 import fun.fengwk.openclihub.share.model.resource.HubResourceSource;
+import jakarta.servlet.ServletOutputStream;
+import jakarta.servlet.http.HttpServletRequest;
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.core.MethodParameter;
+import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.http.HttpHeaders;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.web.context.request.ServletWebRequest;
+import org.springframework.web.context.request.async.StandardServletAsyncWebRequest;
+import org.springframework.web.context.request.async.WebAsyncUtils;
+import org.springframework.web.method.support.ModelAndViewContainer;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBodyReturnValueHandler;
 
 /** Covers multipart, browse, binary stream and delete resource routes. */
 @ImportAutoConfiguration(WebExceptionResultHandlerAutoConfiguration.class)
@@ -48,6 +65,12 @@ import org.springframework.test.web.servlet.MvcResult;
     controllers = HubResourceController.class,
     properties = "logging.file.path=${java.io.tmpdir}/opencli-hub-web-test")
 class HubResourceControllerTest {
+
+    private static final String URL = "/api/resources/2026-07-13/upload-1/hello.txt";
+    private static final String ETAG =
+        "\"sha256-2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\"";
+    private static final String EMPTY_ETAG =
+        "\"sha256-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"";
 
     @Autowired
     private MockMvc mockMvc;
@@ -144,8 +167,230 @@ class HubResourceControllerTest {
             .andExpect(content().bytes("hello".getBytes()))
             .andExpect(content().contentType("text/plain"))
             .andExpect(header().longValue(HttpHeaders.CONTENT_LENGTH, 5))
+            .andExpect(header().string(HttpHeaders.ACCEPT_RANGES, "bytes"))
+            .andExpect(header().string(HttpHeaders.ETAG, ETAG))
             .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION,
                 org.hamcrest.Matchers.startsWith("inline;")));
+        assertThat(leaseClosed).isTrue();
+    }
+
+    /** HEAD ignores Range and closes both resources synchronously without starting a body. */
+    @Test
+    void shouldReturnFullHeadersAndCloseForHead() throws Exception {
+        AtomicBoolean inputClosed = new AtomicBoolean();
+        AtomicBoolean leaseClosed = new AtomicBoolean();
+        when(resourceService.openForRead(any())).thenReturn(stream("hello", inputClosed, leaseClosed));
+
+        mockMvc.perform(head(URL).header(HttpHeaders.RANGE, "bytes=1-2").param("inline", "true"))
+            .andExpect(status().isOk())
+            .andExpect(request().asyncNotStarted())
+            .andExpect(content().bytes(new byte[0]))
+            .andExpect(header().longValue(HttpHeaders.CONTENT_LENGTH, 5))
+            .andExpect(header().string(HttpHeaders.ACCEPT_RANGES, "bytes"))
+            .andExpect(header().string(HttpHeaders.ETAG, ETAG))
+            .andExpect(header().doesNotExist(HttpHeaders.CONTENT_RANGE))
+            .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION,
+                org.hamcrest.Matchers.startsWith("inline;")));
+        assertThat(inputClosed).isTrue();
+        assertThat(leaseClosed).isTrue();
+    }
+
+    /** Each supported range is bounded to the exact selected bytes, even for huge ends. */
+    @Test
+    void shouldStreamSingleRanges() throws Exception {
+        String[][] cases = {
+            {"bytes=1-3", "ell", "bytes 1-3/5"},
+            {"bytes=2-", "llo", "bytes 2-4/5"},
+            {"bytes=-2", "lo", "bytes 3-4/5"},
+            {"bytes=3-99", "lo", "bytes 3-4/5"},
+            {"bytes=-999999999999999999999999", "hello", "bytes 0-4/5"},
+            {"BYTES=0-999999999999999999999999", "hello", "bytes 0-4/5"}
+        };
+        for (String[] test : cases) {
+            AtomicBoolean inputClosed = new AtomicBoolean();
+            AtomicBoolean leaseClosed = new AtomicBoolean();
+            when(resourceService.openForRead(any())).thenReturn(stream("hello", inputClosed, leaseClosed));
+            MvcResult started = mockMvc.perform(get(URL).header(HttpHeaders.RANGE, test[0]))
+                .andExpect(request().asyncStarted()).andReturn();
+            mockMvc.perform(asyncDispatch(started))
+                .andExpect(status().isPartialContent())
+                .andExpect(header().string(HttpHeaders.CONTENT_RANGE, test[2]))
+                .andExpect(header().longValue(HttpHeaders.CONTENT_LENGTH, test[1].length()))
+                .andExpect(header().string(HttpHeaders.ETAG, ETAG))
+                .andExpect(header().string(HttpHeaders.ACCEPT_RANGES, "bytes"))
+                .andExpect(content().string(test[1]));
+            assertThat(inputClosed).as(test[0]).isTrue();
+            assertThat(leaseClosed).as(test[0]).isTrue();
+        }
+    }
+
+    /** Invalid, multiple and unsatisfiable byte ranges never transfer and release the lease. */
+    @Test
+    void shouldRejectInvalidRangesAndRangesOnEmptyFiles() throws Exception {
+        String[] invalid = {"bytes=5-", "bytes=4-2", "bytes=-0", "bytes=-",
+            "bytes=1-2,3-4", "bytes=1-x", "bytes=1-2-3", "bytes", "bytes =1-2",
+            "bytes=999999999999999999999999-"};
+        for (String value : invalid) {
+            AtomicBoolean inputClosed = new AtomicBoolean();
+            AtomicBoolean leaseClosed = new AtomicBoolean();
+            when(resourceService.openForRead(any())).thenReturn(stream("hello", inputClosed, leaseClosed));
+            mockMvc.perform(get(URL).header(HttpHeaders.RANGE, value))
+                .andExpect(status().isRequestedRangeNotSatisfiable())
+                .andExpect(request().asyncNotStarted())
+                .andExpect(header().string(HttpHeaders.CONTENT_RANGE, "bytes */5"))
+                .andExpect(header().string(HttpHeaders.ETAG, ETAG))
+                .andExpect(header().string(HttpHeaders.ACCEPT_RANGES, "bytes"))
+                .andExpect(content().bytes(new byte[0]));
+            assertThat(inputClosed).as(value).isTrue();
+            assertThat(leaseClosed).as(value).isTrue();
+        }
+        AtomicBoolean leaseClosed = new AtomicBoolean();
+        when(resourceService.openForRead(any())).thenReturn(stream("hello", new AtomicBoolean(), leaseClosed));
+        mockMvc.perform(get(URL).header(HttpHeaders.RANGE, "bytes=0-1", "bytes=2-3"))
+            .andExpect(status().isRequestedRangeNotSatisfiable())
+            .andExpect(header().string(HttpHeaders.CONTENT_RANGE, "bytes */5"));
+        assertThat(leaseClosed).isTrue();
+
+        AtomicBoolean emptyClosed = new AtomicBoolean();
+        when(resourceService.openForRead(any())).thenReturn(stream("", new AtomicBoolean(), emptyClosed));
+        mockMvc.perform(get(URL).header(HttpHeaders.RANGE, "bytes=0-"))
+            .andExpect(status().isRequestedRangeNotSatisfiable())
+            .andExpect(header().string(HttpHeaders.CONTENT_RANGE, "bytes */0"));
+        assertThat(emptyClosed).isTrue();
+    }
+
+    /** Only the exact strong validator allows a partial response; dates and weak tags restart. */
+    @Test
+    void shouldHonorOnlyMatchingStrongIfRange() throws Exception {
+        for (String validator : List.of(ETAG, "W/" + ETAG, "\"sha256-stale\"",
+            "Wed, 21 Oct 2015 07:28:00 GMT", "")) {
+            AtomicBoolean leaseClosed = new AtomicBoolean();
+            when(resourceService.openForRead(any())).thenReturn(stream("hello", new AtomicBoolean(), leaseClosed));
+            MvcResult started = mockMvc.perform(get(URL).header(HttpHeaders.RANGE, "bytes=1-2")
+                    .header(HttpHeaders.IF_RANGE, validator))
+                .andExpect(request().asyncStarted()).andReturn();
+            boolean matches = validator.equals(ETAG);
+            mockMvc.perform(asyncDispatch(started))
+                .andExpect(status().is(matches ? 206 : 200))
+                .andExpect(content().string(matches ? "el" : "hello"))
+                .andExpect(header().longValue(HttpHeaders.CONTENT_LENGTH, matches ? 2 : 5));
+            assertThat(leaseClosed).as(validator).isTrue();
+        }
+    }
+
+    /** Unknown units are ignored, and an empty representation still has an ordinary 200. */
+    @Test
+    void shouldIgnoreUnknownUnitAndServeEmptyRepresentation() throws Exception {
+        when(resourceService.openForRead(any())).thenReturn(stream(new AtomicBoolean()));
+        MvcResult unknown = mockMvc.perform(get(URL).header(HttpHeaders.RANGE, "items=1-2"))
+            .andExpect(request().asyncStarted()).andReturn();
+        mockMvc.perform(asyncDispatch(unknown))
+            .andExpect(status().isOk()).andExpect(content().string("hello"));
+
+        AtomicBoolean leaseClosed = new AtomicBoolean();
+        when(resourceService.openForRead(any())).thenReturn(stream("", new AtomicBoolean(), leaseClosed));
+        MvcResult empty = mockMvc.perform(get(URL)).andExpect(request().asyncStarted()).andReturn();
+        mockMvc.perform(asyncDispatch(empty))
+            .andExpect(status().isOk())
+            .andExpect(header().longValue(HttpHeaders.CONTENT_LENGTH, 0))
+            .andExpect(content().bytes(new byte[0]));
+        assertThat(leaseClosed).isTrue();
+    }
+
+    /** Streaming owns the lease until completion, including output failure; bad headers also close. */
+    @Test
+    void shouldReleaseResourcesOnTransferAndHeaderFailure() throws Exception {
+        HubResourceController controller = new HubResourceController(resourceService);
+        AtomicBoolean inputClosed = new AtomicBoolean();
+        AtomicBoolean leaseClosed = new AtomicBoolean();
+        when(resourceService.openForRead(any())).thenReturn(stream("hello", inputClosed, leaseClosed));
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", URL);
+        request.setAsyncSupported(true);
+        request.addHeader(HttpHeaders.RANGE, "bytes=1-3");
+        var response = controller.read("2026-07-13", "upload-1", "/hello.txt", false, request);
+        assertThat(inputClosed).isFalse();
+        assertThat(leaseClosed).isFalse();
+        OutputStream failingOutput = new OutputStream() {
+            @Override
+            public void write(int b) throws IOException {
+                throw new IOException("client disconnected");
+            }
+        };
+        assertThatThrownBy(() -> response.getBody().writeTo(failingOutput))
+            .isInstanceOf(IOException.class).hasMessage("client disconnected");
+        assertThat(inputClosed).isTrue();
+        assertThat(leaseClosed).isTrue();
+
+        AtomicBoolean badHeaderClosed = new AtomicBoolean();
+        when(resourceService.openForRead(any())).thenReturn(new HubResourceStream(
+            Path.of("/tmp/hello.txt"), "hello.txt", "invalid mime", 5, ETAG,
+            HubResourceSource.UPLOAD, new ByteArrayInputStream("hello".getBytes(StandardCharsets.UTF_8)),
+            () -> badHeaderClosed.set(true)));
+        assertThatThrownBy(() -> controller.read("2026-07-13", "upload-1", "/hello.txt", false, request))
+            .isInstanceOf(RuntimeException.class);
+        assertThat(badHeaderClosed).isTrue();
+    }
+
+    /** Async completion releases a resource even when the executor never runs its body. */
+    @Test
+    void shouldReleaseLeaseWhenAsyncExecutionIsRejected() throws Exception {
+        AtomicBoolean inputClosed = new AtomicBoolean();
+        AtomicBoolean leaseClosed = new AtomicBoolean();
+        when(resourceService.openForRead(any())).thenReturn(stream("hello", inputClosed, leaseClosed));
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", URL);
+        request.setAsyncSupported(true);
+        new HubResourceController(resourceService).read("2026-07-13", "upload-1", "/hello.txt", false, request);
+
+        var manager = WebAsyncUtils.getAsyncManager(request);
+        manager.setAsyncWebRequest(new StandardServletAsyncWebRequest(request, new MockHttpServletResponse()));
+        manager.setTaskExecutor((AsyncTaskExecutor) task -> {
+            throw new RejectedExecutionException("queue full");
+        });
+        manager.startCallableProcessing(() -> null);
+        assertThat(leaseClosed).isFalse();
+        request.getAsyncContext().complete();
+        assertThat(inputClosed).isTrue();
+        assertThat(leaseClosed).isTrue();
+    }
+
+    /** Return-value output failures happen before async completion can release the lease. */
+    @Test
+    void shouldReleaseLeaseWhenResponseOutputCannotBeOpened() throws Exception {
+        AtomicBoolean leaseClosed = new AtomicBoolean();
+        when(resourceService.openForRead(any())).thenReturn(stream("hello", new AtomicBoolean(), leaseClosed));
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", URL);
+        request.setAsyncSupported(true);
+        MockHttpServletResponse response = new MockHttpServletResponse() {
+            @Override
+            public ServletOutputStream getOutputStream() {
+                throw new IllegalStateException("output unavailable");
+            }
+        };
+        var result = new HubResourceController(resourceService)
+            .read("2026-07-13", "upload-1", "/hello.txt", false, request);
+        MethodParameter returnType = new MethodParameter(HubResourceController.class.getMethod("read",
+            String.class, String.class, String.class, boolean.class, HttpServletRequest.class), -1);
+        assertThatThrownBy(() -> new StreamingResponseBodyReturnValueHandler().handleReturnValue(
+            result, returnType, new ModelAndViewContainer(), new ServletWebRequest(request, response)))
+            .isInstanceOf(IllegalStateException.class).hasMessage("output unavailable");
+        assertThat(leaseClosed).isTrue();
+    }
+
+    /** A truncated underlying resource fails the promised transfer and still releases its lease. */
+    @Test
+    void shouldCloseOnUnexpectedEndOfStream() throws Exception {
+        AtomicBoolean leaseClosed = new AtomicBoolean();
+        when(resourceService.openForRead(any())).thenReturn(new HubResourceStream(
+            Path.of("/tmp/hello.txt"), "hello.txt", "text/plain", 5, ETAG,
+            HubResourceSource.UPLOAD, new ByteArrayInputStream("he".getBytes(StandardCharsets.UTF_8)),
+            () -> leaseClosed.set(true)));
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", URL);
+        request.setAsyncSupported(true);
+        request.addHeader(HttpHeaders.RANGE, "bytes=1-3");
+        var response = new HubResourceController(resourceService)
+            .read("2026-07-13", "upload-1", "/hello.txt", false, request);
+        assertThatThrownBy(() -> response.getBody().writeTo(OutputStream.nullOutputStream()))
+            .isInstanceOf(IOException.class).hasMessageContaining("promised length");
         assertThat(leaseClosed).isTrue();
     }
 
@@ -214,9 +459,21 @@ class HubResourceControllerTest {
     }
 
     private static HubResourceStream stream(AtomicBoolean leaseClosed) {
+        return stream("hello", new AtomicBoolean(), leaseClosed);
+    }
+
+    private static HubResourceStream stream(String contents, AtomicBoolean inputClosed, AtomicBoolean leaseClosed) {
+        byte[] bytes = contents.getBytes(StandardCharsets.UTF_8);
         return new HubResourceStream(
-            Path.of("/tmp/hello.txt"), "hello.txt", "text/plain", 5L,
-            HubResourceSource.UPLOAD, new ByteArrayInputStream("hello".getBytes()),
+            Path.of("/tmp/hello.txt"), "hello.txt", "text/plain", bytes.length,
+            contents.isEmpty() ? EMPTY_ETAG : ETAG,
+            HubResourceSource.UPLOAD, new ByteArrayInputStream(bytes) {
+                @Override
+                public void close() throws IOException {
+                    inputClosed.set(true);
+                    super.close();
+                }
+            },
             () -> leaseClosed.set(true));
     }
 
