@@ -32,17 +32,19 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.security.MessageDigest;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -143,14 +145,15 @@ class HubResourceServiceTest {
         assertThat(resourceService.exists(reportVp)).isFalse();
     }
 
-    /** Hash, size and stream all refer to the opened file, not a later same-size replacement. */
+    /** A same-size path replacement has a new ETag and the old stream refuses to continue. */
     @Test
     void shouldHashOpenedBytesAndDistinguishSameSizeReplacement() throws IOException {
         HubResourceService.UploadResult uploaded = resourceService.upload(HubResourceUploadRequest.builder()
             .date("2026-07-12").items(List.of(uploadItem("hello.txt", "hello"))).build());
         String virtualPath = uploaded.getItems().get(0).getResourcePath();
         Path real = resourceService.resolve(virtualPath).getRealPath();
-        try (HubResourceStream original = resourceService.openForRead(virtualPath)) {
+        HubResourceStream original = resourceService.openForRead(virtualPath);
+        try {
             assertThat(original.getSize()).isEqualTo(5);
             assertThat(original.getEtag()).isEqualTo(
                 "\"sha256-2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\"");
@@ -163,25 +166,119 @@ class HubResourceServiceTest {
                     "\"sha256-486ea46224d1bb4fb680f34f7c9ad96a8f24ec88be73ea8e5a6c65260e9cb8a7\"");
                 assertThat(current.getInputStream().readAllBytes()).isEqualTo("world".getBytes(StandardCharsets.UTF_8));
             }
-            assertThat(original.getInputStream().readAllBytes()).isEqualTo("hello".getBytes(StandardCharsets.UTF_8));
+            assertThatThrownBy(() -> original.getInputStream().readAllBytes())
+                .isInstanceOf(IOException.class).hasMessageContaining("changed");
             assertThat(leaseManager.heldPathCount()).isEqualTo(1);
+        } finally {
+            assertThatThrownBy(original::close).isInstanceOf(IOException.class).hasMessageContaining("changed");
         }
         assertThat(leaseManager.heldPathCount()).isZero();
     }
 
-    /** Probes whether an in-place write can change the bytes after the validator is computed. */
+    /** A same-size in-place write after hashing must be rejected before any read or skip. */
     @Test
     void shouldKeepValidatorConsistentAfterInPlaceWrite() throws Exception {
         HubResourceService.UploadResult uploaded = resourceService.upload(HubResourceUploadRequest.builder()
             .date("2026-07-12").items(List.of(uploadItem("mutable.txt", "hello"))).build());
         String virtualPath = uploaded.getItems().get(0).getResourcePath();
         Path real = resourceService.resolve(virtualPath).getRealPath();
-        try (HubResourceStream stream = resourceService.openForRead(virtualPath)) {
+        HubResourceStream stream = resourceService.openForRead(virtualPath);
+        try {
+            FileTime previous = Files.getLastModifiedTime(real);
             Files.writeString(real, "world");
-            byte[] served = stream.getInputStream().readAllBytes();
-            String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(served));
-            assertThat(stream.getEtag()).isEqualTo("\"sha256-" + digest + "\"");
+            Files.setLastModifiedTime(real, FileTime.fromMillis(previous.toMillis() + 5000));
+            assertThatThrownBy(() -> stream.getInputStream().readAllBytes())
+                .isInstanceOf(IOException.class).hasMessageContaining("changed");
+            assertThatThrownBy(() -> stream.getInputStream().skip(1))
+                .isInstanceOf(IOException.class).hasMessageContaining("changed");
+        } finally {
+            assertThatThrownBy(stream::close).isInstanceOf(IOException.class).hasMessageContaining("changed");
         }
+        assertThat(leaseManager.heldPathCount()).isZero();
+    }
+
+    /** A write after the first read is detected again at EOF and close, releasing the lease. */
+    @Test
+    void shouldDetectChangeAtEndOfStream() throws IOException {
+        HubResourceService.UploadResult uploaded = resourceService.upload(HubResourceUploadRequest.builder()
+            .date("2026-07-12").items(List.of(uploadItem("mutable.txt", "hello"))).build());
+        String virtualPath = uploaded.getItems().get(0).getResourcePath();
+        Path real = resourceService.resolve(virtualPath).getRealPath();
+        HubResourceStream stream = resourceService.openForRead(virtualPath);
+        try {
+            assertThat(stream.getInputStream().read()).isEqualTo('h');
+            FileTime previous = Files.getLastModifiedTime(real);
+            Files.writeString(real, "world");
+            Files.setLastModifiedTime(real, FileTime.fromMillis(previous.toMillis() + 5000));
+            assertThatThrownBy(() -> stream.getInputStream().readAllBytes())
+                .isInstanceOf(IOException.class).hasMessageContaining("changed");
+        } finally {
+            assertThatThrownBy(stream::close).isInstanceOf(IOException.class).hasMessageContaining("changed");
+        }
+        assertThat(leaseManager.heldPathCount()).isZero();
+    }
+
+    /** Sub-millisecond mtime changes must not disappear through a toMillis comparison. */
+    @Test
+    void shouldComparePreciseModificationTime() throws IOException {
+        HubResourceService.UploadResult uploaded = resourceService.upload(HubResourceUploadRequest.builder()
+            .date("2026-07-12").items(List.of(uploadItem("precise.txt", "hello"))).build());
+        String virtualPath = uploaded.getItems().get(0).getResourcePath();
+        Path real = resourceService.resolve(virtualPath).getRealPath();
+        Instant initial = Instant.parse("2026-07-12T00:00:00.123000000Z");
+        Files.setLastModifiedTime(real, FileTime.from(initial));
+        HubResourceStream stream = resourceService.openForRead(virtualPath);
+        BasicFileAttributes attributes = Files.readAttributes(real, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        BasicFileAttributes changed = Mockito.mock(BasicFileAttributes.class);
+        FileTime changedTime = FileTime.from(attributes.lastModifiedTime().toInstant().plusNanos(1));
+        when(changed.isRegularFile()).thenReturn(true);
+        when(changed.fileKey()).thenReturn(attributes.fileKey());
+        when(changed.lastModifiedTime()).thenReturn(changedTime);
+        when(changed.size()).thenReturn(attributes.size());
+        try (MockedStatic<Files> files = Mockito.mockStatic(Files.class, Mockito.CALLS_REAL_METHODS)) {
+            files.when(() -> Files.readAttributes(real, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS))
+                .thenReturn(changed);
+            assertThat(changedTime.toMillis()).isEqualTo(attributes.lastModifiedTime().toMillis());
+            assertThatThrownBy(() -> stream.getInputStream().read())
+                .isInstanceOf(IOException.class).hasMessageContaining("changed");
+            assertThatThrownBy(stream::close).isInstanceOf(IOException.class).hasMessageContaining("changed");
+        }
+        assertThat(leaseManager.heldPathCount()).isZero();
+    }
+
+    /** Same-size modification during hashing is detected by precise metadata and fails closed. */
+    @Test
+    void shouldRejectChangeDuringHash() throws IOException {
+        HubResourceService.UploadResult uploaded = resourceService.upload(HubResourceUploadRequest.builder()
+            .date("2026-07-12").items(List.of(uploadItem("mutable.txt", "hello"))).build());
+        String virtualPath = uploaded.getItems().get(0).getResourcePath();
+        Path real = resourceService.resolve(virtualPath).getRealPath();
+        FileTime previous = Files.getLastModifiedTime(real);
+        SeekableByteChannel actual = Files.newByteChannel(real, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+        SeekableByteChannel channel = Mockito.mock(SeekableByteChannel.class);
+        AtomicBoolean modified = new AtomicBoolean();
+        when(channel.size()).thenAnswer(invocation -> actual.size());
+        when(channel.read(any(ByteBuffer.class))).thenAnswer(invocation -> {
+            int read = actual.read(invocation.getArgument(0));
+            if (read > 0 && modified.compareAndSet(false, true)) {
+                Files.writeString(real, "world");
+                Files.setLastModifiedTime(real, FileTime.fromMillis(previous.toMillis() + 5000));
+            }
+            return read;
+        });
+        doAnswer(invocation -> {
+            actual.close();
+            return null;
+        }).when(channel).close();
+        try (MockedStatic<Files> files = Mockito.mockStatic(Files.class, Mockito.CALLS_REAL_METHODS)) {
+            files.when(() -> Files.newByteChannel(real, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))
+                .thenReturn(channel);
+            assertThatThrownBy(() -> resourceService.openForRead(virtualPath))
+                .isInstanceOf(ThrowableConventionErrorCode.class).hasRootCauseMessage("Resource changed while being read");
+        }
+        assertThat(modified).isTrue();
+        assertThat(actual.isOpen()).isFalse();
+        assertThat(leaseManager.heldPathCount()).isZero();
     }
 
     /** Empty files still get their real size and the well-known SHA-256 of zero bytes. */
@@ -194,6 +291,26 @@ class HubResourceServiceTest {
             assertThat(stream.getEtag()).isEqualTo(
                 "\"sha256-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"");
             assertThat(stream.getInputStream().readAllBytes()).isEmpty();
+        }
+        assertThat(leaseManager.heldPathCount()).isZero();
+    }
+
+    /** A filesystem without a file key cannot safely identify replacements and fails closed. */
+    @Test
+    void shouldFailClosedWhenFileIdentityIsUnavailable() throws IOException {
+        HubResourceService.UploadResult uploaded = resourceService.upload(HubResourceUploadRequest.builder()
+            .date("2026-07-12").items(List.of(uploadItem("hello.txt", "hello"))).build());
+        String virtualPath = uploaded.getItems().get(0).getResourcePath();
+        Path real = resourceService.resolve(virtualPath).getRealPath();
+        BasicFileAttributes attributes = Mockito.mock(BasicFileAttributes.class);
+        when(attributes.isRegularFile()).thenReturn(true);
+        when(attributes.fileKey()).thenReturn(null);
+        try (MockedStatic<Files> files = Mockito.mockStatic(Files.class, Mockito.CALLS_REAL_METHODS)) {
+            files.when(() -> Files.readAttributes(real, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS))
+                .thenReturn(attributes);
+            assertThatThrownBy(() -> resourceService.openForRead(virtualPath))
+                .isInstanceOf(ThrowableConventionErrorCode.class)
+                .hasRootCauseMessage("Resource file identity is unavailable");
         }
         assertThat(leaseManager.heldPathCount()).isZero();
     }

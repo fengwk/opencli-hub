@@ -17,6 +17,7 @@ import fun.fengwk.openclihub.share.model.resource.HubResourceSource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -31,6 +32,7 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
@@ -201,11 +203,20 @@ public class HubResourceService {
         HubResourceLease lease = leaseManager.acquire(real, "read");
         SeekableByteChannel channel = null;
         try {
-            // Size, hash and subsequent reads all use the same no-follow file handle.
-            // This prevents pathname replacement from redirecting the transfer, but does
-            // not prevent another process from modifying that open file in place.
+            // Bracket opening and hashing with path metadata; the file handle supplies the
+            // size and all content. A provider without file identity cannot verify safely.
+            BasicFileAttributes before = Files.readAttributes(real, BasicFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS);
+            if (!before.isRegularFile() || before.fileKey() == null) {
+                throw new IOException("Resource file identity is unavailable");
+            }
             channel = Files.newByteChannel(real, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
             long size = channel.size();
+            if (before.size() != size) {
+                throw new IOException("Resource size changed while opening");
+            }
+            ResourceIdentity identity = new ResourceIdentity(real, size, before.fileKey(), before.lastModifiedTime());
+            identity.verify(channel);
             MessageDigest digest = sha256();
             ByteBuffer buffer = ByteBuffer.allocate(8192);
             long hashed = 0;
@@ -222,11 +233,16 @@ public class HubResourceService {
             if (hashed != size || channel.size() != size) {
                 throw new IOException("Resource size changed while hashing");
             }
+            identity.verify(channel);
             channel.position(0);
             String etag = "\"sha256-" + HexFormat.of().formatHex(digest.digest()) + "\"";
             String mime = HubResourceMimeTypes.probe(real);
+            SeekableByteChannel openedChannel = channel;
+            HubResourceStream.IoCheck check = () -> identity.verify(openedChannel);
+            check.verify();
             return new HubResourceStream(real, real.getFileName().toString(), mime, size, etag,
-                HubResourcePaths.detectSource(resolved.getGroup()), Channels.newInputStream(channel), lease);
+                HubResourcePaths.detectSource(resolved.getGroup()),
+                new VerifyingInputStream(Channels.newInputStream(channel), check), lease, check);
         } catch (IOException | RuntimeException | Error ex) {
             if (channel != null) {
                 try {
@@ -255,6 +271,72 @@ public class HubResourceService {
             return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException ex) {
             throw new IllegalStateException("SHA-256 is unavailable", ex);
+        }
+    }
+
+    private record ResourceIdentity(Path path, long size, Object fileKey, FileTime modifiedTime) {
+        void verify(SeekableByteChannel channel) throws IOException {
+            BasicFileAttributes current = Files.readAttributes(path, BasicFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS);
+            if (!current.isRegularFile() || !fileKey.equals(current.fileKey())
+                || !modifiedTime.equals(current.lastModifiedTime())
+                || size != current.size() || size != channel.size()) {
+                throw new IOException("Resource changed while being read");
+            }
+        }
+    }
+
+    private static final class VerifyingInputStream extends FilterInputStream {
+        private final HubResourceStream.IoCheck check;
+        private boolean started;
+        private boolean closed;
+
+        private VerifyingInputStream(InputStream input, HubResourceStream.IoCheck check) {
+            super(input);
+            this.check = check;
+        }
+
+        private void beforeRead() throws IOException {
+            if (!started) {
+                check.verify();
+                started = true;
+            }
+        }
+
+        @Override
+        public int read() throws IOException {
+            beforeRead();
+            int result = in.read();
+            if (result == -1) {
+                check.verify();
+            }
+            return result;
+        }
+
+        @Override
+        public int read(byte[] bytes, int offset, int length) throws IOException {
+            beforeRead();
+            int result = in.read(bytes, offset, length);
+            if (result == -1) {
+                check.verify();
+            }
+            return result;
+        }
+
+        @Override
+        public long skip(long count) throws IOException {
+            beforeRead();
+            return in.skip(count);
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (!closed) {
+                closed = true;
+                try (InputStream input = in) {
+                    check.verify();
+                }
+            }
         }
     }
 

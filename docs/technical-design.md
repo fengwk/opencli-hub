@@ -1620,6 +1620,10 @@ GET /api/resources/{date}/{group}/{path}
 - 正确设置 Content-Type、Content-Length、Content-Disposition；
 - 不跟随符号链接。
 
+资源 GET 返回 `Accept-Ranges: bytes` 和内容强 ETag `"sha256-<64位小写十六进制>"`。支持单段 `bytes=N-M`、`bytes=N-`、`bytes=-N`：有效区间返回 `206`、精确的 `Content-Range` 和 `Content-Length`，末尾可截断至文件结尾；非法、越界、多段及空文件的 byte range 返回 `416` 和 `Content-Range: bytes */<大小>`。未知单位可忽略并返回完整 `200`。`If-Range` 仅在与当前强 ETag 精确匹配时允许部分响应，其他值（包括弱 ETag 和日期）回退到完整 `200`；没有 `If-Range` 时正常处理 Range。HEAD 忽略 Range，返回完整表示的响应头，不返回 body。
+
+资源应在读取期间保持不变，执行产物在执行完成后读取。Hub 在打开句柄、计算摘要及传输时检查可检测的文件变化，发现变化则终止；这不是文件快照，也不能保证发现保留原时间戳的外部改写。资源文件系统须提供文件标识（`fileKey`）；无法取得时读取失败关闭。客户端完成续传后应校验完整大小和内容 SHA-256。
+
 ### 23.6 删除
 
 管理员手工删除：

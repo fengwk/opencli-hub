@@ -26,10 +26,18 @@ import fun.fengwk.openclihub.share.constant.HubErrorCodes;
 import fun.fengwk.openclihub.share.model.resource.HubResourceDateSummaryDTO;
 import fun.fengwk.openclihub.share.model.resource.HubResourceItemDTO;
 import fun.fengwk.openclihub.share.model.resource.HubResourceSource;
+import jakarta.servlet.AsyncContext;
 import jakarta.servlet.ServletOutputStream;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponseWrapper;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -37,14 +45,15 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.core.MethodParameter;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -53,11 +62,10 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.web.context.request.ServletWebRequest;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.context.request.async.StandardServletAsyncWebRequest;
 import org.springframework.web.context.request.async.WebAsyncUtils;
-import org.springframework.web.method.support.ModelAndViewContainer;
-import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBodyReturnValueHandler;
 
 /** Covers multipart, browse, binary stream and delete resource routes. */
 @ImportAutoConfiguration(WebExceptionResultHandlerAutoConfiguration.class)
@@ -74,6 +82,9 @@ class HubResourceControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private WebApplicationContext webContext;
 
     @MockitoBean
     private HubResourceService resourceService;
@@ -358,21 +369,102 @@ class HubResourceControllerTest {
     void shouldReleaseLeaseWhenResponseOutputCannotBeOpened() throws Exception {
         AtomicBoolean leaseClosed = new AtomicBoolean();
         when(resourceService.openForRead(any())).thenReturn(stream("hello", new AtomicBoolean(), leaseClosed));
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", URL);
-        request.setAsyncSupported(true);
-        MockHttpServletResponse response = new MockHttpServletResponse() {
+        MockMvc failingMvc = MockMvcBuilders.webAppContextSetup(webContext)
+            .addFilters((request, response, chain) -> chain.doFilter(request,
+                new HttpServletResponseWrapper((HttpServletResponse) response) {
+                    @Override
+                    public ServletOutputStream getOutputStream() {
+                        throw new IllegalStateException("output unavailable");
+                    }
+                })).build();
+        assertThatThrownBy(() -> failingMvc.perform(get(URL)))
+            .hasRootCauseMessage("output unavailable");
+        assertThat(leaseClosed).isTrue();
+    }
+
+    /** MVC cleanup must also release a synchronous request when async is unavailable. */
+    @Test
+    void shouldReleaseLeaseWhenAsyncIsNotSupported() throws Exception {
+        AtomicBoolean inputClosed = new AtomicBoolean();
+        AtomicBoolean leaseClosed = new AtomicBoolean();
+        when(resourceService.openForRead(any())).thenReturn(stream("hello", inputClosed, leaseClosed));
+        assertThatThrownBy(() -> mockMvc.perform(get(URL).with(request -> {
+            request.setAsyncSupported(false);
+            return request;
+        }))).hasRootCauseMessage("Async resource streaming is not supported");
+        assertThat(inputClosed).isTrue();
+        assertThat(leaseClosed).isTrue();
+    }
+
+    /** An async-start failure after return-value handling also reaches MVC cleanup. */
+    @Test
+    void shouldReleaseLeaseWhenAsyncStartFails() throws Exception {
+        AtomicBoolean leaseClosed = new AtomicBoolean();
+        when(resourceService.openForRead(any())).thenReturn(stream("hello", new AtomicBoolean(), leaseClosed));
+        MockMvc failingMvc = MockMvcBuilders.webAppContextSetup(webContext)
+            .addFilters((request, response, chain) -> chain.doFilter(
+                new HttpServletRequestWrapper((HttpServletRequest) request) {
+                    @Override
+                    public AsyncContext startAsync(ServletRequest req, ServletResponse res) {
+                        throw new IllegalStateException("async start failed");
+                    }
+                }, response)).build();
+        assertThatThrownBy(() -> failingMvc.perform(get(URL))).hasRootCauseMessage("async start failed");
+        assertThat(leaseClosed).isTrue();
+    }
+
+    /** Async dispatch must not release a lease while the transfer is still blocked. */
+    @Test
+    void shouldKeepLeaseUntilAsyncTransferFinishes() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch proceed = new CountDownLatch(1);
+        AtomicBoolean leaseClosed = new AtomicBoolean();
+        InputStream blocking = new ByteArrayInputStream("hello".getBytes(StandardCharsets.UTF_8)) {
             @Override
-            public ServletOutputStream getOutputStream() {
-                throw new IllegalStateException("output unavailable");
+            public synchronized int read(byte[] bytes, int offset, int length) {
+                entered.countDown();
+                try {
+                    if (!proceed.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("transfer timed out");
+                    }
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(ex);
+                }
+                return super.read(bytes, offset, length);
             }
         };
-        var result = new HubResourceController(resourceService)
+        when(resourceService.openForRead(any())).thenReturn(new HubResourceStream(
+            Path.of("/tmp/hello.txt"), "hello.txt", "text/plain", 5, ETAG,
+            HubResourceSource.UPLOAD, blocking, () -> leaseClosed.set(true)));
+        MvcResult started = mockMvc.perform(get(URL)).andExpect(request().asyncStarted()).andReturn();
+        try {
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(leaseClosed).isFalse();
+        } finally {
+            proceed.countDown();
+        }
+        mockMvc.perform(asyncDispatch(started)).andExpect(status().isOk()).andExpect(content().string("hello"));
+        assertThat(leaseClosed).isTrue();
+    }
+
+    /** A change detected before the final range bytes cannot complete the advertised length. */
+    @Test
+    void shouldNotSendFinalBytesWhenConsistencyCheckFails() throws Exception {
+        AtomicBoolean leaseClosed = new AtomicBoolean();
+        when(resourceService.openForRead(any())).thenReturn(new HubResourceStream(
+            Path.of("/tmp/hello.txt"), "hello.txt", "text/plain", 5, ETAG,
+            HubResourceSource.UPLOAD, new ByteArrayInputStream("hello".getBytes(StandardCharsets.UTF_8)),
+            () -> leaseClosed.set(true), () -> { throw new IOException("resource changed"); }));
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", URL);
+        request.setAsyncSupported(true);
+        request.addHeader(HttpHeaders.RANGE, "bytes=1-3");
+        var response = new HubResourceController(resourceService)
             .read("2026-07-13", "upload-1", "/hello.txt", false, request);
-        MethodParameter returnType = new MethodParameter(HubResourceController.class.getMethod("read",
-            String.class, String.class, String.class, boolean.class, HttpServletRequest.class), -1);
-        assertThatThrownBy(() -> new StreamingResponseBodyReturnValueHandler().handleReturnValue(
-            result, returnType, new ModelAndViewContainer(), new ServletWebRequest(request, response)))
-            .isInstanceOf(IllegalStateException.class).hasMessage("output unavailable");
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        assertThatThrownBy(() -> response.getBody().writeTo(output))
+            .isInstanceOf(IOException.class).hasMessage("resource changed");
+        assertThat(output.toByteArray()).isEmpty();
         assertThat(leaseClosed).isTrue();
     }
 

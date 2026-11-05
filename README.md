@@ -381,6 +381,10 @@ curl --fail --show-error "$HUB_URL/api/resources?date=2026-07-16&source=UPLOAD&p
 
 上传响应 `data` 给出 `date`、`group` 及每个资源的 `contentUrl`、`downloadUrl`。读取/删除/下载应使用返回 URL 或字段，不要自行拼接或解码含空格、Unicode、`#`、`?` 的路径。
 
+资源 GET 支持单段 `Range: bytes=N-M`、`bytes=N-` 和 `bytes=-N`，成功返回 `206` 和 `Content-Range`；无效、越界或多段 byte range 返回 `416` 和 `Content-Range: bytes */大小`。普通 GET 返回完整内容（`200`），响应含 `Accept-Ranges: bytes` 和内容强 ETag `"sha256-<64位小写十六进制>"`。续传时发送该 ETag 作为 `If-Range`：精确匹配才返回部分内容，弱标签、日期或不匹配时返回完整 `200`。HEAD 忽略 Range，返回完整表示的响应头而无 body。
+
+资源在读取期间必须保持不变，执行产物应在执行完成后读取；Hub 检测到文件变化会终止读取。客户端续传完成后仍应校验文件大小及 ETag 对应的 SHA-256，不应将异常或截断传输视为成功。
+
 全局 `GET`/`PUT /api/settings` 只接受 `DIRECT` 或 `CUSTOM`；Instance 的 `proxyMode` 可为 `INHERIT`、`DIRECT`、`CUSTOM`。`CUSTOM` 只接受带显式端口且不含凭据、path、query、fragment 的 `http`、`https`、`socks4`、`socks5` URL：
 
 ```bash

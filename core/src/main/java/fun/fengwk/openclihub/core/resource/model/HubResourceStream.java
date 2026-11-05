@@ -1,6 +1,7 @@
 package fun.fengwk.openclihub.core.resource.model;
 
 import fun.fengwk.openclihub.share.model.resource.HubResourceSource;
+import lombok.AccessLevel;
 import lombok.Getter;
 
 import java.io.IOException;
@@ -27,9 +28,17 @@ public final class HubResourceStream implements AutoCloseable {
     private final HubResourceSource source;
     private final InputStream inputStream;
     private final AutoCloseable lease;
+    @Getter(AccessLevel.NONE)
+    private final IoCheck consistencyCheck;
 
     public HubResourceStream(Path realPath, String fileName, String mimeType, long size, String etag,
                              HubResourceSource source, InputStream inputStream, AutoCloseable lease) {
+        this(realPath, fileName, mimeType, size, etag, source, inputStream, lease, () -> {});
+    }
+
+    public HubResourceStream(Path realPath, String fileName, String mimeType, long size, String etag,
+                             HubResourceSource source, InputStream inputStream, AutoCloseable lease,
+                             IoCheck consistencyCheck) {
         this.realPath = Objects.requireNonNull(realPath, "realPath");
         this.fileName = Objects.requireNonNull(fileName, "fileName");
         this.mimeType = Objects.requireNonNull(mimeType, "mimeType");
@@ -38,6 +47,17 @@ public final class HubResourceStream implements AutoCloseable {
         this.source = source;
         this.inputStream = Objects.requireNonNull(inputStream, "inputStream");
         this.lease = Objects.requireNonNull(lease, "lease");
+        this.consistencyCheck = Objects.requireNonNull(consistencyCheck, "consistencyCheck");
+    }
+
+    @FunctionalInterface
+    public interface IoCheck {
+        void verify() throws IOException;
+    }
+
+    /** Recheck the source before completing a bounded transfer. */
+    public void verifyUnchanged() throws IOException {
+        consistencyCheck.verify();
     }
 
     @Override

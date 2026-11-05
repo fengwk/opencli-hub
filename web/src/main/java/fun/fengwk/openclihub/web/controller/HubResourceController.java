@@ -31,9 +31,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.context.request.NativeWebRequest;
-import org.springframework.web.context.request.async.CallableProcessingInterceptor;
-import org.springframework.web.context.request.async.WebAsyncUtils;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -41,6 +38,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.NativeWebRequest;
+import org.springframework.web.context.request.async.CallableProcessingInterceptor;
+import org.springframework.web.context.request.async.WebAsyncUtils;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -55,6 +55,7 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 @RestController
 public class HubResourceController {
 
+    private static final String RESOURCE_CLOSER_ATTRIBUTE = HubResourceController.class.getName() + ".resourceCloser";
     private final HubResourceService resourceService;
 
     @PostMapping(value = "/api/resources/uploads", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -125,6 +126,7 @@ public class HubResourceController {
         }
         ResourceCloser closer = new ResourceCloser(resource);
         try {
+            request.setAttribute(RESOURCE_CLOSER_ATTRIBUTE, closer);
             boolean head = "HEAD".equals(request.getMethod());
             List<String> ifRange = Collections.list(request.getHeaders(HttpHeaders.IF_RANGE));
             ByteRange range = null;
@@ -166,7 +168,7 @@ public class HubResourceController {
             }
             StreamingResponseBody body = outputStream -> {
                 try (closer) {
-                    copyRange(resource.getInputStream(), outputStream, start, length);
+                    copyRange(resource, outputStream, start, length);
                 }
             };
             // A queued task may be rejected or time out before its body ever runs.
@@ -215,6 +217,14 @@ public class HubResourceController {
     private static String virtualPath(String date, String group, String path) {
         String relativePath = path.startsWith("/") ? path.substring(1) : path;
         return "/resources/" + date + "/" + group + "/" + relativePath;
+    }
+
+    static void closeRequestResource(HttpServletRequest request) throws IOException {
+        Object attribute = request.getAttribute(RESOURCE_CLOSER_ATTRIBUTE);
+        if (attribute instanceof ResourceCloser closer) {
+            request.removeAttribute(RESOURCE_CLOSER_ATTRIBUTE);
+            closer.close();
+        }
     }
 
     private record ByteRange(long start, long end) {
@@ -300,15 +310,24 @@ public class HubResourceController {
         return result;
     }
 
-    private static void copyRange(InputStream input, OutputStream output, long start, long length)
+    private static void copyRange(HubResourceStream resource, OutputStream output, long start, long length)
         throws IOException {
+        InputStream input = resource.getInputStream();
         input.skipNBytes(start);
         byte[] buffer = new byte[8192];
         long remaining = length;
+        if (remaining == 0) {
+            resource.verifyUnchanged();
+        }
         while (remaining > 0) {
             int read = input.read(buffer, 0, (int) Math.min(buffer.length, remaining));
             if (read < 0) {
                 throw new EOFException("Resource ended before the promised length");
+            }
+            // A changed resource must not complete the promised Content-Length, even
+            // for a partial range which does not naturally reach the source file's EOF.
+            if (read == remaining) {
+                resource.verifyUnchanged();
             }
             output.write(buffer, 0, read);
             remaining -= read;
