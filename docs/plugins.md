@@ -201,8 +201,9 @@ opencli plugin install github:fengwk/my-opencli/chatgpt-agent
 `chatgpt-agent`，并在该 Instance 的 Chrome Profile 中完成 ChatGPT 登录，才能执行
 `chatgpt-agent/*` 命令。
 
-当前插件基线为已发布的 [`my-opencli v0.1.67`](https://github.com/fengwk/my-opencli/releases/tag/v0.1.67)（五个子插件统一版本）。该版本在同一次主页请求中补齐 Douyin 评论、收藏、分享、发布时间等元数据，缺失/非法统计返回 `null`，保留真实 `0`；继续保留游标分页、UTF-8 文件名修复及既有 `--op` 输出契约。当前 Hub 钉住的正式 CLI `2.0.2-fengwk.5` / Browser Bridge `1.0.39` 使用新空白标签接替 idle 扩展目标并写回租约，同时保留先前 composer 与 SSE 能力。
-- **内置搜索**：`douyin search` 属于 CLI 本体，不是 `douyin-ext`；其统一 `--timeout` 修复通过升级 Hub 镜像中的 CLI `2.0.2-fengwk.5` 交付，独立插件保持 `0.1.67`。
+当前插件基线为已发布的 [`my-opencli v0.1.72`](https://github.com/fengwk/my-opencli/releases/tag/v0.1.72)（五个子插件统一版本）。ChatGPT 生成图片改用原生 Download 菜单：从当前消息发现目标，在 viewer 内逐张匹配源与已解码的大图，等待 Chrome 下载完成后收集到 `--op`，不再通过 daemon 请求或响应传输图片 Base64。当前 Hub 钉住正式 CLI `2.0.2-fengwk.6` / Browser Bridge `1.0.39`；CLI 修复了祖先遮挡层被误判为有效点击的问题，并保留此前上传、SSE、空闲回收和 Douyin 能力。
+- **原生多图下载前置条件**：先升级镜像中的 CLI 至 `2.0.2-fengwk.6`，再更新持久卷中的 `chatgpt-agent` 至 `0.1.72`；仅更新其中一项不构成完整升级。镜像构建不会自动更新已安装插件。
+- **内置搜索**：`douyin search` 属于 CLI 本体，不是 `douyin-ext`；自 `2.0.2-fengwk.5` 起导航和结果轮询共用 `--timeout`，当前 `.6` 保留此修复。
 - **Gemini 限制**：仍保留旧 StreamGenerate collector；新版 `/v1/processSession` WebChannel 尚未适配。历史实测网站返回 `400 FAILED_PRECONDITION`，成功响应结构未确认；本次正式 Bridge `1.0.39` 不包含实验性的 WebChannel 适配。
 - **清单加载前置条件**：全量非分页元数据加载需依赖 CLI 的 `opencli list --manifest -f json`（要求 CLI 版本为 `2.0.2-fengwk.2` 及以上）。
 - **受管输出自动收集**：`douyin-ext download`、`jimeng-agent status` 与 `jimeng-agent canvas-v0-download` 仅使用 `--op` 作为输出目录参数。Hub 通过 `HubManagedOutputArguments` 自动识别并注入执行资源目录，API 调用方不得传入该参数。

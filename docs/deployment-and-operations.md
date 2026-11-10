@@ -9,7 +9,7 @@
 3. 为 Hub 分配至少 `2gb` shared memory，并验证宿主 seccomp 策略允许 `seccomp=unconfined`。Compose 文件已经声明这两个条件，不要删除。
 4. Gateway/反向代理必须提供 TLS、认证、授权、限流，并允许 `/api/instances/{id}/vnc` WebSocket Upgrade 和二进制帧透传。
 5. 为 `/data/opencli-hub`、`/var/lib/opencli` 及数据库（PostgreSQL/MySQL）备份准备受限、加密的存储位置；SQLite 备份即 data volume 快照。
-6. 实例级空闲回收要求 daemon 与每个 Browser Bridge profile 都广告 `adapter-tab-reclaim-v1`。成对固定已正式发布并核验的 CLI `2.0.2-fengwk.5` / extension `1.0.39`；升级时必须复用原 CRX signing key；缺少能力的旧版本会明确拒绝实例启动，不降级到旧策略。
+6. 实例级空闲回收要求 daemon 与每个 Browser Bridge profile 都广告 `adapter-tab-reclaim-v1`。成对固定已正式发布并核验的 CLI `2.0.2-fengwk.6` / extension `1.0.39`；升级时必须复用原 CRX signing key；缺少能力的旧版本会明确拒绝实例启动，不降级到旧策略。
 
 Hub 容器和 Chrome 以 UID/GID `1000:1000` 运行。若改用 bind mount，宿主目录必须允许该用户读写。
 
@@ -226,9 +226,9 @@ workflow 共用该文件，因此官方 baseline 与已发布 fork Release 的�
 
 ```text
 package=@jackwener/opencli
-CLI version=2.0.2-fengwk.5
+CLI version=2.0.2-fengwk.6
 extension version=1.0.39
-source revision=fengwk/OpenCLI@f6bf17b70c94056c72a78a5c09eee42259e9c135
+source revision=fengwk/OpenCLI@8f82470eed6cea6a6c54e5cdc4aacc40489943d2
 ```
 
 OpenCLI 2 输出契约兼容性说明：
@@ -246,26 +246,28 @@ OpenCLI 2 输出契约兼容性说明：
 4. 构建后确认镜像内 `/opt/opencli/artifact-build-info.json` 反映解析结果；smoke 会比较
    `opencli --version` 与该文件中的 `cli.version`。
 
-当前 fork Release（tag `fork-v2.0.2-fengwk.5`，CLI `2.0.2-fengwk.5` + extension `1.0.39`）：
+当前 fork Release（tag `fork-v2.0.2-fengwk.6`，CLI `2.0.2-fengwk.6` + extension `1.0.39`）：
 
 ```bash
 # scripts/docker/opencli-artifact.lock.env
 OPENCLI_PACKAGE=@jackwener/opencli
-OPENCLI_VERSION=2.0.2-fengwk.5
-OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.5/jackwener-opencli-2.0.2-fengwk.5.tgz
-OPENCLI_CLI_SHA256=98dcaec1dd44a3ae46d04a56b1808985fed26c7d32cdf1c70bc7c58d360d7f11
-OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@f6bf17b70c94056c72a78a5c09eee42259e9c135
+OPENCLI_VERSION=2.0.2-fengwk.6
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.6/jackwener-opencli-2.0.2-fengwk.6.tgz
+OPENCLI_CLI_SHA256=b4631093359aeda5c877e538c5481cc19a981003bcc414ca5308a573ec283f3b
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@8f82470eed6cea6a6c54e5cdc4aacc40489943d2
 EXTENSION_VERSION=1.0.39
-OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.5/opencli-extension-v1.0.39.zip
-OPENCLI_EXTENSION_SHA256=a1d2f345ba55365e53c5b6acfd1b8ef7b62851c0ef91929accfcaf003f537c19
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.6/opencli-extension-v1.0.39.zip
+OPENCLI_EXTENSION_SHA256=62fdadaa8a64d4759b9d2cac55c2c554d5a37322c7b2d00e2562d59c148c2a4d
 ```
 
 `douyin search` 是 CLI 内置命令：`2.0.2-fengwk.5` 让导航与结果等待共用 `--timeout`（默认 120 秒），交付此修复需要升级 Hub 镜像，只更新独立插件不会生效。该次 CLI 修复保持 Bridge `1.0.39`，与前一 Release 的扩展文件内容一致。
 
+`2.0.2-fengwk.6` 保留上述修复，并修复普通祖先遮挡层导致的无效点击，是 `chatgpt-agent 0.1.72` 原生多图下载所需的最低 fork 版本。本轮 Bridge 仍为 `1.0.39`；CLI 与 extension URL/SHA256 均使用 `.6` 同一 Release 的实际资产，继续复用生产 CRX signing key。
+
 镜像升级不会更新已有的插件卷。确认 CLI/extension 满足上述正式配套版本后，通过
 [`/plugins` 的插件维护流程](plugins.md) 执行“更新已安装”，将五个 `my-opencli` 插件同步至已发布的
-[`v0.1.67`](https://github.com/fengwk/my-opencli/releases/tag/v0.1.67)。该版本补齐 Douyin 主页元数据并修正缺失统计值，保留先前 ChatGPT 兼容修复；
-已满足宿主版本时，不需要为这次插件升级重建镜像或重启 Chrome。
+[`v0.1.72`](https://github.com/fengwk/my-opencli/releases/tag/v0.1.72)。该版本将 ChatGPT 多图输出迁移为 Chrome 原生文件下载，并保留此前各插件修复；
+先确认容器内 `opencli --version` 为 `2.0.2-fengwk.6`。旧 `.5` 宿主必须先更新镜像；已满足宿主版本时无需为插件更新再次重建镜像。
 维护前确认没有执行中/排队任务，更新成功后核对 `/api/plugins/installed` 的真实版本与命令目录；
 空 `desiredPlugins` 的“安装默认集合”可能跳过已装插件，单独刷新 Catalog 也不会升级代码。
 

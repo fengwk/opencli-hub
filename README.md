@@ -39,7 +39,7 @@
 - 提供 Instance 生命周期、VNC WebSocket、执行历史、资源、日志、命令黑名单/输出规则和浏览器代理设置。
 - 使用唯一的实例连续空闲 TTL 回收策略：实例无执行中或待处理任务、连续空闲达到阈值（默认 1800 秒）后，统一清理 OpenCLI 自有 adapter 页面，包含常驻和换 tab 遗留；保留登录状态、一个空白占位以及用户/借用页面。`0` 在下次空闲巡检回收，`-1` 禁用，不再使用逐 tab warm-TTL。
 - 支持通过管理端配置 OpenCLI 插件源，并调用官方 `opencli plugin install/update/list` 同步；详见 [插件维护](docs/plugins.md)。
-- 当前插件兼容基线为已发布的 `my-opencli v0.1.65`（五插件统一版本，包含 ChatGPT 新版上传/文件下载/图片导出修复）。已有插件需在管理页主动“更新已安装”，镜像发布不会自动更新插件卷；Gemini 新协议适配仍延期，正式 CLI/扩展 pin 保持不变。
+- 当前插件兼容基线为已发布的 `my-opencli v0.1.72`（五插件统一版本）。ChatGPT 生成图片改用浏览器原生下载，下载前核对预览的实际图片；要求镜像内 CLI 至少为 `2.0.2-fengwk.6`。已有插件需在管理页主动“更新已安装”，镜像发布不会自动更新插件卷；Gemini 新协议适配仍延期。
 - 支持三种编译期数据库变体：PostgreSQL 16（默认）、MySQL 8.4 LTS、SQLite。变体通过 Spring SQL initialization 幂等应用当前 schema（schema-only，system settings 由应用懒初始化）；既有旧库提供 PostgreSQL、MySQL、SQLite 对应的结构升级迁移脚本。
 - 后端 ID 是不透明字符串：新记录使用 UUID，旧正 BIGINT ID 保留为十进制字符串。集成方不得将 ID 转为 JavaScript `Number`。
 
@@ -69,7 +69,7 @@ VNC TCP 只监听容器 loopback；客户端只通过同源 WebSocket `/api/inst
 | Java | 17 |
 | 前端构建 | Node.js 20 + npm lockfile |
 | Google Chrome | `150.0.7871.114-1`，仅 `linux/amd64` |
-| OpenCLI | 见 `scripts/docker/opencli-artifact.lock.env`（当前已发布 pin `2.0.2-fengwk.5`） |
+| OpenCLI | 见 `scripts/docker/opencli-artifact.lock.env`（当前已发布 pin `2.0.2-fengwk.6`） |
 | Browser Bridge extension | 见同一 lock（当前已发布 fork `1.0.39`） |
 | PostgreSQL（默认） | `16`，`compose.yml` |
 | MySQL | `8.4` LTS，`compose.mysql.yml`；迁移脚本兼容 5.7/8.4 |
@@ -77,7 +77,7 @@ VNC TCP 只监听容器 loopback；客户端只通过同源 WebSocket `/api/inst
 
 Docker 部署要求 Docker Engine 支持 BuildKit 和 Compose `build.secrets`。Compose 固定 `shm_size: 2gb` 与 `seccomp=unconfined`；上线前必须验证宿主 Docker/seccomp 策略允许 Chrome sandbox 正常运行。
 
-**空闲回收的部署前置条件**：daemon 与目标 profile 都须支持 `adapter-tab-reclaim-v1`。默认 lock 成对钉住正式发布并核验的 CLI `2.0.2-fengwk.5` / extension `1.0.39`，在原窗口/组用新空白标签接替 idle 扩展目标，并正确写回租约。升级镜像时必须保留原 CRX signing key；旧依赖会明确拒绝实例启动，不回退旧逐 tab 策略。
+**空闲回收的部署前置条件**：daemon 与目标 profile 都须支持 `adapter-tab-reclaim-v1`。默认 lock 成对钉住正式发布并核验的 CLI `2.0.2-fengwk.6` / extension `1.0.39`，保留新空白标签接替 idle 扩展目标及租约写回能力，并修复祖先遮挡层导致的无效点击。升级镜像时必须保留原 CRX signing key；旧依赖会明确拒绝实例启动，不回退旧逐 tab 策略。
 
 ### OpenCLI artifact lock
 
@@ -97,19 +97,19 @@ scripts/docker/opencli-artifact.lock.env
 
 1. **成对升级**：CLI 与 extension 必须来自同一 OpenCLI Release，不要只改一侧。
 2. **校验和必填**：任何远程 CLI tarball / extension zip 都必须写入对应 SHA256；构建会先校验再安装。
-3. **默认 lock 只指向已发布资产**：当前钉住已验证的正式发布 `fork-v2.0.2-fengwk.5`；不要提交未发布的本地产物 URL。
+3. **默认 lock 只指向已发布资产**：当前钉住已验证的正式发布 `fork-v2.0.2-fengwk.6`；不要提交未发布的本地产物 URL。
 4. **后续升级 fork Release 时只改 lock**，当前值为：
 
 ```bash
 # scripts/docker/opencli-artifact.lock.env
 OPENCLI_PACKAGE=@jackwener/opencli
-OPENCLI_VERSION=2.0.2-fengwk.5
-OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.5/jackwener-opencli-2.0.2-fengwk.5.tgz
-OPENCLI_CLI_SHA256=98dcaec1dd44a3ae46d04a56b1808985fed26c7d32cdf1c70bc7c58d360d7f11
-OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@f6bf17b70c94056c72a78a5c09eee42259e9c135
+OPENCLI_VERSION=2.0.2-fengwk.6
+OPENCLI_CLI_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.6/jackwener-opencli-2.0.2-fengwk.6.tgz
+OPENCLI_CLI_SHA256=b4631093359aeda5c877e538c5481cc19a981003bcc414ca5308a573ec283f3b
+OPENCLI_SOURCE_REVISION=fengwk/OpenCLI@8f82470eed6cea6a6c54e5cdc4aacc40489943d2
 EXTENSION_VERSION=1.0.39
-OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.5/opencli-extension-v1.0.39.zip
-OPENCLI_EXTENSION_SHA256=a1d2f345ba55365e53c5b6acfd1b8ef7b62851c0ef91929accfcaf003f537c19
+OPENCLI_EXTENSION_URL=https://github.com/fengwk/OpenCLI/releases/download/fork-v2.0.2-fengwk.6/opencli-extension-v1.0.39.zip
+OPENCLI_EXTENSION_SHA256=62fdadaa8a64d4759b9d2cac55c2c554d5a37322c7b2d00e2562d59c148c2a4d
 ```
 
 可选 build-arg 覆盖范围（仅当前构建生效，不改仓库默认 pin）：

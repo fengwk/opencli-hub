@@ -57,7 +57,7 @@
 | SQL | MyBatis Auto Mapper 生成常规 SQL；每个变体通过 Spring SQL initialization 幂等初始化当前 schema（schema-only，无 data SQL，system settings 由应用懒初始化）；旧 MySQL schema 手工迁移 |
 | 浏览器 | 正式 `google-chrome-stable`，非 Chromium/Chrome for Testing |
 | extension | 由 artifact lock 固定，当前 fork 1.0.39；构建期打包固定签名 CRX3，运行时通过 Linux managed policy + loopback update server 强制安装 |
-| OpenCLI | 由 artifact lock 固定，当前 fork 2.0.2-fengwk.5；Hub 通过 `ProcessBuilder` 调用，不在 Hub 内修改 CLI |
+| OpenCLI | 由 artifact lock 固定，当前 fork 2.0.2-fengwk.6；Hub 通过 `ProcessBuilder` 调用，不在 Hub 内修改 CLI |
 | daemon | 单容器共享一个 OpenCLI daemon |
 | Instance 创建 | 同步创建，成功后才插入数据库；失败清理全部残留 |
 | Instance 创建完成 | Chrome 保持运行，数据库状态为 `RUNNING` |
